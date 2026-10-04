@@ -1,0 +1,953 @@
+/* ============================================================
+   异构大模型交互式叙事引擎 —— 前端样式
+   纯手写 CSS，无框架、无构建步骤
+   ============================================================ */
+
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --border: #e3e6ea;
+  --border-strong: #cbd2d9;
+  --text: #1f2933;
+  --text-dim: #6b7785;
+  --text-faint: #9aa5b1;
+  --brand: #3b5bdb;
+  --brand-dark: #2f49b0;
+  --brand-soft: #edf0fd;
+  --ok: #0f9960;
+  --ok-soft: #e6f6ef;
+  --warn: #b7791f;
+  --warn-soft: #fdf6e3;
+  --danger: #c0392b;
+  --danger-soft: #fdecea;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 3px rgba(16, 24, 40, .08), 0 1px 2px rgba(16, 24, 40, .04);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, .16);
+  --mono: "Cascadia Mono", "Consolas", "Courier New", monospace;
+  /* ★ 第十六轮：**语义化的"表面"变量**。
+     以前很多组件直接写死 `#fff` / `#fafbfc`，于是"深色主题"插件只换 `--bg/--panel`
+     就出现"深色页面里一片白"（用户反馈："打开之后这个界面非常不好看，你注意那行白色的"）。
+     把写死的浅色收进变量之后：浅色主题的值**一个像素都没变**，而任何主题只要重定义这几个
+     变量就能完整覆盖 —— 新增组件也不会再漏（漏了会被探针的"暗色下不许有浅色块"抓到）。 */
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-3: #fbfcfd;
+  --info-text: #2f49b0;
+  --warn-text: #7d5a12;
+  --danger-text: #8f2d20;
+  --ok-text: #0b6b45;
+  /* ★ 提示框/失败气泡的**边框色**。以前这四条写死在规则里
+     （`#f0d9a0` / `#f3c2bb` / `#c8d3f7` / `#b7e3cd`），
+     深色主题下它们就是五条**亮线**（横幅、失败回复的框都是）。
+     收进变量：浅色值一字未改，主题只要覆盖这四个变量（或让引擎按
+     "文字色 × 柔和底"的中间调自动补，见 plugin_service._theme_shim）即可。 */
+  --warn-border: #f0d9a0;
+  --danger-border: #f3c2bb;
+  --info-border: #c8d3f7;
+  --ok-border: #b7e3cd;
+  /* ★ 「内置示例」目录里那个 ✦ 头像的字色。原来写在 JS 的内联样式里
+     （`style="background:var(--brand-soft);color:#6b46c1"`）——
+     背景走了变量、字色没走，深色主题下 `--brand-soft` 变成深藏青，
+     这个紫色压在上面**对比度就不够了**。收进变量后浅色值一字未改，
+     主题没写这一项时由引擎补成 `var(--brand)`（与插件卡片的头像一致）。 */
+  --catalog-accent: #6b46c1;
+  /* 请求日志抽屉的宽度。抽出来当变量，是为了让「抽屉宽度」和
+     「打开时给内容区让出的空间」永远保持一致，不会各写一个数字对不上。 */
+  --reqlog-w: 440px;
+}
+
+* { box-sizing: border-box; }
+
+/* ============================================================
+   ★★ 一个真实踩过的坑：hidden 属性必须真的能隐藏元素 ★★
+
+   HTML 的 hidden 属性，浏览器默认是靠内置样式 [hidden]{display:none} 生效的。
+   但**作者样式表里的 display 会覆盖它** —— 只要给元素写了 .reqlog{display:flex}，
+   那么 element.hidden = true 就只是加了个属性，元素照样显示，
+   而且这个问题只在浏览器里才看得见，代码审查完全看不出来。
+
+   本项目就被它咬过一次：请求日志面板和顶部导航栏都写了 display:flex，
+   导致「关闭」按钮点了没反应、登录页还会多出一条顶栏。
+
+   所以在最前面用 !important 兜住：任何带 hidden 属性的元素一律不显示。
+   ============================================================ */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+button, input, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--brand); }
+
+/* ---------------- 顶部导航 ---------------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: 56px;
+  padding: 0 18px;
+  background: #1f2933;
+  color: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; white-space: nowrap; }
+/* ★ 应用图标（云梦枢）：设计稿是 1024 的位图，白底已在 scripts/make_icon_assets.ps1
+   里用"四角洪水填充"去掉（只吃与边界连通的白色，书页里的白保留）。
+   drop-shadow 让它在深色顶栏上有轻微的浮起感，不会糊成一片。 */
+.brand-logo {
+  width: 30px; height: 30px; display: block; border-radius: 8px;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .45));
+}
+.brand-text { font-size: 15px; letter-spacing: .6px; }
+.brand-sub {
+  font-size: 11.5px; font-weight: 400; color: #8b96a5;
+  padding-left: 9px; margin-left: 1px; border-left: 1px solid rgba(255, 255, 255, .16);
+}
+.nav { display: flex; gap: 4px; flex: 1; }
+.nav-item {
+  background: transparent;
+  border: none;
+  color: #c3cbd6;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  transition: background .12s, color .12s;
+}
+.nav-item:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav-item.active { background: var(--brand); color: #fff; }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.user-chip {
+  font-size: 12px;
+  color: #c3cbd6;
+  background: rgba(255,255,255,.08);
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+.ghost-btn {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,.22);
+  color: #dfe4ea;
+  padding: 5px 11px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  transition: background .12s;
+}
+.ghost-btn:hover { background: rgba(255,255,255,.12); }
+.ghost-btn.active { background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.42); }
+.ghost-btn.small { padding: 2px 8px; font-size: 12px; }
+
+/* ---------------- 主内容区 ---------------- */
+.view { padding: 22px 26px 60px; max-width: 1280px; margin: 0 auto; }
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.page-head h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+.page-head .sub { color: var(--text-dim); font-size: 13px; }
+.page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------------- 按钮 ---------------- */
+.btn {
+  background: var(--brand);
+  border: 1px solid var(--brand);
+  color: #fff;
+  padding: 7px 15px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  transition: background .12s;
+}
+.btn:hover { background: var(--brand-dark); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn.sec { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.btn.sec:hover { background: var(--surface-2); }
+.btn.danger { background: var(--danger); border-color: var(--danger); }
+.btn.danger:hover { background: #a5301f; }
+.btn.sm { padding: 4px 10px; font-size: 13px; }
+.btn.link {
+  background: none; border: none; color: var(--brand); padding: 2px 4px;
+}
+.btn.link:hover { text-decoration: underline; }
+.btn.link.danger-link { color: var(--danger); }
+
+/* ---------------- 卡片 / 面板 ---------------- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+.panel + .panel { margin-top: 14px; }
+.panel-title { font-weight: 600; margin: 0 0 12px; font-size: 15px; }
+
+/* ---------------- 角色卡 / 世界书 卡片 ----------------
+   ★ 卡片本身也是一张"脸"：答辩/演示时它是第一眼看到的东西。
+     这里做的是"信息层级"而不是花哨效果 ——
+     用什么区分「这是谁」「它是干嘛的」「点它能做什么」，
+     而不是给所有东西都加阴影。 */
+.grid { display: grid; gap: 16px; }
+/* minmax 的语义：窄屏自动一列，宽屏自动多列，不需要写断点 */
+.grid.cards { grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); }
+.grid.books { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+
+.cc {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* 顶部一条品牌色细线：一眼区分卡片区块与页面背景 */
+  border-top: 3px solid var(--brand);
+  transition: box-shadow .15s, transform .15s, border-color .15s;
+}
+.cc:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  border-top-color: var(--brand);
+}
+
+.cc-top { display: flex; gap: 12px; padding: 14px 14px 10px; align-items: flex-start; }
+.cc-avatar {
+  width: 54px; height: 54px; flex: 0 0 54px;
+  border-radius: 14px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 700;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  box-shadow: inset 0 0 0 3px var(--surface);
+}
+.cc-headline { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.cc-name {
+  font-weight: 650; font-size: 15.5px; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cc-desc {
+  color: var(--text-dim); font-size: 12.5px; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cc-body { padding: 0 14px 12px; flex: 1; }
+.cc-greeting {
+  /* ★ 这里以前是写死的浅色**渐变**（`linear-gradient(180deg, #f7f9fc, #f2f5fa)`）——
+     深色主题下它就是一整块白（用户："深色主题下角色卡的白还是在"，说的就是这个框）。
+     而且渐变走的是 `background-image`：`getComputedStyle().backgroundColor` 读出来是
+     **透明**，所以"只比背景色亮度"的探针把它当透明块跳过了 —— 漏检两次。
+     现在两级表面都走变量、字色走 `--text-dim`，任何主题只要修好 `--surface*` 就跟着变。 */
+  background: linear-gradient(180deg, var(--surface-3), var(--surface-2));
+  border-left: 3px solid var(--brand);
+  padding: 8px 11px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 12.5px; color: var(--text-dim); line-height: 1.6;
+  margin-top: 10px;
+  max-height: 68px; overflow: hidden;
+}
+.cc-foot {
+  border-top: 1px solid var(--border);
+  padding: 9px 14px;
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  background: var(--surface-2);
+}
+.cc-foot .spacer { flex: 1; }
+
+/* ---------------- 标签 / 徽章 ---------------- */
+.tag {
+  display: inline-block;
+  background: var(--brand-soft);
+  color: var(--brand);
+  border-radius: 20px;
+  padding: 1px 9px;
+  font-size: 12px;
+  margin: 2px 4px 2px 0;
+}
+.tag.plain { background: var(--surface-2); color: var(--text-dim); }
+.badge {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.badge.ok { background: var(--ok-soft); color: var(--ok); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.danger { background: var(--danger-soft); color: var(--danger); }
+.badge.info { background: var(--brand-soft); color: var(--brand); }
+.badge.neutral { background: var(--surface-2); color: var(--text-dim); }
+
+/* ---------------- 表单 ---------------- */
+.field { margin-bottom: 14px; }
+.field > label { display: block; font-weight: 500; margin-bottom: 5px; font-size: 13px; }
+.field .hint { color: var(--text-faint); font-size: 12px; margin-top: 4px; }
+.field .hint.warn-text { color: var(--warn); }
+.field .hint.danger-text { color: var(--danger); }
+
+input[type=text], input[type=password], input[type=number], input[type=url],
+input[type=email], select, textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(59,91,219,.12);
+}
+textarea { resize: vertical; min-height: 76px; line-height: 1.55; }
+input[type=range] { width: 100%; }
+
+.row { display: flex; gap: 12px; }
+.row > * { flex: 1; min-width: 0; }
+.row.tight { gap: 8px; }
+.checkbox-line { display: flex; align-items: center; gap: 8px; }
+.checkbox-line input[type=checkbox] { width: auto; }
+
+.form-section {
+  border-top: 1px solid var(--border);
+  margin-top: 18px;
+  padding-top: 14px;
+}
+.form-section > h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--text-dim); }
+
+/* ---------------- 筛选条 ---------------- */
+.toolbar {
+  display: flex; gap: 10px; align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+}
+.toolbar .grow { flex: 1; min-width: 160px; }
+.toolbar select, .toolbar input { width: auto; }
+.toolbar .grow input { width: 100%; }
+
+.segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
+.segmented button {
+  background: var(--surface); border: none; padding: 6px 14px; color: var(--text-dim);
+  border-right: 1px solid var(--border);
+}
+.segmented button:last-child { border-right: none; }
+.segmented button.active { background: var(--brand); color: #fff; }
+
+/* ---------------- 列表表格 ---------------- */
+table.list { width: 100%; border-collapse: collapse; background: var(--panel); }
+table.list th, table.list td {
+  text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+table.list th { font-size: 12px; color: var(--text-dim); font-weight: 600; background: var(--surface-2); }
+table.list tr:last-child td { border-bottom: none; }
+table.list tr:hover td { background: var(--surface-2); }
+
+/* ---------------- 空状态 ---------------- */
+.empty {
+  text-align: center;
+  padding: 52px 20px;
+  color: var(--text-faint);
+  background: var(--panel);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+.empty .big { font-size: 30px; margin-bottom: 8px; }
+
+/* ---------------- 提示条 ---------------- */
+.alert {
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 13px;
+  margin-bottom: 10px;
+  border: 1px solid transparent;
+}
+.alert.warn { background: var(--warn-soft); border-color: var(--warn-border); color: var(--warn-text); }
+.alert.danger { background: var(--danger-soft); border-color: var(--danger-border); color: var(--danger-text); }
+.alert.info { background: var(--brand-soft); border-color: var(--info-border); color: var(--info-text); }
+.alert.ok { background: var(--ok-soft); border-color: var(--ok-border); color: var(--ok-text); }
+
+/* ---------------- 弹窗 ---------------- */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(16,24,40,.45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 46px 16px;
+  overflow-y: auto;
+  z-index: 100;
+}
+.modal {
+  background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  width: 100%; max-width: 640px;
+  animation: pop .12s ease-out;
+}
+.modal.wide { max-width: 880px; }
+.modal.narrow { max-width: 460px; }
+@keyframes pop { from { transform: translateY(-8px); opacity: 0 } to { transform: none; opacity: 1 } }
+.modal-head {
+  padding: 15px 20px; border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+}
+.modal-head h2 { margin: 0; font-size: 16px; }
+.modal-body { padding: 18px 20px; max-height: calc(100vh - 220px); overflow-y: auto; }
+.modal-foot {
+  padding: 13px 20px; border-top: 1px solid var(--border);
+  display: flex; justify-content: flex-end; gap: 9px; background: var(--surface-3);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.modal-foot .spacer { flex: 1; }
+.x-btn { background: none; border: none; font-size: 20px; color: var(--text-faint); line-height: 1; }
+.x-btn:hover { color: var(--text); }
+
+/* 删除确认里的勾选项 —— 用户要求的核心交互 */
+.opt-list { margin: 6px 0 0; }
+.opt {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 11px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); margin-bottom: 8px; background: var(--surface-3);
+}
+.opt input[type=checkbox] { margin-top: 3px; width: 16px; height: 16px; flex: 0 0 16px; }
+.opt .opt-title { font-weight: 500; }
+.opt .opt-desc { color: var(--text-dim); font-size: 12px; }
+.opt.disabled { opacity: .6; }
+
+/* ---------------- toast ---------------- */
+.toasts {
+  position: fixed; right: 18px; bottom: 18px; z-index: 200;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+}
+.toast {
+  background: #1f2933; color: #fff;
+  padding: 10px 15px; border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  max-width: 460px; font-size: 13px;
+  animation: slide .15s ease-out;
+  border-left: 4px solid var(--brand);
+  white-space: pre-wrap; word-break: break-word;
+}
+.toast.ok { border-left-color: #2fbf71; }
+.toast.err { border-left-color: #e5533d; }
+.toast.warn { border-left-color: #e0a52e; }
+@keyframes slide { from { transform: translateX(16px); opacity: 0 } to { transform: none; opacity: 1 } }
+
+/* ---------------- 请求日志抽屉 ---------------- */
+/*
+  ★ 打开时不是"浮在内容上面"，而是把内容区**挤窄**。
+    最初是纯浮层（position:fixed 盖住右边），结果把「新建角色卡」这类
+    靠右的按钮遮住了，屏幕上只露出一个角，根本没法点。
+    现在打开时给 body 加 log-open，右边让出面板宽度，两边互不遮挡。
+*/
+body.log-open {
+  padding-right: var(--reqlog-w);
+}
+/* 顶栏要重新铺满整宽，否则右上角会空出一条 */
+body.log-open .topbar {
+  margin-right: calc(-1 * var(--reqlog-w));
+}
+
+.reqlog {
+  position: fixed; right: 0; top: 56px; bottom: 0;
+  width: var(--reqlog-w);
+  background: #1b222b; color: #d7dee7;
+  border-left: 1px solid #2b3542;
+  z-index: 90;
+  display: flex; flex-direction: column;
+  box-shadow: -8px 0 24px rgba(0,0,0,.2);
+}
+
+/* 屏幕不够宽时退回浮层模式：挤压内容会让主界面变得太窄，反而更难用。
+   浮层模式下务必确认「关闭」按钮可用（[hidden] 的修复保证了这一点）。 */
+@media (max-width: 1100px) {
+  body.log-open { padding-right: 0; }
+  body.log-open .topbar { margin-right: 0; }
+  .reqlog { width: min(var(--reqlog-w), 88vw); }
+}
+.reqlog-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid #2b3542;
+}
+.reqlog-head .muted { color: #7c8899; font-size: 12px; flex: 1; }
+.reqlog-list { overflow-y: auto; padding: 6px; font-family: var(--mono); font-size: 12px; }
+.rl {
+  border-radius: var(--radius-sm); padding: 6px 8px; margin-bottom: 4px;
+  background: #222b36; cursor: pointer;
+}
+.rl:hover { background: #28333f; }
+.rl-line { display: flex; gap: 8px; align-items: center; }
+.rl-method { font-weight: 700; width: 48px; flex: 0 0 48px; }
+.rl-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-status { font-weight: 700; }
+.rl-dur { color: #7c8899; }
+.rl-st-2 { color: #4ec38a; }
+.rl-st-4 { color: #e5b567; }
+.rl-st-5, .rl-st-0 { color: #ef6d5a; }
+.rl-body {
+  margin-top: 6px; padding-top: 6px; border-top: 1px dashed #33404e;
+  white-space: pre-wrap; word-break: break-all; color: #9fb0c3;
+  max-height: 320px; overflow-y: auto;
+}
+.rl-body b { color: #cfd9e4; }
+
+/* ---------------- 工具类 ---------------- */
+.muted { color: var(--text-dim); }
+.faint { color: var(--text-faint); }
+.small { font-size: 12px; }
+.mono { font-family: var(--mono); }
+.mt8 { margin-top: 8px; } .mt14 { margin-top: 14px; } .mt20 { margin-top: 20px; }
+.mb8 { margin-bottom: 8px; } .mb14 { margin-bottom: 14px; }
+.center { text-align: center; }
+.nowrap { white-space: nowrap; }
+.hidden { display: none !important; }
+.spin {
+  display: inline-block; width: 13px; height: 13px;
+  border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
+  border-radius: 50%; animation: rot .7s linear infinite; vertical-align: -2px;
+}
+@keyframes rot { to { transform: rotate(360deg) } }
+
+/* 认证页 */
+.auth-wrap {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(140deg, #1f2933, #2f3d4d);
+  padding: 20px;
+}
+.auth-box {
+  background: var(--surface); border-radius: 14px; padding: 30px;
+  width: 100%; max-width: 400px; box-shadow: var(--shadow-lg);
+}
+.auth-box h1 { margin: 0 0 4px; font-size: 19px; }
+/* 登录页的品牌区：图标 + 「云梦枢」+ 一句副标题。
+   图标是透明底位图，这里给它一点投影，落在渐变底上更立体。 */
+.auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.auth-logo {
+  width: 52px; height: 52px; display: block;
+  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, .35));
+}
+.auth-brand-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
+.auth-box .sub { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; }
+.auth-tabs { display: flex; gap: 0; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+.auth-tabs button {
+  flex: 1; background: none; border: none; padding: 9px;
+  color: var(--text-dim); border-bottom: 2px solid transparent;
+}
+.auth-tabs button.active { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
+
+/* ============================================================
+   叙事会话（对话界面）
+   ★ 用 grid 做「左侧会话列表 + 右侧对话窗」的两栏布局，
+     而不是浮动/绝对定位：这样两栏高度天然对齐，也不会互相压住。
+   ============================================================ */
+.chat-layout {
+  display: grid;
+  /* ★ 左栏宽度由 JS 写的 CSS 变量控制（拖右下角手柄即可改，见 chat.js::initChatResize）。
+     变量没设过时用 300px 兜底，所以"不拖"和"以前"完全一样。 */
+  grid-template-columns: var(--chat-side-w, 300px) minmax(0, 1fr);
+  gap: 14px;
+  /* 减去顶栏与页头的高度，让对话窗刚好占满一屏，输入框不用滚动才能看到 */
+  height: calc(100vh - 220px);
+  min-height: 320px;
+  position: relative;   /* 拖动手柄要绝对定位在右下角 */
+}
+/* 用户拖动过高度之后，改用显式像素值（覆盖上面的 calc） */
+.chat-layout[data-height] { height: calc(var(--chat-h, auto) * 1px); }
+/* 拖动过程中：禁掉选中，并把光标固定成斜向缩放，避免鼠标移出手柄后光标乱跳 */
+.chat-layout[data-resizing] { user-select: none; }
+.chat-layout[data-resizing] * { cursor: nwse-resize !important; }
+@media (max-width: 900px) {
+  .chat-layout { grid-template-columns: 1fr; height: auto; }
+  /* 窄屏是上下堆叠，横向拖动没有意义，直接把手柄藏掉 */
+  .chat-resize { display: none; }
+}
+
+/* ---------------- 拖动手柄（右下角那个小三角） ---------------- */
+.chat-resize {
+  position: absolute; right: 0; bottom: 0;
+  width: 22px; height: 22px;
+  cursor: nwse-resize;
+  z-index: 3;
+  opacity: .5;
+  transition: opacity .12s;
+  /* 两条斜线的经典"可缩放"符号：用渐变画，省掉一个图标文件 */
+  background:
+    linear-gradient(135deg, transparent 0 45%, var(--border-strong) 45% 55%, transparent 55%),
+    linear-gradient(135deg, transparent 0 65%, var(--border-strong) 65% 75%, transparent 75%);
+  border-bottom-right-radius: var(--radius);
+}
+.chat-resize:hover, .chat-layout[data-resizing] .chat-resize { opacity: 1; }
+
+.chat-side { display: flex; flex-direction: column; padding: 12px; gap: 10px; min-height: 0; }
+.chat-side .segmented button { flex: 1; }
+.session-list { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+
+.session-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  cursor: pointer;
+  background: var(--surface);
+  transition: border-color .12s, background .12s;
+}
+.session-item:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.session-item.active { border-color: var(--brand); background: var(--brand-soft); }
+.si-top { display: flex; align-items: center; gap: 8px; }
+.si-avatar {
+  width: 24px; height: 24px; flex: 0 0 24px; border-radius: 50%;
+  background: var(--brand-soft); color: var(--brand);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600;
+}
+.session-item.active .si-avatar { background: var(--brand); color: #fff; }
+.si-title {
+  font-weight: 500; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.si-preview {
+  font-size: 12px; color: var(--text-dim); margin-top: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.si-meta { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+.si-meta .spacer { flex: 1; }
+.si-warn { font-size: 11px; color: var(--warn); margin-top: 4px; }
+.si-actions { display: flex; gap: 8px; margin-top: 6px; }
+.btn.link {
+  background: none; border: none; padding: 0; color: var(--brand);
+  font-size: 12px; text-decoration: underline;
+}
+.btn.link.danger-link { color: var(--danger); }
+
+/* ---------------- 对话窗 ---------------- */
+.chat-main { display: flex; flex-direction: column; padding: 0; min-height: 0; overflow: hidden; }
+.chat-head {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.chat-head-main { flex: 1; min-width: 0; }
+.chat-title { font-weight: 600; font-size: 15px; }
+.chat-head-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.chat-meta { color: var(--text-faint); }
+
+.messages { flex: 1; overflow-y: auto; padding: 14px 16px; min-height: 0; }
+.msg { max-width: 76%; margin-bottom: 14px; }
+.msg-role { font-size: 11px; color: var(--text-faint); margin-bottom: 3px; }
+.msg-body {
+  padding: 9px 12px; border-radius: 10px; white-space: pre-wrap;
+  word-break: break-word; line-height: 1.65;
+}
+.msg.user { margin-left: auto; }
+.msg.user .msg-body { background: var(--brand); color: #fff; }
+.msg.user .msg-role { text-align: right; }
+.msg.assistant .msg-body { background: var(--surface-2); border: 1px solid var(--border); }
+.msg.failed .msg-body { background: var(--danger-soft); border-color: var(--danger-border); }
+.msg.aborted .msg-body { opacity: .72; }
+.msg-reason {
+  font-size: 12px; color: var(--text-dim); background: var(--warn-soft);
+  border: 1px dashed var(--border-strong); border-radius: 8px;
+  padding: 7px 10px; margin-bottom: 5px; white-space: pre-wrap;
+  max-height: 160px; overflow-y: auto;
+}
+.msg-warn { font-size: 12px; color: var(--warn); margin-top: 5px; }
+.msg-error { font-size: 12px; color: var(--danger); margin-top: 5px; }
+
+/* ---------------- 骰子气泡（骰子插件） ----------------
+   ★ 为什么必须显示"是谁掷的"：大模型没有真随机，点数一律由后端掷出。
+     界面上把它做成一颗明显的骰子，用户才知道这个数字不是模型编的。 */
+.msg-rolls { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.msg.user .msg-rolls { justify-content: flex-end; }
+.roll-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-family: ui-monospace, Consolas, monospace;
+  background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 999px; padding: 2px 9px; color: var(--text);
+}
+.roll-chip b { color: var(--brand-dark); font-size: 13px; }
+.roll-chip .roll-label { color: var(--text-dim); }
+.roll-chip.win { border-color: var(--ok); background: var(--ok-soft); }
+.roll-chip.lose { border-color: var(--danger); background: var(--danger-soft); }
+.roll-chip.bad { border-style: dashed; color: var(--danger); }
+.roll-chip .roll-judge { color: var(--text-dim); }
+.roll-chip .roll-judge.ok { color: var(--ok); }
+.roll-chip .roll-judge.bad { color: var(--danger); }
+
+/* ---------------- 翻译中间件（原文 / 译文） ----------------
+   ★ 默认显示"给人看的那一份"（输出侧是译文、输入侧是原文），
+     另一份留在 DOM 里，点一下就地切换 —— 不发请求、不改数据。 */
+.msg-trans {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 12px; color: var(--text-dim); margin-top: 5px;
+}
+.msg.user .msg-trans { justify-content: flex-end; }
+.msg-trans .btn.link { padding: 0 4px; font-size: 12px; }
+/* 头部「🌐 翻译开」按钮：开启状态要一眼看得出来（它意味着每轮多花钱） */
+#btn-translate.on, .btn.on {
+  border-color: var(--brand); color: var(--brand-dark); background: var(--brand-soft);
+}
+
+/* ---------------- VN 舞台（角色卡立绘） ----------------
+   ★ 背景 + 立绘 + 名牌 + 台词框，四层。刻意做得很轻：
+     没有立绘的卡完全不占位置（vnStageHTML 返回空串），
+     地址写坏了也只显示一块提示 + 原因，不会白屏。 */
+.vn-stage {
+  position: relative; margin: 10px 16px 0; border-radius: 12px; overflow: hidden;
+  height: 260px; background: #202633; border: 1px solid var(--border-strong);
+}
+.vn-bg {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+}
+/* 遮罩：让台词与立绘在任何背景上都看得清（--vn-dim 由卡配置，0~0.8）
+   ★ 背景用 <img> 而不是 CSS background-image：地址来自角色卡，
+     拼进 style 属性就得担心 CSS 字符串逃逸；<img src> 由 esc() 一挡就够。 */
+.vn-bg-dim {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,var(--vn-dim, .2)), rgba(0,0,0,.55));
+}
+.vn-sprite {
+  position: absolute; bottom: 0; left: 50%; transform: translateX(-50%) scale(var(--vn-scale, 1));
+  transform-origin: bottom center; max-height: 100%; max-width: 60%; object-fit: contain;
+  filter: drop-shadow(0 6px 18px rgba(0,0,0,.45));
+}
+.vn-stage.pos-left .vn-sprite { left: 22%; }
+.vn-stage.pos-right .vn-sprite { left: 78%; }
+.vn-no-sprite {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px;
+  color: #cbd3e0; font-size: 13px; text-align: center;
+}
+.vn-nameplate {
+  position: absolute; top: 10px; left: 12px; display: flex; align-items: center; gap: 8px;
+  background: rgba(16,20,28,.72); color: #fff; border-radius: 999px;
+  padding: 3px 12px; font-size: 13px; font-weight: 600;
+}
+.vn-mood {
+  font-weight: 400; font-size: 12px; color: #ffe08a;
+  border-left: 1px solid rgba(255,255,255,.3); padding-left: 8px;
+}
+.vn-line {
+  position: absolute; left: 12px; right: 12px; bottom: 10px; max-height: 88px; overflow: hidden;
+  background: rgba(12,16,22,.78); color: #f2f5fa; border: 1px solid rgba(255,255,255,.14);
+  border-radius: 10px; padding: 9px 12px; font-size: 13.5px; line-height: 1.6;
+  white-space: pre-wrap;
+}
+.vn-warn {
+  position: absolute; top: 10px; right: 12px; max-width: 55%;
+  background: rgba(58,31,28,.86); color: #ffd7cf; border-radius: 8px;
+  padding: 4px 9px; font-size: 11.5px;
+}
+/* 舞台开着时消息区矮一点，让舞台与对话都看得见 */
+.vn-stage ~ .messages { max-height: 42vh; }
+
+/* ---------------- 消息操作（复制 / 编辑 / 撤回 / 重新生成） ----------------
+   ★ 为什么是"淡显"而不是"完全隐藏、悬停才出现"？
+     完全隐藏时用户**根本不知道这些功能存在**（截图里也看不出来）。
+     现在常态淡显、悬停加深，既不抢戏又能被看见。
+   ★ 用 opacity 而不是 display：保留占位，鼠标移上去时下面的内容不会被顶开。 */
+.msg-actions {
+  display: flex; gap: 2px; margin-top: 3px;
+  opacity: .45; transition: opacity .12s ease;
+}
+.msg:hover .msg-actions,
+.msg:focus-within .msg-actions { opacity: 1; }
+/* 生成中不显示操作按钮：那时候"重新生成"还会被误点第二次 */
+.msg.pending .msg-actions { display: none; }
+.msg.user .msg-actions { justify-content: flex-end; }
+.msg-actions .btn.link { padding: 1px 6px; font-size: 11px; }
+
+/* Token 统计条：本轮用量 + 累计 */
+.token-stats { margin-top: 2px; }
+.token-stats span { white-space: nowrap; }
+
+/* 流式生成中的光标：让"正在逐字生成"这件事看得见 */
+.msg.pending .msg-role::after {
+  content: '生成中'; color: var(--brand); margin-left: 6px;
+}
+/* ★ 第十六轮：翻译中间件在流末尾同步跑（要几秒），这段等待必须看得见，
+   否则用户看完外语原文就干等、以为界面卡了。 */
+.tr-hint { color: var(--brand); margin-left: 6px; font-size: 12px; }
+/* 正在翻译时不再显示"生成中"：正文已经流完，那句会误导 */
+.msg.pending.translating .msg-role::after { content: none; }
+.typing { display: none; }
+.msg.pending .typing {
+  display: inline-block; width: 7px; height: 13px; margin-left: 4px;
+  background: var(--brand); vertical-align: -2px;
+  animation: blink .9s steps(2, start) infinite;
+}
+@keyframes blink { to { visibility: hidden } }
+
+.composer { display: flex; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--border); align-items: flex-end; }
+.composer textarea {
+  flex: 1; resize: vertical; min-height: 46px; max-height: 160px;
+  padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+}
+.composer-side { display: flex; gap: 6px; }
+.composer-hint { padding: 0 16px 12px; }
+
+.prompt-view {
+  background: #1f2933; color: #e6edf3; padding: 12px; border-radius: 8px;
+  white-space: pre-wrap; word-break: break-word; font-size: 12px;
+  max-height: 52vh; overflow: auto; margin: 0;
+}
+
+/* 「回到最新」浮动按钮：贴在对话区右下角 */
+.scroll-bottom {
+  position: absolute; right: 26px; bottom: 96px;
+  box-shadow: var(--shadow-lg); z-index: 2;
+}
+.chat-main { position: relative; }
+
+/* 记忆面板里的记忆正文：保留换行，长内容可滚动 */
+.mem-text { white-space: pre-wrap; word-break: break-word; font-size: 13px; max-height: 160px; overflow: auto; }
+
+/* 启动守卫的兜底提示条（js/boot.js）：
+   只在"浏览器缓存了旧版前端、自动重载也没救回来"时才会出现。
+   正常情况下永远看不到它。 */
+.boot-stale {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  z-index: 9999; max-width: min(680px, 92vw);
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 12px 14px; border-radius: 8px;
+  background: #7f1d1d; color: #fee2e2; border: 1px solid #b91c1c;
+  box-shadow: var(--shadow-lg); font-size: 13px; line-height: 1.5;
+}
+.boot-stale code { font-size: 12px; opacity: .85; }
+
+/* ---------------- 文件拖放区 ---------------- */
+.drop-zone {
+  border: 2px dashed var(--border-strong);
+  border-radius: 10px;
+  padding: 26px 18px;
+  text-align: center;
+  color: var(--text-dim);
+  cursor: pointer;
+  background: var(--surface-2);
+  margin-bottom: 14px;
+  transition: border-color .12s, background .12s;
+}
+.drop-zone:hover { border-color: var(--brand); background: var(--brand-soft); }
+
+/* ---------------- 富文本渲染（HTML 卡片） ----------------
+   ★ 卡片内部的排版规则现在随 iframe 一起注入（见 ui.js::_RICH_DOC_HEAD）。
+     旧的 .rich-preview 那一套已删除 —— 改成 iframe 沙箱后它没有任何引用了。 */
+
+/* ---------------- 备选开场白：一条一页的翻页编辑器 ---------------- */
+/* ★ 一条开场白可能上千字，所以编辑区给足高度；页码放在按钮中间，
+   让"我在第几条"永远和翻页按钮在同一视线内。 */
+.alt-box { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; background: var(--surface-3); }
+.alt-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.alt-count { font-size: 13px; color: var(--text-dim); min-width: 92px; text-align: center; }
+.alt-gap { flex: 1 1 auto; }
+.alt-box textarea { width: 100%; font-family: var(--mono, monospace); font-size: 13px; line-height: 1.6; }
+.alt-box .hint { margin-top: 6px; }
+
+/* ---------------- 富文本渲染：iframe 沙箱 ---------------- */
+/* ★ 为什么用 iframe 而不是直接插 DOM：
+     角色卡（尤其是从公开卡库拿的）自带 <style>，直接插进来会把控制台自己的
+     样式一起改掉（一条 body{display:none} 就能让整个界面消失）。
+     iframe 天然隔离样式与脚本，卡片爱怎么写就怎么写。
+   ★ sandbox="allow-same-origin"（**故意不加 allow-scripts**）：
+     允许父页面读取内部高度做自适应，但卡片里的任何脚本都不会执行。 */
+.rich-frame {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  display: block;
+}
+
+/* ---------------- 提示词预设页 ---------------- */
+/* 垂直堆叠的卡片列表（装配预览里一条消息一张卡） */
+.stack { display: flex; flex-direction: column; gap: 10px; }
+
+/* 被禁用的块整行变灰：一眼看出"这块不会生效"，而不是只看那个小勾选框 */
+.blocks-table tr.row-off td { color: var(--text-faint); background: var(--surface-2); }
+.blocks-table tr.row-off .block-name { text-decoration: line-through; }
+.blocks-table td { vertical-align: middle; }
+.blocks-table .block-name { font-weight: 500; font-size: 13px; }
+.blocks-table select,
+.blocks-table input[type='number'] { width: auto; padding: 4px 6px; font-size: 12px; }
+.blocks-table input[type='checkbox'] { width: auto; }
+
+
+
+/* ==================================================================
+   结构化状态栏（HP / 位置 / 背包 / 任务）
+   ★ 数据来自后端解析模型 <state> 块后落库的状态，前端只展示、不自己算。
+   ================================================================== */
+/* ★ 第十六轮：状态条从"顶部一个大框"改成**消息区末尾的一行**。
+   用户反馈："状态栏占用的空间有点大，导致对话很小，不好看" ——
+   所以默认只占一行（点「详情」才展开血条/背包那种占地方的渲染）。
+   类名 `.state-item` / `.state-hp` / `.state-chip` 一个都没改：探针按它们断言。 */
+.state-bar {
+  margin: 2px 16px 10px;
+  padding: 4px 10px;
+  border-top: 1px dashed var(--border);
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.state-bar.empty { color: var(--text-faint); }
+.state-bar code { font-family: var(--mono); font-size: 11.5px; }
+.state-bar-line {
+  display: flex; align-items: center; gap: 8px;
+  overflow: hidden; white-space: nowrap;
+}
+.state-bar-chips { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.state-bar-line .btn.link { flex: 0 0 auto; }
+.state-bar-detail {
+  margin-top: 6px; padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center; white-space: normal;
+}
+/* ★ 必须单独写这一条：上面的 display:flex 定义在后面，会盖过通用的 .hidden */
+.state-bar-detail.hidden { display: none; }
+.state-inner { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.state-raw { width: 100%; }
+.state-raw-pre {
+  margin: 4px 0 0; padding: 8px; max-height: 40vh; overflow: auto;
+  background: #1f2933; color: #e6edf3; border-radius: 6px;
+  font-size: 11.5px; white-space: pre-wrap; word-break: break-word;
+}
+.state-item { display: inline-flex; align-items: center; gap: 6px; }
+.state-hp-track {
+  display: inline-block;
+  width: 90px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.state-hp-fill { display: block; height: 100%; background: var(--ok); transition: width .2s ease; }
+.state-hp-fill.mid { background: var(--warn); }
+.state-hp-fill.low { background: var(--danger); }
+.state-hp-text { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.state-chip {
+  display: inline-block;
+  padding: 0 7px;
+  margin-right: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.state-quest { margin-right: 6px; color: var(--text-dim); }
+.state-quest.done { color: var(--ok); text-decoration: line-through; }
+.state-quest.failed { color: var(--danger); text-decoration: line-through; }

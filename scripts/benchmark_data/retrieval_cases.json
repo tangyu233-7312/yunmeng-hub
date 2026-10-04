@@ -1,0 +1,180 @@
+{
+  "description": "离线合成标注集：用来评测「关键词通道 + 语义通道 → 融合 → 去重 → 重排 → 共享预算」这套混合检索。data_only=true 时禁止调用真实大模型（红线），语义通道的相似度由本文件显式给出（模拟一个理想的向量检索），或用 --semantic embedding 走真实嵌入模型。",
+  "notes": [
+    "book_entries 里的 key 必须与评测输出里的候选 key 对得上（book:<下标>）。",
+    "memories 的 key 形如 mem:<数字>，retrieval 里候选 key 就是 mem:<memory_id>，所以 memory_id 用数字字符串。",
+    "queries[].similarity 是「模拟向量库返回的相似度」：0~1，越大越相关；缺省表示该条不被语义通道召回。",
+    "queries[].relevant 是人工标注的相关条目（Recall@k / MRR / nDCG@k 的分母）。"
+  ],
+  "book_entries": [
+    {
+      "keys": ["灯塔", "守塔人", "灯"],
+      "content": "北岸灯塔建于两百年前，灯芯由海怪油脂浸过的麻绳编成，一次能烧一整夜。",
+      "insertion_order": 0
+    },
+    {
+      "keys": ["补给船", "船长", "窄水道"],
+      "content": "补给船每二十天来一次。只有灯塔亮起时，船长才敢走北岸的窄水道。",
+      "insertion_order": 1
+    },
+    {
+      "keys": ["绞盘"],
+      "content": "点亮灯塔的规矩：先顺时针转三圈绞盘，再从下往上依次点三盏火。",
+      "insertion_order": 2
+    },
+    {
+      "keys": ["灯油"],
+      "content": "灯室油桶只剩半桶灯油，受潮的灯芯要先烤干，否则点不着。",
+      "insertion_order": 3
+    },
+    {
+      "keys": ["薇拉"],
+      "content": "薇拉是失踪老守塔人的孙女，十六岁那年爬上灯室，发现绞盘被人为砸坏过。",
+      "insertion_order": 4
+    },
+    {
+      "keys": ["暴风雨"],
+      "content": "暴风雨夜海面会起白雾，灯若不亮，船会直接撞上礁石。",
+      "insertion_order": 5
+    },
+    {
+      "keys": ["提灯"],
+      "content": "门边那盏提灯是薇拉父亲留下的，玻璃罩上有一道裂纹。",
+      "insertion_order": 6
+    },
+    {
+      "keys": ["钟"],
+      "content": "镇上的钟楼整点报时，钟声能传到北岸，是渔人回家的信号。",
+      "insertion_order": 7
+    },
+    {
+      "keys": ["猫"],
+      "content": "灯室里住着一只三花猫，薇拉说它是唯一没被她赶走的活物。",
+      "insertion_order": 8
+    },
+    {
+      "keys": ["礁石"],
+      "content": "北岸礁石区在退潮时会露出半截沉船的桅杆。",
+      "insertion_order": 9
+    }
+  ],
+  "memories": [
+    {
+      "key": "mem:1",
+      "text": "你答应过薇拉：今晚一定把灯点上，不让补给船摸黑进港。",
+      "kind": "dialogue"
+    },
+    {
+      "key": "mem:2",
+      "text": "薇拉说，她爷爷失踪那晚也在绞盘边，手上全是油。",
+      "kind": "summary"
+    },
+    {
+      "key": "mem:3",
+      "text": "你把自己的外套披在她肩上，她没有推开。",
+      "kind": "dialogue"
+    },
+    {
+      "key": "mem:4",
+      "text": "灯芯受潮了，你们花了半个时辰在壁炉边烤干它。",
+      "kind": "dialogue"
+    },
+    {
+      "key": "mem:5",
+      "text": "她提到过：砸坏绞盘的人不想让灯亮起来。",
+      "kind": "summary"
+    },
+    {
+      "key": "mem:6",
+      "text": "你答应明天早上替她去镇上取新的灯油。",
+      "kind": "fact"
+    },
+    {
+      "key": "mem:7",
+      "text": "三花猫一直蹲在灯室门口，谁上去它都盯着看。",
+      "kind": "dialogue"
+    },
+    {
+      "key": "mem:8",
+      "text": "你说你不怕暴风雨，她看了你一眼，没接话。",
+      "kind": "dialogue"
+    },
+    {
+      "key": "mem:9",
+      "text": "船长的名字是阿尔文，他左耳缺了一块。",
+      "kind": "fact"
+    },
+    {
+      "key": "mem:10",
+      "text": "你们约好：灯亮之后一起下楼喝那半壶冷茶。",
+      "kind": "dialogue"
+    },
+    {
+      "key": "mem:11",
+      "text": "北岸灯塔建于两百年前，灯芯由海怪油脂浸过的麻绳编成，一次能烧一整夜。",
+      "kind": "fact"
+    }
+  ],
+  "queries": [
+    {
+      "query": "灯塔还亮着吗",
+      "relevant": ["book:0", "mem:1"],
+      "similarity": {"mem:11": 0.88, "mem:1": 0.71, "mem:10": 0.42, "mem:3": 0.36}
+    },
+    {
+      "query": "补给船什么时候来",
+      "relevant": ["book:1", "mem:9"],
+      "similarity": {"mem:9": 0.68, "mem:6": 0.51}
+    },
+    {
+      "query": "灯怎么点起来",
+      "relevant": ["book:2", "book:3", "mem:4"],
+      "similarity": {"mem:4": 0.74, "mem:1": 0.55, "mem:6": 0.44}
+    },
+    {
+      "query": "灯油够用吗",
+      "relevant": ["book:3", "mem:6"],
+      "similarity": {"mem:6": 0.77, "mem:4": 0.58}
+    },
+    {
+      "query": "薇拉是谁",
+      "relevant": ["book:4", "mem:2"],
+      "similarity": {"mem:2": 0.69, "mem:3": 0.4}
+    },
+    {
+      "query": "暴风雨夜出海危险吗",
+      "relevant": ["book:5", "mem:8"],
+      "similarity": {"mem:8": 0.72, "mem:1": 0.47}
+    },
+    {
+      "query": "那盏提灯是哪来的",
+      "relevant": ["book:6"],
+      "similarity": {"mem:10": 0.39}
+    },
+    {
+      "query": "钟声是干什么的",
+      "relevant": ["book:7"],
+      "similarity": {"mem:9": 0.37}
+    },
+    {
+      "query": "灯室里的猫",
+      "relevant": ["book:8", "mem:7"],
+      "similarity": {"mem:7": 0.81}
+    },
+    {
+      "query": "礁石区下面有什么",
+      "relevant": ["book:9"],
+      "similarity": {"mem:9": 0.41}
+    },
+    {
+      "query": "绞盘是谁弄坏的",
+      "relevant": ["book:2", "book:4", "mem:5"],
+      "similarity": {"mem:5": 0.7, "mem:2": 0.62}
+    },
+    {
+      "query": "我答应过她什么",
+      "relevant": ["mem:1", "mem:6", "mem:10"],
+      "similarity": {"mem:1": 0.66, "mem:6": 0.64, "mem:10": 0.6}
+    }
+  ]
+}

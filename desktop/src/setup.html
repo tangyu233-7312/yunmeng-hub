@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<title>云梦枢 · 首次设置</title>
+<style>
+  :root {
+    --bg: #0a0d17;
+    --surface: rgba(255, 255, 255, .045);
+    --border: rgba(167, 139, 250, .22);
+    --text: #e6eaf0;
+    --text-dim: #a3adbb;
+    --brand: #a78bfa;
+    --aurora: #00e5ff;
+    --danger: #ff9a9a;
+    --ok: #7ee2b8;
+    --warn: #ffd88a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13.5px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background-image:
+      radial-gradient(1100px 640px at 10% -12%, rgba(167,139,250,.15), transparent 70%),
+      radial-gradient(900px 600px at 106% 112%, rgba(0,229,255,.11), transparent 70%);
+  }
+  .wrap { position: relative; height: 100%; display: flex; align-items: center; justify-content: center; padding: 22px; }
+  .card {
+    width: min(880px, 100%); max-height: 100%; overflow: auto;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 26px 30px; backdrop-filter: blur(14px);
+    box-shadow: 0 0 42px rgba(167,139,250,.12);
+  }
+  .head { display: flex; align-items: center; gap: 13px; }
+  .logo { width: 48px; height: 48px; border-radius: 12px; filter: drop-shadow(0 0 10px rgba(167,139,250,.45)); }
+  h1 { margin: 0; font-size: 19px; letter-spacing: .06em; }
+  .sub { color: var(--text-dim); font-size: 12px; letter-spacing: .14em; margin-top: 2px; }
+  .lead { margin: 18px 0 6px; color: var(--text-dim); font-size: 12.5px; }
+  .lead b { color: var(--text); font-weight: 600; }
+
+  fieldset { border: 0; padding: 0; margin: 18px 0 0; }
+  legend { color: var(--aurora); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; padding: 0 0 8px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+  .field.wide { grid-column: 1 / -1; }
+  label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  input[type=text], input[type=password], input[type=number] {
+    width: 100%; font: inherit; font-size: 13px; color: var(--text);
+    background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.10);
+    border-radius: 8px; padding: 7px 10px;
+  }
+  input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 2px rgba(167,139,250,.16); }
+  input[aria-invalid="true"] { border-color: var(--danger); }
+  .hint { color: var(--text-dim); font-size: 11.5px; margin-top: 3px; }
+  .err { color: var(--danger); font-size: 11.5px; margin-top: 3px; min-height: 15px; }
+
+  button {
+    font: inherit; font-size: 12.5px; color: var(--text);
+    background: rgba(167,139,250,.16); border: 1px solid rgba(167,139,250,.38);
+    border-radius: 9px; padding: 7px 14px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: rgba(167,139,250,.26); border-color: var(--brand); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.ghost { background: transparent; border-color: rgba(255,255,255,.16); }
+  button.ghost:hover { border-color: var(--aurora); background: rgba(0,229,255,.10); }
+  button.primary { background: rgba(167,139,250,.28); border-color: var(--brand); font-weight: 600; }
+  button.mini { padding: 6px 10px; font-size: 11.5px; }
+
+  .actions { margin-top: 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .actions .spacer { flex: 1; }
+
+  .status {
+    margin-top: 14px; padding: 11px 13px; border-radius: 9px; font-size: 12.5px;
+    border: 1px solid rgba(255,255,255,.10); background: rgba(0,0,0,.24);
+    white-space: pre-wrap; word-break: break-word; display: none;
+  }
+  .status.show { display: block; }
+  .status.ok { border-color: rgba(126,226,184,.45); color: var(--ok); }
+  .status.err { border-color: rgba(255,154,154,.45); color: var(--danger); }
+  .status.busy { border-color: rgba(0,229,255,.35); color: var(--aurora); }
+  .status pre { margin: 8px 0 0; font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 11px; color: var(--text-dim); white-space: pre-wrap; max-height: 150px; overflow: auto; }
+
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--text-dim); font-size: 12px; }
+  details .grid { margin-top: 10px; }
+  .foot { margin-top: 16px; color: var(--text-dim); font-size: 11.5px; }
+  code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px;
+    background: rgba(0,0,0,.28); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="head">
+      <img class="logo" id="logo" src="../../web/img/logo-256.png" alt="云梦枢">
+      <div>
+        <h1>首次设置</h1>
+        <div class="sub">YUNMENG HUB · 交互式叙事引擎</div>
+      </div>
+    </div>
+
+    <p class="lead">
+      云梦枢需要一个 <b>MySQL 数据库</b>来存角色卡、会话与消息（向量记忆存在本地目录，不用你管）。
+      这里填的配置会写进 <b>应用数据目录</b>（不在安装目录里），<b>卸载重装不会丢</b>。
+    </p>
+    <p class="lead" id="existing-note" style="display:none"></p>
+
+    <form id="form" autocomplete="off">
+      <fieldset>
+        <legend>MySQL 连接</legend>
+        <div class="grid" id="mysql-grid"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>安全密钥</legend>
+        <div class="grid" id="secret-grid"></div>
+      </fieldset>
+
+      <details>
+        <summary>高级选项（一般不用改）</summary>
+        <div class="grid" id="advanced-grid"></div>
+      </details>
+
+      <div class="actions">
+        <button type="button" class="ghost" id="btn-test">测试连接</button>
+        <button type="submit" class="primary" id="btn-save">保存并开始</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost mini" id="btn-open-dir">打开配置所在目录</button>
+      </div>
+    </form>
+
+    <div class="status" id="status"></div>
+
+    <div class="foot">
+      测试连接会用<b>真正的后端</b>起一次服务并逐项检查数据库与向量库 ——
+      所以它通过就意味着"能用了"，而不是"格式看起来对"。
+    </div>
+  </div>
+</div>
+
+<script>
+  'use strict';
+
+  const api = window.yunmengSetup;
+  const el = {
+    form: document.getElementById('form'),
+    mysqlGrid: document.getElementById('mysql-grid'),
+    secretGrid: document.getElementById('secret-grid'),
+    advancedGrid: document.getElementById('advanced-grid'),
+    status: document.getElementById('status'),
+    test: document.getElementById('btn-test'),
+    save: document.getElementById('btn-save'),
+    openDir: document.getElementById('btn-open-dir'),
+    existingNote: document.getElementById('existing-note'),
+    logo: document.getElementById('logo'),
+  };
+
+  /** 每个字段一个输入框；错误信息放在输入框正下方（不让用户猜是哪一项）。 */
+  const inputs = {};
+
+  if (!api) {
+    setStatus('err', '这个页面需要在云梦枢桌面版里打开（缺少预加载脚本）。');
+    el.form.style.display = 'none';
+  }
+
+  function setStatus(kind, text, detail) {
+    el.status.className = 'status show ' + (kind || '');
+    el.status.textContent = text + (detail ? '\n' + detail : '');
+  }
+
+  function clearStatus() { el.status.className = 'status'; el.status.textContent = ''; }
+
+  function buildField(field, container) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field' + (field.key === 'HNE_SECRET_KEY' || field.key === 'HNE_API_KEY_ENCRYPTION_KEY' ? ' wide' : '');
+
+    const label = document.createElement('label');
+    label.textContent = field.label + (field.required ? ' *' : '');
+    label.htmlFor = 'f-' + field.key;
+    wrap.appendChild(label);
+
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    const input = document.createElement('input');
+    input.type = field.secret ? 'password' : 'text';
+    if (field.numeric) input.inputMode = 'numeric';
+    input.id = 'f-' + field.key;
+    input.placeholder = field.placeholder || '';
+    row.appendChild(input);
+
+    if (typeof field.generate === 'function') {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ghost mini';
+      btn.textContent = '随机生成';
+      btn.addEventListener('click', async () => {
+        const value = await api.generate(field.key);
+        input.value = value;
+        clearError(field.key);
+      });
+      row.appendChild(btn);
+    }
+    wrap.appendChild(row);
+
+    if (field.hint) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = field.hint;
+      wrap.appendChild(hint);
+    }
+
+    const err = document.createElement('div');
+    err.className = 'err';
+    err.id = 'e-' + field.key;
+    wrap.appendChild(err);
+
+    inputs[field.key] = { input, err };
+    container.appendChild(wrap);
+  }
+
+  function clearError(key) {
+    const item = inputs[key];
+    if (!item) return;
+    item.err.textContent = '';
+    item.input.setAttribute('aria-invalid', 'false');
+  }
+
+  function showErrors(errors) {
+    for (const key of Object.keys(inputs)) clearError(key);
+    for (const [key, message] of Object.entries(errors || {})) {
+      const item = inputs[key];
+      if (!item) continue;
+      item.err.textContent = message;
+      item.input.setAttribute('aria-invalid', 'true');
+    }
+  }
+
+  function collect() {
+    const values = {};
+    for (const [key, item] of Object.entries(inputs)) values[key] = item.input.value;
+    return values;
+  }
+
+  async function boot() {
+    const info = await api.getFields();
+
+    for (const field of info.fields) {
+      if (field.advanced) buildField(field, el.advancedGrid);
+      else if (field.key === 'HNE_SECRET_KEY' || field.key === 'HNE_API_KEY_ENCRYPTION_KEY') buildField(field, el.secretGrid);
+      else buildField(field, el.mysqlGrid);
+    }
+
+    for (const [key, value] of Object.entries(info.values || {})) {
+      if (inputs[key]) inputs[key].input.value = value;
+    }
+
+    if (info.existing) {
+      el.existingNote.style.display = '';
+      el.existingNote.innerHTML = '检测到已有一份配置（<b>只有缺的必填项需要补</b>）：'
+        + (info.missing && info.missing.length ? '<code>' + info.missing.join('</code> <code>') + '</code>' : '没有缺项');
+    }
+    setStatus('', '填好后点「测试连接」——它会真的把后端起起来检查一遍。');
+  }
+
+  el.form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    el.save.disabled = true;
+    el.test.disabled = true;
+    setStatus('busy', '正在保存并启动后端…这可能需要几十秒（首次启动要加载本地嵌入模型）。');
+    try {
+      const result = await api.save(collect());
+      if (result && result.ok) {
+        setStatus('ok', result.message || '配置已保存，正在进入控制台…');
+      } else {
+        showErrors((result && result.errors) || {});
+        setStatus('err', (result && result.message) || '没能启动后端。', (result && result.detail) || '');
+        el.save.disabled = false;
+        el.test.disabled = false;
+      }
+    } catch (error) {
+      setStatus('err', '保存失败：' + (error && error.message ? error.message : error));
+      el.save.disabled = false;
+      el.test.disabled = false;
+    }
+  });
+
+  el.test.addEventListener('click', async () => {
+    el.test.disabled = true;
+    el.save.disabled = true;
+    setStatus('busy', '正在用这些配置真的起一次后端并检查各组件…（不改动你的配置）');
+    try {
+      const result = await api.test(collect());
+      showErrors((result && result.errors) || {});
+      if (result && result.ok) {
+        setStatus('ok', result.message || '连接正常：数据库与向量库都可用了。');
+      } else {
+        setStatus('err', (result && result.message) || '测试没通过。', (result && result.detail) || '');
+      }
+    } catch (error) {
+      setStatus('err', '测试失败：' + (error && error.message ? error.message : error));
+    } finally {
+      el.test.disabled = false;
+      el.save.disabled = false;
+    }
+  });
+
+  el.openDir.addEventListener('click', () => api.openConfigDir());
+
+  el.logo.addEventListener('error', () => { el.logo.style.visibility = 'hidden'; });
+
+  if (api) boot().catch((error) => setStatus('err', '初始化失败：' + error.message));
+</script>
+</body>
+</html>

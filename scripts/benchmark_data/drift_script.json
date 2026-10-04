@@ -1,0 +1,39 @@
+{
+  "description": "状态漂移的离线确定性脚本：模拟一个 40 轮的会话，其中模型每 4 轮把 HP 往上写飘一次，并穿插越界、漏输出状态块、上限跳变、脏值、未知字段、嵌套写法、空文本等事件。同一批输入同时跑「不校验（反事实）」与「有校验（实际）」两条线，用来画漂移曲线。不调用任何模型。",
+  "rounds": 40,
+  "bucket": 5,
+  "schema": [
+    {"name": "hp", "type": "meter", "max_field": "max"},
+    {"name": "location", "type": "text"},
+    {"name": "inventory", "type": "list"},
+    {"name": "quests", "type": "tuples"},
+    {"name": "flags", "type": "flags"}
+  ],
+  "initial": {
+    "hp": 100,
+    "max": 100,
+    "location": "灯塔一层",
+    "inventory": ["提灯"],
+    "quests": [{"title": "点亮灯塔", "status": "active"}],
+    "flags": {"灯油": "半桶"}
+  },
+  "drift": {"every": 4, "field": "hp", "delta": 25},
+  "events": {
+    "3": {"hp": 150},
+    "7": {"__no_block__": true},
+    "11": {"hp": {"current": 400, "max": 100}},
+    "15": {"max": 400},
+    "19": {"inventory": ["提灯", 3, ""]},
+    "23": {"金币": 30},
+    "31": {"__no_block__": true},
+    "35": {"location": "   "},
+    "39": {"hp": "一百"}
+  },
+  "notes": [
+    "drift：每 4 轮把 HP 加上 25（模拟模型越写越高）—— 不校验时它会一轮轮滚出合法区间。",
+    "events 里的键是轮次；__no_block__ 表示这一轮模型没输出状态块。",
+    "两条线**各自闭环**：实际这条回注校验后的状态；反事实这条回注模型自己写下的状态。",
+    "第 39 轮把 hp 写成文字：到这一步不校验的系统已经彻底坏掉（越界程度不再可算），",
+    "所以最后一档要看 naive_garbage_rate（脏值率）而不是越界程度。"
+  ]
+}

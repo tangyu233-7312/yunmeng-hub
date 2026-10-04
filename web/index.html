@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>云梦枢 · 交互式叙事引擎</title>
+  <!-- 应用图标：云梦枢（云 + 梦 + 枢/书）。
+       ★ 用 PNG 而不是内联 SVG：这是设计稿导出的位图 Logo（白底已用洪水填充去掉，
+         见 scripts/make_icon_assets.ps1）。带 __WEB_VERSION__ 是为了跟着前端版本一起
+         失效，避免用户看到旧图标 —— 与 importmap 同一套机制。 -->
+  <link rel="icon" href="/console/img/logo-64.png?v=__WEB_VERSION__" />
+  <link rel="apple-touch-icon" href="/console/img/logo-256.png?v=__WEB_VERSION__" />
+  <link rel="stylesheet" href="/console/css/styles.css?v=__WEB_VERSION__" />
+
+  <!--
+    ==================== 导入映射（必须放在所有 module 之前）====================
+    每个前端模块都用**裸名**导入（import { modal } from 'hne/ui'），
+    由下面这张表映射到带版本号的真实 URL。后端渲染本页时会替换掉
+    __WEB_VERSION__（见 app/main.py 的 _render_console_index）。
+
+    为什么值得这么做（真实事故：用户打开 /console 一片空白）：
+      原生 ES Module 是**按 URL 缓存**的，只改其中一部分文件就会出现
+      「新的 views/chat.js + 旧的 ui.js」版本混用，
+      而 import 一个不存在的导出会让**整个模块图加载失败** → 页面全白。
+      加上版本号之后，只要前端代码变过，所有模块的 URL 一起变，
+      浏览器不可能再拼出跨版本的组合。
+
+    为什么还需要 js/boot.js：
+      index.html 自己也可能被缓存住（带着旧版本号），
+      boot.js 会向服务器核对一次真实版本并自动重载，实现自愈。
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "hne/app": "/console/js/app.js?v=__WEB_VERSION__",
+        "hne/api": "/console/js/api.js?v=__WEB_VERSION__",
+        "hne/ui": "/console/js/ui.js?v=__WEB_VERSION__",
+        "hne/auth": "/console/js/views/auth.js?v=__WEB_VERSION__",
+        "hne/cards": "/console/js/views/cards.js?v=__WEB_VERSION__",
+        "hne/books": "/console/js/views/books.js?v=__WEB_VERSION__",
+        "hne/chat": "/console/js/views/chat.js?v=__WEB_VERSION__",
+        "hne/plugins": "/console/js/views/plugins.js?v=__WEB_VERSION__",
+        "hne/providers": "/console/js/views/providers.js?v=__WEB_VERSION__",
+        "hne/presets": "/console/js/views/presets.js?v=__WEB_VERSION__"
+      }
+    }
+  </script>
+</head>
+<body data-web-version="__WEB_VERSION__">
+  <!--
+    ==================== 页面结构说明 ====================
+    这是一个单页应用（SPA），所有界面都由 JS 动态渲染进 #view。
+    没有构建步骤、没有 npm 依赖 —— 直接用浏览器打开就能跑，
+    将来套进 Electron 也不需要改任何代码。
+
+    页面只有几个固定的容器：
+      .topbar     顶部导航（登录后才显示）
+      #view       主内容区，各视图渲染到这里
+      #reqlog     请求日志抽屉（★ 测试用：能看到每一次 API 调用）
+      #modal-root 弹窗挂载点
+      #toasts     轻提示挂载点
+
+    ★ 本文件用**绝对路径**（/console/...）引用资源，而不是相对路径。
+      因为前端挂载在 /console 子路径下，绝对路径能精确对上挂载点，
+      以后换挂载前缀时也只需要改这一处。
+  -->
+
+  <header class="topbar" id="topbar" hidden>
+    <div class="brand">
+      <img
+        class="brand-logo"
+        src="/console/img/logo-64.png?v=__WEB_VERSION__"
+        alt="云梦枢"
+        width="30"
+        height="30"
+      />
+      <span class="brand-text">云梦枢</span>
+      <span class="brand-sub">交互式叙事引擎</span>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button class="nav-item" data-route="chat">叙事会话</button>
+      <button class="nav-item" data-route="providers">模型配置</button>
+      <button class="nav-item" data-route="presets">提示词预设</button>
+      <button class="nav-item" data-route="cards">角色卡</button>
+      <button class="nav-item" data-route="books">世界书</button>
+      <button class="nav-item" data-route="plugins">插件</button>
+    </nav>
+
+    <div class="topbar-right">
+      <button class="ghost-btn" id="btn-reqlog" title="查看每一次 API 调用">请求日志</button>
+      <span class="user-chip" id="user-chip"></span>
+      <button class="ghost-btn" id="btn-logout">退出</button>
+    </div>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <!-- ============ 请求日志抽屉：这是给"测试功能"专门做的 ============ -->
+  <aside class="reqlog" id="reqlog" hidden>
+    <div class="reqlog-head">
+      <strong>API 请求日志</strong>
+      <span class="muted" id="reqlog-count"></span>
+      <button class="ghost-btn small" id="reqlog-clear">清空</button>
+      <button class="ghost-btn small" id="reqlog-close">关闭</button>
+    </div>
+    <div class="reqlog-list" id="reqlog-list"></div>
+  </aside>
+
+  <div id="modal-root"></div>
+  <div id="toasts" class="toasts"></div>
+
+  <!-- boot.js 必须排在 app.js 前面：它负责核对版本，必要时先重载 -->
+  <script type="module" src="/console/js/boot.js?v=__WEB_VERSION__"></script>
+  <script type="module" src="/console/js/app.js?v=__WEB_VERSION__"></script>
+</body>
+</html>

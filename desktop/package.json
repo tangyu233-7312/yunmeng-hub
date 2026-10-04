@@ -1,0 +1,67 @@
+{
+  "name": "yunmeng-hub-desktop",
+  "productName": "云梦枢",
+  "version": "0.1.0",
+  "private": true,
+  "description": "云梦枢（YunMeng Hub）桌面壳：Electron 只当浏览器壳，加载本机后端伺服的控制台",
+  "author": "云梦枢 (YunMeng Hub)",
+  "license": "UNLICENSED",
+  "main": "src/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test --test-timeout=60000 \"test/*.test.js\"",
+    "build:backend": "pwsh -NoProfile -File scripts/build_backend.ps1",
+    "build:installer": "pwsh -NoProfile -File scripts/build_installer.ps1",
+    "pack": "electron-builder --win --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "38.8.6",
+    "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "electron@38.8.6": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "build": {
+    "appId": "com.yunmeng.hub",
+    "productName": "云梦枢",
+    "directories": {
+      "output": "../release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "electronDist": "node_modules/electron/dist",
+    "extraResources": [
+      {
+        "from": "dist/backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "云梦枢",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

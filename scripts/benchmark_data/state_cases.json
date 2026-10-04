@@ -1,0 +1,79 @@
+{
+  "description": "状态一致性校验的确定性用例：把模型可能吐出的 <state> 块分三类（原样接受 / 被校验修正 / 被丢弃），用来量化「状态一致性校验」到底拦住了什么。完全本地、不调用模型。",
+  "cases": [
+    {
+      "name": "正常状态：一个字都不改",
+      "expect": "unchanged",
+      "schema": [
+        {"name": "hp", "type": "meter", "max_field": "max"},
+        {"name": "location", "type": "text"},
+        {"name": "inventory", "type": "list"}
+      ],
+      "previous": {"hp": 80, "max": 100, "location": "灯塔一层", "inventory": ["提灯"]},
+      "raw": {"hp": 70, "max": 100, "location": "灯室", "inventory": ["提灯", "灯油"]}
+    },
+    {
+      "name": "HP 越界：夹到上限",
+      "expect": "corrected",
+      "schema": [{"name": "hp", "type": "meter", "max_field": "max"}],
+      "previous": {"hp": 80, "max": 100},
+      "raw": {"hp": 150, "max": 100}
+    },
+    {
+      "name": "HP 上限一轮内翻倍：拒绝并保留上一轮",
+      "expect": "corrected",
+      "schema": [{"name": "hp", "type": "meter", "max_field": "max"}],
+      "previous": {"hp": 60, "max": 100},
+      "raw": {"hp": 60, "max": 300}
+    },
+    {
+      "name": "HP 写成文字：丢弃该字段、沿用上一轮",
+      "expect": "rejected",
+      "schema": [{"name": "hp", "type": "meter", "max_field": "max"}],
+      "previous": {"hp": 60, "max": 100},
+      "raw": {"hp": "一百"}
+    },
+    {
+      "name": "字段类型写错：inventory 给了对象",
+      "expect": "rejected",
+      "schema": [{"name": "inventory", "type": "list"}],
+      "previous": {"inventory": ["提灯"]},
+      "raw": {"inventory": {"提灯": 1}}
+    },
+    {
+      "name": "模型自己加字段：卡里没声明 → 忽略",
+      "expect": "rejected",
+      "schema": [{"name": "hp", "type": "meter", "max_field": "max"}],
+      "previous": {"hp": 60, "max": 100},
+      "raw": {"hp": 55, "max": 100, "金币": 30}
+    },
+    {
+      "name": "自造数值字段超上下限：夹到边界",
+      "expect": "corrected",
+      "schema": [{"name": "魔力", "type": "number", "min": 0, "max": 100}],
+      "previous": {"魔力": 40},
+      "raw": {"魔力": 180}
+    },
+    {
+      "name": "任务状态写歪：归一到 active",
+      "expect": "unchanged",
+      "schema": [{"name": "quests", "type": "tuples"}],
+      "previous": {"quests": []},
+      "raw": {"quests": [{"title": "点亮灯塔", "status": "莫名其妙"}]}
+    },
+    {
+      "name": "位置给空字符串：沿用上一轮",
+      "expect": "rejected",
+      "schema": [{"name": "location", "type": "text"}],
+      "previous": {"location": "灯室"},
+      "raw": {"location": "   "}
+    },
+    {
+      "name": "嵌套写法的 HP：识别为一条 meter",
+      "expect": "corrected",
+      "schema": [{"name": "hp", "type": "meter", "max_field": "max_value"}],
+      "previous": {"hp": 90, "max_value": 100},
+      "raw": {"hp": {"current": 120, "max": 100}}
+    }
+  ]
+}

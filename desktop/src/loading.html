@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- ★ 加载页是本地 file:// 页面，CSP 收紧到"只允许自己"：
+     不联网、不 eval、不加载任何外部资源。样式与脚本都在本文件内（内联是刻意的，
+     为了不让这个页面依赖 web/ 里的任何东西 —— 桌面壳与前端产物必须解耦）。 -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<title>云梦枢 · 启动中</title>
+<style>
+  /* 配色直接取自「云梦枢 · 星云暗涌」主题：深空底 + 量子紫(状态) / 极光青(交互) */
+  :root {
+    --bg: #0a0d17;
+    --surface: rgba(255, 255, 255, .045);
+    --border: rgba(167, 139, 250, .22);
+    --text: #e6eaf0;
+    --text-dim: #a3adbb;
+    --brand: #a78bfa;
+    --aurora: #00e5ff;
+    --danger: #ff9a9a;
+    --warn: #ffd88a;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  /* 两层星云（左上紫 / 右下青）+ 少量星点，与主题同源 */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      radial-gradient(1200px 700px at 12% -10%, rgba(167, 139, 250, .16), transparent 70%),
+      radial-gradient(1000px 650px at 105% 110%, rgba(0, 229, 255, .12), transparent 70%),
+      radial-gradient(2px 2px at 22% 32%, rgba(255, 255, 255, .55), transparent 60%),
+      radial-gradient(2px 2px at 68% 18%, rgba(255, 255, 255, .40), transparent 60%),
+      radial-gradient(2px 2px at 82% 62%, rgba(0, 229, 255, .45), transparent 60%),
+      radial-gradient(2px 2px at 38% 78%, rgba(167, 139, 250, .50), transparent 60%);
+  }
+
+  .wrap {
+    position: relative;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+  }
+
+  .card {
+    width: min(680px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 30px 34px;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 0 42px rgba(167, 139, 250, .12);
+  }
+
+  .head { display: flex; align-items: center; gap: 14px; }
+
+  .logo {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    filter: drop-shadow(0 0 10px rgba(167, 139, 250, .45));
+    flex: 0 0 auto;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 21px;
+    letter-spacing: .08em;
+    text-shadow: 0 0 12px rgba(167, 139, 250, .45);
+  }
+
+  .sub { color: var(--text-dim); font-size: 12.5px; letter-spacing: .16em; margin-top: 3px; }
+
+  .stage {
+    margin-top: 26px;
+    min-height: 74px;
+    font-size: 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .msg { color: var(--text); }
+  .msg .elapsed { color: var(--text-dim); }
+
+  /* 进度条：不确定进度（后端启动耗时本来就不可预测，假装知道百分比是撒谎） */
+  .bar {
+    margin-top: 20px;
+    height: 3px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .08);
+    overflow: hidden;
+  }
+
+  .bar > i {
+    display: block;
+    height: 100%;
+    width: 34%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, transparent, var(--aurora), var(--brand), transparent);
+    animation: sweep 1.5s ease-in-out infinite;
+  }
+
+  @keyframes sweep {
+    0%   { transform: translateX(-110%); }
+    100% { transform: translateX(320%); }
+  }
+
+  .hidden { display: none !important; }
+
+  .failed h1 { text-shadow: 0 0 12px rgba(255, 120, 120, .4); }
+  .failed .bar { background: rgba(255, 120, 120, .18); }
+  .failed .bar > i { animation: none; transform: none; width: 100%; background: linear-gradient(90deg, rgba(255, 154, 154, .2), var(--danger)); }
+
+  .label {
+    margin: 18px 0 6px;
+    color: var(--text-dim);
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .hint { color: var(--warn); font-size: 13px; }
+  .detail, .path {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    background: rgba(0, 0, 0, .28);
+    border: 1px solid rgba(255, 255, 255, .07);
+    border-radius: 8px;
+    padding: 10px 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    user-select: text;
+  }
+
+  .actions { margin-top: 22px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+  button {
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: rgba(167, 139, 250, .16);
+    border: 1px solid rgba(167, 139, 250, .38);
+    border-radius: 9px;
+    padding: 8px 16px;
+    cursor: pointer;
+  }
+
+  button:hover:not(:disabled) { background: rgba(167, 139, 250, .26); border-color: var(--brand); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.ghost { background: transparent; border-color: rgba(255, 255, 255, .16); }
+  button.ghost:hover { border-color: var(--aurora); background: rgba(0, 229, 255, .10); }
+
+  .foot { margin-top: 20px; color: var(--text-dim); font-size: 12px; }
+  a { color: var(--aurora); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="card">
+    <div class="head">
+      <img class="logo" id="logo" src="../../web/img/logo-256.png" alt="云梦枢">
+      <div>
+        <h1>云梦枢</h1>
+        <div class="sub">YUNMENG HUB · 交互式叙事引擎</div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="msg" id="message">正在准备…</div>
+    </div>
+
+    <div class="bar"><i></i></div>
+
+    <!-- ---------- 成功前的等待 ---------- -->
+    <div id="waiting">
+      <div class="label">正在做的事</div>
+      <div class="detail" id="steps">· 检查端口占用
+· 启动本地后端（FastAPI + uvicorn）
+· 等待 /health 就绪（首次启动要加载本地嵌入模型，可能较慢）</div>
+    </div>
+
+    <!-- ---------- 失败时的可操作信息 ---------- -->
+    <div id="failure" class="hidden">
+      <div class="label">怎么办</div>
+      <div class="hint" id="hint"></div>
+      <div class="label">日志与手动复现</div>
+      <div class="detail" id="detail"></div>
+      <div class="actions">
+        <button id="retry">重试</button>
+        <button class="ghost" id="open-logs">打开日志目录</button>
+        <button class="ghost" id="open-backend-log">看后端日志</button>
+      </div>
+    </div>
+
+    <div class="foot" id="foot">
+      后端是标准 FastAPI 服务，也可以自己用命令行启动（见项目 README）。
+    </div>
+  </div>
+</div>
+
+<script>
+  'use strict';
+
+  const el = {
+    card: document.getElementById('card'),
+    logo: document.getElementById('logo'),
+    message: document.getElementById('message'),
+    waiting: document.getElementById('waiting'),
+    failure: document.getElementById('failure'),
+    hint: document.getElementById('hint'),
+    detail: document.getElementById('detail'),
+    retry: document.getElementById('retry'),
+    openLogs: document.getElementById('open-logs'),
+    openBackendLog: document.getElementById('open-backend-log'),
+    foot: document.getElementById('foot'),
+  };
+
+  const api = window.yunmeng;
+
+  // ★ 没有 preload（例如开发者直接用浏览器打开本文件）时，给一句实话而不是白屏。
+  if (!api) {
+    el.message.textContent = '这个页面需要在云梦枢桌面版里打开（缺少预加载脚本）。';
+    el.waiting.classList.add('hidden');
+    el.foot.textContent = '';
+  }
+
+  let paths = null;
+  let latest = null;
+
+  function render(state) {
+    if (!state) return;
+    latest = state;
+
+    if (state.phase === 'ready') {
+      el.failure.classList.add('hidden');
+      el.waiting.classList.remove('hidden');
+      el.message.textContent = state.consoleUrl
+        ? '后端就绪，正在进入控制台…'
+        : '后端就绪。';
+      return;
+    }
+
+    if (state.phase === 'failed') {
+      el.card.classList.add('failed');
+      el.message.textContent = state.message || '后端没有起来';
+      el.hint.textContent = state.hint || '';
+      el.detail.textContent = state.detail || '';
+      el.failure.classList.remove('hidden');
+      el.waiting.classList.add('hidden');
+      return;
+    }
+
+    el.card.classList.remove('failed');
+    el.failure.classList.add('hidden');
+    el.waiting.classList.remove('hidden');
+    el.message.textContent = state.message || '正在准备…';
+  }
+
+  async function withPaths(fn) {
+    if (!paths) paths = await api.getPaths();
+    return fn(paths);
+  }
+
+  if (api) {
+    // ★ 先订阅再拉取：主进程可能在页面加载完成前就已经广播过状态，
+    //   只订阅会永远停在"正在准备…"，只拉取会漏掉后续变化。
+    api.onState(render);
+    api.getState().then(render).catch(() => {});
+
+    el.retry.addEventListener('click', async () => {
+      el.retry.disabled = true;
+      el.card.classList.remove('failed');
+      el.failure.classList.add('hidden');
+      el.waiting.classList.remove('hidden');
+      el.message.textContent = '重新开始…';
+      try {
+        render(await api.retry());
+      } catch (error) {
+        el.message.textContent = '重试失败：' + (error && error.message ? error.message : error);
+      } finally {
+        el.retry.disabled = false;
+      }
+    });
+
+    el.openLogs.addEventListener('click', () => withPaths((p) => api.openPath(p.logsDir)));
+    el.openBackendLog.addEventListener('click', () => withPaths((p) => api.openPath(p.backendLogFile)));
+
+    // 图片缺失不该让页面变成"图裂"的样子
+    el.logo.addEventListener('error', () => {
+      el.logo.style.visibility = 'hidden';
+    });
+  }
+</script>
+</body>
+</html>

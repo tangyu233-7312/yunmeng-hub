@@ -1,0 +1,120 @@
+# ============================================================
+# 异构大模型交互式叙事引擎 —— Git 忽略规则
+# ============================================================
+
+# ---------- 敏感信息（务必忽略，绝不能提交） ----------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+# ★ 这两条**必须带前导斜杠**（只匹配仓库根）：
+#   gitignore 里"不含斜杠的模式匹配任意层级"，所以裸写 `build/` 会连
+#   `desktop/build/` 一起忽略掉 —— 而那里有我们要随包发布的 `icon.ico`。
+#   更要紧的是 git 的另一条规则：**父目录被忽略时，里面的文件无法用否定模式放行**，
+#   所以"先被忽略、再 `!` 放行"这条路根本走不通（本轮为此返工三次）。
+#   锚定到根目录才是正解。
+/build/
+/dist/
+
+# ---------- 项目运行期数据 ----------
+data/chroma/
+data/logs/
+data/exports/
+*.sqlite3
+*.db
+*.sql.gz
+
+# 探针/脚本跑出来的报告与截图（随时可重新生成，不必进版本库）
+# ★ 用通配而不是逐个列文件名：以前是逐个列的，于是**每次新增一个脚本产出就要回来补一行**，
+#   漏掉的那些（benchmark_report / token_accuracy_report / ui_nebula_*.png …）
+#   就变成 git status 里的噪声。现在按"产出物形状"忽略：
+#     · data/*.png            —— 探针的截图（含新主题的 nebula-*.png）
+#     · data/*_report.json/md —— 各脚本的报告
+#     · data/benchmark_drift.svg
+#   ★ 注意别误伤要进库的素材：`data/test-cards/*.json`（测试卡）在子目录里，不受影响。
+data/*.png
+data/*_report.json
+data/*_report.md
+data/benchmark_drift.svg
+data/_*.txt
+
+# ---------- 编辑器 / 操作系统 ----------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+# 提交信息草稿（重建历史时临时写的，不该进库）
+.git-commit-msg.txt
+# ★ AI 协作纪律（省 Token / 交付流程）。这份**只在本机存在、不进公开仓库**：
+#   项目仓库讲项目本身，协作纪律属于本地工作方式。
+#   规则原文放在这里，README / docs/handoff*.md 只保留一行指引
+#   （2026-10-04 从公开仓库移出；当时把那个提交重写了，所以它从未出现在 GitHub 上）。
+docs/ai-session-rules.md
+# ★ 重建历史时把旧 .git 改名保留用的目录。
+#   它**必须被忽略**：改名后它只是普通目录，`git add -A` 会连里面的
+#   613 个旧 git 内部文件（含全部旧提交对象）一起暂存 —— 那等于把
+#   "要清掉的使用痕迹"原封不动搬进新仓库（本轮真的这么踩了一次）。
+.git.old-preserved/
+*.bundle
+
+# ---------- 本地/个人产物（绝不进公开仓库）----------
+# ★ .dsh-drop/ 是"丢给 AI 的文件"暂存目录（截图、设计稿等个人痕迹），
+#   2026-10-03 审计发现有文件**已经被跟踪过**：已 git rm --cached 取消跟踪
+#   （磁盘文件保留，备份在仓库外的 hetero-narrative-engine-backup-*/）。
+.dsh-drop/
+# Electron 打包产物 / 依赖 / 中文路径备份
+node_modules/
+dist_electron/
+out/
+release/
+hetero-narrative-engine-backup-*/
+# ---------- Electron 桌面壳（desktop/）----------
+# ★ 坑一（本轮真的踩了）：上面那条 `build/` 是**不带前导斜杠**的模式，
+#   而 gitignore 的规则是"不含斜杠的模式匹配任意层级"——所以它**会**匹配
+#   `desktop/build/`。第一版我按"只匹配根目录"理解，结果 `desktop/build/icon.ico`
+#   被静默忽略（`git status` 里根本看不到它），而 README 却写着"图标随包发布"。
+#
+# ★ 坑二（紧接着踩了）：修坑一时我写的是 `!desktop/build/**` —— 豁免开得**太宽**，
+#   于是 PyInstaller 的工作目录（234MB：xref、toc、.pkg、临时 exe）与
+#   构建时暂存的模型（87MB）**全都准备进版本库**了。
+#
+# ★ 坑三（第三次才对）：只精确排除生成物子目录也不行 —— 根目录那条裸写的 `build/`
+#   仍然会匹配 `desktop/build/`，而 git 的规则是"**父目录被忽略时，里面的文件无法用
+#   否定模式放行**"，于是 icon.ico 又变成"静默不提交"，与 README 的说法再次相反。
+#   最终做法（两处配合）：
+#     ① 上面 Python 那两条 `build/` / `dist/` 加前导斜杠锚定到**仓库根**（它们本来就只指根目录）；
+#     ② 这里只精确排除 desktop/build/ 下面的生成物子目录。
+#   这样 icon.ico 能被正常纳入，而构建产物一个都进不来。
+desktop/build/pyinstaller/
+desktop/build/model-data/
+desktop/build/selfcheck-model-cache/
+# 依赖与安装包产物（体积大、可重建、不入库）
+desktop/node_modules/
+# 打包专用 venv（不污染验收用的 .venv；约 400MB，绝不入库）
+desktop/.build-venv/
+desktop/dist_electron/
+desktop/release/
+desktop/out/
+desktop/dist/
+# npm / electron 的本地日志与缓存
+desktop/npm-debug.log*
+desktop/.npm/
+desktop/.electron/
+desktop/.cache/
