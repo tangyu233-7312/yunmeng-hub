@@ -29,6 +29,14 @@ import urllib.request
 
 import websockets
 
+# ★ Windows 控制台默认是 GBK（cp936），打印一个 GBK 编不出来的字符（比如 "✓"）
+#   就会直接 UnicodeEncodeError 抛出去 —— 而这个脚本跑在验收中间，
+#   于是"断言已经通过"也会被记成"这一步失败"（实测踩到：按钮断言刚过就崩）。
+#   项目里 scripts/smoke_test.py 早就用了同一招，这里补齐。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def load_env_file(path: str) -> dict:
     """极简 .env 解析（只认 KEY=VALUE，去掉引号；与后端读法保持一致）。"""
@@ -143,15 +151,34 @@ async def main() -> int:
         field_defs = json.loads(fields)
         keys = [f["key"] for f in field_defs]
 
+        # ★★ 必须在**真页面里**确认「随机生成」按钮真的画出来了（本轮真 bug 的墓碑）。
+        #   之前这里只有下面那句"直接调 generate()"的填值 —— 它**绕过了按钮**，
+        #   于是"按钮从来没被创建"这件事验收完全看不见（用户打开一看：按钮不在）。
+        #   教训：验收要**走用户看到的那条路**，不能替用户把活干了。
+        generatable = [f["key"] for f in field_defs if f.get("generatable")]
+        buttons = await cdp.eval(
+            "[...document.querySelectorAll('button')]"
+            ".filter(b => b.textContent.trim() === '随机生成').length"
+        )
+        if not generatable:
+            print("× 字段里没有任何「可生成」的项（generatable 全为假）—— 按钮就没理由存在")
+            return 10
+        if buttons != len(generatable):
+            print(f"× 「随机生成」按钮数量不对：页面里 {buttons} 个，可生成字段 {len(generatable)} 个"
+                  f"（页面若一个都没有，用户就找不到向导提示里说的那个按钮）")
+            return 11
+        print(f"  「随机生成」按钮 {buttons} 个，与可生成字段 {len(generatable)} 个一一对应 —— 不再有「有文案没按钮」")
+
         values = {f["key"]: (f.get("default") or "") for f in field_defs}
         from_env = 0
         for key in keys:
             if env_values.get(key):
                 values[key] = env_values[key]
                 from_env += 1
-        # 生成型字段（密钥）用页面自己的生成器，和用户点「随机生成」完全一样
+        # 生成型字段（密钥）：这里仍然走"生成器"，因为要的是可复现的自动化填值；
+        # 但**按钮是否存在**已经由上面那条断言单独守住了（两件事分开测，别互相掩盖）。
         for f in field_defs:
-            if f.get("generate") and not (values.get(f["key"]) or "").strip():
+            if f.get("generatable") and not (values.get(f["key"]) or "").strip():
                 values[f["key"]] = await cdp.eval(
                     f"window.yunmengSetup.generate({json.dumps(f['key'])})", True
                 )

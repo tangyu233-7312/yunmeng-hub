@@ -149,7 +149,7 @@ Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue
   scripts\smoke_test.py           → 184 / 0（需先启服务）
   scripts\ui_probe.py             → 147 项检查 0 失败
   scripts\benchmark.py            → 退出码 0（--from-db 只读回放也要能跑）
-  desktop\ 的 npm test            → 115 / 0（改了 desktop/ 才需要）
+  desktop\ 的 npm test            → 122 / 0（改了 desktop/ 才需要）
 注意：pytest 和 smoke_test 不要同时跑（会互相误报）。
 
 现在我要做的事是：<在这里写你的新需求 / 贴上问题与截图>
@@ -683,7 +683,7 @@ new_string = 'class Foo(BaseModel):'
       **向量库故障降级不报错**、删会话连带清记忆、清空记忆不碰对话记录
 - [x] `tests/test_narrative.py` 增加纯单元的关键词扫描用例（命中/未命中/禁用/scan_depth/预算/大小写）
 - [x] 正反两条断言：命中时提示词里有该设定、未命中时**没有**；有回忆时有「相关回忆」小节、没有时不出现
-- [x] `scripts/smoke_test.py` 新增「世界书关键词触发 + 向量长期记忆」步骤，**122 项全过**、跑完无残留
+- [x] `scripts/smoke_test.py` 新增「世界书关键词触发 + 向量长期记忆」步骤，**142 项全过**、跑完无残留
 - [x] 真实浏览器（CDP）验证：界面上显示「世界书命中 1 条 · 回忆 1 条」、
       提示词弹窗只含命中的条目、「记忆」面板能检索到 2 条并能新增到 3 条、控制台无报错
 - [x] 更新 `README.md` / `docs/handoff.md` / `docs/pitfalls.md`
@@ -3983,8 +3983,8 @@ PowerShell 脚本**必须带 UTF-8 BOM**，否则 5.1 按 ANSI 读、中文全�
 | `smoke_test.py`（对**打包后端**） | 184 / 0 | **184 / 0** | ✅ 一致 |
 | `ui_probe.py`（对**打包后端**） | 147 / 0 | **147 / 0，控制台报错 0 条** | ✅ 一致 |
 | `benchmark.py` + `--from-db`（对**打包后端**） | 退出码 0 | **0 / 0** | ✅ 一致 |
-| `desktop/` Node 自测 | 53 → 99 | **115 passed / 0 failed** | ✅ |
-| 安装包验收 `verify_installer.ps1` | （本轮新增） | **15 项通过 / 0 失败** | ✅ |
+| `desktop/` Node 自测 | 53 → 99 → 115 | **122 passed / 0 failed**（末轮新增 7 条：向导按钮契约） | ✅ |
+| 安装包验收 `verify_installer.ps1` | （本轮新增） | **15 项通过 / 0 失败**（其中第 5 步内部新增一道门槛：「随机生成按钮真的画出来了吗」） | ✅ |
 | `prepublish_check.py --name <真名>` | 0 BLOCKER | **0 BLOCKER** | ✅ |
 | 库内计数（真实账号名下） | 4 卡 / 3 书 / 4 会话 / 39 消息 | **完全一致**（users 1，测试账号已被探针清理） | ✅ |
 
@@ -3999,6 +3999,64 @@ PowerShell 脚本**必须带 UTF-8 BOM**，否则 5.1 按 ANSI 读、中文全�
 - **MySQL 仍要用户自己装**（应用不附带数据库；首启向导只负责把连接信息填对并当场验证）；
 - 安装包 **234.8 MB**（其中后端 293.8 MB 压缩后）—— 想更小只能裁依赖或让模型联网下载，
   两条都有代价，本轮没做。
+
+#### ★★ 用户第一次真装时抓到的 bug：「随机生成」按钮从来没画出来
+
+**这是本阶段最值得记的一条**，因为它同时暴露了"实现错了"和"验收方式错了"两件事。
+
+**现象**（用户装机后第一眼就撞上）：首次设置页里，两个密钥字段下方的提示写着
+"点右边的「**随机生成**」更省事"，而**界面上根本没有那个按钮** ——
+用户只能手敲 64 位随机串，而那个长度人根本敲不对，于是向导保存**必然失败**
+（报"还有几项需要填好"）。
+
+**根因**：一条跨 **IPC** 的契约两头不一致。
+
+```js
+// 主进程 main.js（改前）：发过去的是**字符串或 null**
+generate: typeof f.generate === 'function' ? f.key : null,
+// 渲染端 setup.html（改前）：却按**函数**判断
+if (typeof field.generate === 'function') { /* 建按钮 */ }
+```
+
+`typeof 'HNE_SECRET_KEY' === 'function'` **永远为假** ⇒ 按钮分支永远不执行。
+本质是：**函数过不了进程边界**，能过的只有数据；契约必须是布尔量 `generatable`。
+
+**★ 为什么我的自动验收没抓到它（这条比 bug 本身更有价值）**：
+验收脚本填密钥时是**直接调用** `window.yunmengSetup.generate(key)` ——
+**绕过了按钮**，而且脚本里**没有任何一条断言检查"按钮在不在"**。
+也就是说：**我的测试替用户把活干了，于是它替我把 bug 藏住了。**
+验收一旦"替用户操作"，它就不再证明用户能做到这件事。
+
+**修法（两边一起）**：
+
+1. 主进程改发布尔量 `generatable: typeof f.generate === 'function'`；
+2. 渲染端改判 `if (field.generatable)`；
+3. **新增 `desktop/test/setup-ui.test.js`**（7 条）：读源码把这两个文件的契约绑死 ——
+   任何一边单方面改名/改类型就红。其中一条专门断言"文案提到「随机生成」时，
+   代码里必须真的有创建它的分支"（**提到就必须真的有，否则等于骗用户**）；
+4. **验收脚本加一条真页面断言**：数 `button` 里 textContent 为「随机生成」的个数，
+   必须与"可生成字段数"一一对应 —— 这才是"走用户看到的那条路"。
+   （它是**第 5 步 CDP 内部的一道门槛**：不满足即整步失败；PowerShell 汇总仍是 15 项。）
+
+> ★ 修这个 bug 时还顺手踩到一个"脚本把自己绊倒"的坑：CDP 脚本的打印里带了一个
+> `✓`（U+2713），而 **Windows 控制台是 GBK**，`UnicodeEncodeError` 直接抛出 ——
+> **断言已经通过**，却被记成"这一步失败"（我一度以为是修复没生效）。
+> 修法：脚本开头把 stdout/stderr 改成 UTF-8 并 `errors="replace"`，
+> 打印里不再用 GBK 编不出的符号。`scripts/smoke_test.py` 早就这么做了，这里补齐。
+
+> 教训一句话：**断言要盯"用户看得到的东西"，不要替用户点按钮然后声称按钮能用。**
+> 同类教训本项目已经有第三条了（前两条：改了默认端口却只测旧默认值；
+> 验收脚本没清场导致读到旧变量）。
+
+#### 本轮改动的文件（末轮：修向导按钮）
+
+| 文件 | 改动 |
+|---|---|
+| `desktop/src/main.js` | 字段契约 `generate:<字符串>` → `generatable:<布尔>`（并写清注释说明为什么） |
+| `desktop/src/setup.html` | 按钮判据改成 `field.generatable` |
+| `desktop/test/setup-ui.test.js` | **新增** 7 条静态契约断言 |
+| `desktop/scripts/verify_installer_cdp.py` | **新增**"按钮真的画出来了吗"断言（15 → 16 项） |
+| `README.md` / `desktop/README.md` / `docs/handoff*.md` | Node 自测数 115 → 122；本小节 |
 
 
 

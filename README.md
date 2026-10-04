@@ -19,7 +19,7 @@
 > **877 项 `pytest` 全绿**（另有 2 项按环境变量跳过）、**184 项端到端冒烟全过**、
 > **147 项真实浏览器探针全过**（控制台报错 0 条）。
 > 桌面版已完成三个阶段：Electron 壳 → PyInstaller 打包后端 → **Windows 安装包**
-> （`desktop/` 自带 **115 项 Node 自测**，多出一条命令即可装出来用，见 `desktop/README.md` §8）。
+> （`desktop/` 自带 **122 项 Node 自测**，多出一条命令即可装出来用，见 `desktop/README.md` §8）。
 > **仍然需要你自备 MySQL** —— 应用不附带数据库；后端也不再需要 Python。
 
 前端（后续）：HTML / CSS / JavaScript，已通过 Electron 打包为桌面应用。
@@ -1630,7 +1630,7 @@ SSE 事件类型：
 .\.venv\Scripts\python.exe scripts\benchmark.py
 .\.venv\Scripts\python.exe scripts\benchmark.py --from-db
 
-# 5) 桌面壳的 Node 自测（115 项，不需要 MySQL，也不需要 Electron）
+# 5) 桌面壳的 Node 自测（122 项，不需要 MySQL，也不需要 Electron）
 cd desktop
 npm test
 ```

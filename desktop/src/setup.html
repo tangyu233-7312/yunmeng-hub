@@ -197,7 +197,15 @@
     input.placeholder = field.placeholder || '';
     row.appendChild(input);
 
-    if (typeof field.generate === 'function') {
+    // ★★ 这里踩过一个真 bug（用户实测抓到，值得写清楚）：
+    //   第一版写的是 `typeof field.generate === 'function'` —— 但字段定义来自
+    //   **主进程的 IPC**，函数根本过不了进程边界：主进程发过来的是
+    //   `generate: 'HNE_SECRET_KEY'`（字符串）或 `null`。
+    //   于是这个条件**永远为假**，"随机生成"按钮从来不会被创建，
+    //   而下面的提示文字却一直写着"点右边的「随机生成」" —— 用户照着找，什么也没有。
+    //   现在契约是显式布尔量 `generatable`（main.js 算好再发），
+    //   并且有一条静态断言把这两个文件绑在一起（desktop/test/setup-ui.test.js）。
+    if (field.generatable) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'ghost mini';

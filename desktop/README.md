@@ -100,7 +100,7 @@ npm start
 
 ```powershell
 cd desktop
-npm test        # Node 自带 test runner，115 条用例
+npm test        # Node 自带 test runner，122 条用例
 ```
 
 覆盖的都是"起后端"这条路上真正会出错的地方：
@@ -149,7 +149,7 @@ desktop/
     build_installer.ps1   ★ 一键出 NSIS 安装包（含产物核对，见 §8）
     verify_installer.ps1  ★ 装→首启向导→控制台→卸载不删数据 的自动验收
     verify_installer_cdp.py  上面那个脚本里"填真实表单"的那一步（CDP）
-  test/                   Node 自测（npm test，115 条）
+  test/                   Node 自测（npm test，122 条）
   build/icon.ico          生成物（16/24/32/48/64/128/256）——★ 要入库，随包发布
   build/pyinstaller 等    构建中间物 —— 不入库（.gitignore）
   dist/backend/           打包产物（backend.exe + _internal/，约 290MB）—— 不入库
@@ -203,7 +203,7 @@ release/                  安装包产物（仓库根）—— 不入库
 
 ## 6. 验收：手工点测清单
 
-自动化能覆盖的东西都写进 `npm test`（115 条）与四件套了；下面这些是**必须手点**的。
+自动化能覆盖的东西都写进 `npm test`（122 条）与四件套了；下面这些是**必须手点**的。
 
 - [ ] `npm start` 后能进控制台（不是白屏）
 - [ ] 启动阶段能看到加载页；故意把 `.env` 改坏后能看到**可操作**的报错

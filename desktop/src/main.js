@@ -1176,7 +1176,13 @@ function registerIpc() {
         numeric: Boolean(f.numeric),
         advanced: Boolean(f.advanced),
         default: f.default,
-        generate: typeof f.generate === 'function' ? f.key : null,
+        // ★★ 这里踩过一个真 bug（用户实测抓到）：第一版发的是
+        //   `generate: typeof f.generate === 'function' ? f.key : null` —— 字符串，
+        //   而渲染端判断的是 `typeof field.generate === 'function'`，**永远为假**，
+        //   于是"随机生成"按钮从来没被创建，提示文字却让人去找它。
+        //   根因是**函数过不了 IPC 边界**，能过的只有数据 —— 所以契约必须是布尔量。
+        //   契约两头都别改单边：desktop/test/setup-ui.test.js 把这两个文件绑在一起。
+        generatable: typeof f.generate === 'function',
       })),
       values,
       existing: parsed !== null,

@@ -23,7 +23,7 @@
 > **真的起一次并逐项检查组件**，通过才进控制台；配置写在 **userData**（安装目录之外，
 > 卸载重装不丢）。壳会**优先用打包好的 `backend.exe`**（用户机无需装 Python）、
 > 选空闲端口、加载 `/console/`，关窗/强杀都不留残余进程。
-> **`web/` 与 `app/` 一行未改**。自带 115 条 Node 自测与一键构建脚本（含深度自检）。
+> **`web/` 与 `app/` 一行未改**。自带 122 条 Node 自测与一键构建脚本（含深度自检）。
 > 同时收紧了发布闸门：`prepublish_check.py --name` 命中**从 WARN 改成 BLOCKER**
 > （真事故：一份文档里带着真账号名）。详见 `handoff.md` §31；怎么跑见 **`desktop/README.md`**。
 >
@@ -60,10 +60,10 @@
 
 | 项 | 值 |
 |---|---|
-| 验收（第十九轮跑完，串行） | `pytest -q` **877 passed**（+2 skipped：真实预设用例需设 `HNE_REAL_PRESET`） · `smoke_test.py` **184 / 0** · `ui_probe.py` **147 项 0 失败、控制台报错 0 条** · `benchmark.py` 与 `--from-db` **退出码 0** · `desktop/` Node 自测 **115 / 0** · 安装包验收 **15 / 0** |
+| 验收（第十九轮跑完，串行） | `pytest -q` **877 passed**（+2 skipped：真实预设用例需设 `HNE_REAL_PRESET`） · `smoke_test.py` **184 / 0** · `ui_probe.py` **147 项 0 失败、控制台报错 0 条** · `benchmark.py` 与 `--from-db` **退出码 0** · `desktop/` Node 自测 **122 / 0** · 安装包验收 **15 / 0** |
 | ★ 第十九轮：**安装包（阶段 3）** | `release\云梦枢 Setup 0.1.0.exe`（234.8 MB，NSIS x64，**未签名**）。装出来的那份只有两样东西：`resources/app.asar`（13 个文件）与 `resources/backend/`（863 个文件）；配置/日志/向量库全在 userData。新增 `npm run build:installer` 与 `scripts/verify_installer.ps1`（静默装到临时目录 → 首启向导 → 控制台 → 卸载后**数据仍在**，15 项全绿）。详见 `handoff.md` §31.15 与 `desktop/README.md` §8 |
 | ★ 第十九轮：修掉的安全洞 | **打包态不再读安装目录里的 `.env`**。原来 `appRoot` 在打包后就是安装目录，"仓库根兜底"于是变成读 `resources/.env` —— 那里若有一份别人的 `.env`，应用会拿**别人的口令与签名密钥**去连库。现在 `packaged===true` 一律不兜底（`src/packaging.js`，单测 + 验收脚本两处钉住） |
-| ★ 第十八轮：Electron 桌面版（阶段 1 + 2 + 首启向导） | `desktop/` 可运行：**首启向导**（没有配置时先让你填 MySQL 与密钥，保存时后端真的起一次逐项自检）→ **优先用打包后端 `backend.exe`**（用户机无需装 Python）→ 选空闲端口 → 加载 `/console/`；关窗/强杀不残留；**`web/` 与 `app/` 一行未改**。配置在 userData（安装目录之外）。自带 **115 条 Node 自测** + 一键构建脚本（含**深度自检**）。详见本文 §22 与 `desktop/README.md` |
+| ★ 第十八轮：Electron 桌面版（阶段 1 + 2 + 首启向导） | `desktop/` 可运行：**首启向导**（没有配置时先让你填 MySQL 与密钥，保存时后端真的起一次逐项自检）→ **优先用打包后端 `backend.exe`**（用户机无需装 Python）→ 选空闲端口 → 加载 `/console/`；关窗/强杀不残留；**`web/` 与 `app/` 一行未改**。配置在 userData（安装目录之外）。自带 **122 条 Node 自测** + 一键构建脚本（含**深度自检**）。详见本文 §22 与 `desktop/README.md` |
 | ★ 第十八轮：发布闸门收紧 | `prepublish_check.py --name` 命中**从 WARN 改成 BLOCKER**（真事故：一份文档带着真账号名却"通过"了） |
 | ★ 第十八轮：**git 历史已清干净** | 旧 10 个提交里全是使用痕迹（真名+真邮箱在作者/提交者字段、`C:\Users\<真名>\...`、`.dsh-drop/` 3 个个人文件）⇒ 收尾时压成**最终那一个提交（1 个提交 / 201 个文件，哈希见 `git log --oneline`）**，署名 `tangyu233-7312 <279469304+tangyu233-7312@users.noreply.github.com>`（GitHub 的 noreply 地址），旧哈希已 `gc` 清除（`git cat-file` 对旧哈希一律 "已清除"）。完整旧历史与两个中间态都备份在**仓库外**（bundle 可还原）。详见 `handoff.md` §31.13 |
 | ★ 第十七轮：系统定名 + 图标 + 主题 | 系统名 **云梦枢**；顶栏/登录页/favicon 换成设计稿图标（白底已用四角洪水填充去掉，脚本可复现）；新增内置 CSS 主题「**云梦枢 · 星云暗涌**」（深空底 + 星云 + 40 颗三档星点 + 毛玻璃 + 细线微光，一键可开关、完全可逆） |
@@ -1152,7 +1152,7 @@ HTML 开场白渲染在 `srcdoc` iframe 里，那是一份**独立文档**：
 cd desktop
 npm install
 npm start          # 起桌面版
-npm test           # Node 自测（不需要 MySQL，也不需要 Electron；第十九轮时 115 条）
+npm test           # Node 自测（不需要 MySQL，也不需要 Electron；第十九轮时 122 条）
 
 # 想要"免装 Python"的形态（阶段 2）：构建打包后端
 powershell -File scripts/build_backend.ps1   # 产物 desktop/dist/backend/（约 290MB，含 87MB 模型）
@@ -1181,7 +1181,7 @@ powershell -File scripts/build_backend.ps1   # 产物 desktop/dist/backend/（�
 
 | 场景 | 结果 |
 |---|---|
-| `npm test`（Node 自测） | 第十八轮当时 **73 / 0**；第十九轮已增到 **115 / 0**（2.2s） |
+| `npm test`（Node 自测） | 第十八轮当时 **73 / 0**；第十九轮 **99 → 115**；末轮修向导 bug 时增到 **122 / 0**（2.2s） |
 | 构建 + **深度自检** | ✅ `database: ok` / `vector_store: ok` / 顶层 `ok`，自检能自己退出 |
 | 壳优先用打包后端 | ✅ `使用打包后端 backend.exe（无需本机 Python）` + `mode=sidecar` |
 | 8000 被别的程序占住 | ✅ 换成空闲端口（`端口选定 60625（来源 preferred-busy）`） |
