@@ -632,14 +632,41 @@ def summary_of(kind: str, config: dict[str, Any]) -> str:
 # ==================================================================
 #  CRUD
 # ==================================================================
+#: ★★ 新账号默认启用的主题（本轮加，用户提的需求）。
+#
+# ==================== 为什么要有它 ====================
+# 用户反馈（2026-10-04）：换到 SQLite 之后新建的账号打开控制台是**浅色**的，
+# 而他从 MySQL 那份账号进去是深空星云主题 —— 同一个应用、两副面孔。
+# 根因：`yunmeng_nebula` 只在**内置示例目录**（`PLUGIN_CATALOG`）里，
+# 需要用户自己去「插件」页点「添加」。而目录条目**刻意不会自动生效**
+# （那条规则本身是对的：内置示例不该偷偷改用户的提示词/样式），
+# 但"项目默认视觉方案"显然应该开箱就是默认 —— 这是两件事。
+#
+# ==================== 只在"这个账号第一次被初始化"时做 ====================
+# 判据用的是 `users.plugin_defaults_seeded`：它是一个**只发一次**的墓碑位。
+# 所以：
+#   · 新注册的账号 → 第一次访问插件列表时连主题一起装上并启用；
+#   · **老账号 → 完全不动**（他们早就 seeded 过了）——
+#     这一点很重要：用户可能**故意**把主题关掉或删掉，
+#     我们绝不能在升级时把它又打开（那就是"替你改设置"）。
+DEFAULT_ENABLED_THEME_KEY = "yunmeng_nebula"
+
+
+def _catalog_spec(key: str) -> dict[str, Any] | None:
+    """按 key 从内置目录里取一条（取不到返回 None）。"""
+    return next((item for item in PLUGIN_CATALOG if item["key"] == key), None)
+
+
 def ensure_defaults(db: Session, user_id: int) -> None:
-    """保证账号里存在两个默认插件（空壳），**只发一次**。
+    """保证账号里存在两个默认插件（空壳）+ **默认启用的主题**，只发一次。
 
     ★ 为什么可以做在"列表"里：默认插件是**空壳**，装上也不会改变任何行为；
       而"注册时就建"会让注册流程依赖插件模块，"从别处导入账号"也会漏。
     ★ 用 `users.plugin_defaults_seeded` 当墓碑位：用户把默认插件删光之后，
       下一次访问不能又冒出来 —— 那就不是"可删除"了
       （内置守卫预设用的是同一招，见 users.builtin_preset_dismissed）。
+    ★ 第二轮：主题也在这里装（见 `DEFAULT_ENABLED_THEME_KEY` 的说明）——
+      只对新账号生效，老账号一个字节都不动。
     """
     user = db.get(User, user_id)
     if user is None or bool(getattr(user, "plugin_defaults_seeded", False)):
@@ -657,9 +684,36 @@ def ensure_defaults(db: Session, user_id: int) -> None:
                 enabled=True,
             )
         )
+
+    theme = _catalog_spec(DEFAULT_ENABLED_THEME_KEY)
+    if theme is not None:
+        db.add(
+            Plugin(
+                user_id=user_id,
+                name=theme["name"],
+                kind=theme["kind"],
+                description=theme["description"],
+                version=theme.get("version"),
+                author=theme.get("author"),
+                source_url=theme.get("source"),
+                config=validate_config(theme["kind"], theme["config"]),
+                # ★ enabled=True：这是"项目默认视觉方案"，开箱就该是它。
+                #   ★ 不给 is_builtin —— 用户要能像自己的插件那样改它、停它、删它
+                #   （`is_builtin` 是给"可更新/可还原的内置条目"用的，这里不需要）。
+                is_builtin=False,
+                priority=int(theme.get("priority", 100)),
+                enabled=True,
+            )
+        )
+
     user.plugin_defaults_seeded = True
     db.commit()
-    logger.info("初始化默认插件 | user_id={} count={}", user_id, len(DEFAULT_PLUGIN_SPECS))
+    logger.info(
+        "初始化默认插件 | user_id={} count={} theme={}",
+        user_id,
+        len(DEFAULT_PLUGIN_SPECS),
+        DEFAULT_ENABLED_THEME_KEY,
+    )
 
 
 def list_plugins(db: Session, user_id: int) -> list[Plugin]:

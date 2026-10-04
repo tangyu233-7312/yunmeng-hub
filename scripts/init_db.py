@@ -5,6 +5,14 @@
   2. 按 ORM 模型建表（已存在的表会被跳过，可重复执行，是「幂等」的）
   3. 打印建好的表与字段，方便你肉眼核对
 
+==================== ★ 现在还必要吗？====================
+**正常使用时不需要运行它了**：后端每次启动都会自动建表
+（见 `app/db/bootstrap.py` 的 `ensure_schema`），这正是"安装即用"的一部分。
+本脚本保留下来是为了这些场合：
+  · 想**先看清结构**再启动服务（--dump-sql / 结构核对）；
+  · 想用 --drop 干净地重建（开发/演示前的重置）；
+  · 排障时想单独确认"数据库到底能不能连、表到底建了没有"。
+
 ==================== 用法 ====================
 在项目根目录执行：
 
@@ -16,6 +24,9 @@
 
     # 先删掉所有表再重建（★ 会清空数据，只在开发阶段用）
     .\\.venv\\Scripts\\python.exe scripts\\init_db.py --drop
+
+★ 后端由 `HNE_DB_BACKEND` 决定（默认 sqlite）。想操作 MySQL 实例就显式指定：
+    $env:HNE_DB_BACKEND='mysql'; .\\.venv\\Scripts\\python.exe scripts\\init_db.py
 
 ==================== 为什么表结构以 ORM 为准？====================
 SQL 脚本与 ORM 模型两处各写一遍，很容易「改了模型忘了改 SQL」而逐渐不一致。
@@ -48,8 +59,13 @@ import app.db.models  # noqa: E402, F401
 
 
 def dump_sql() -> Path:
-    """把所有表的建表语句导出到 scripts/schema.sql。"""
-    # 使用 MySQL 方言编译，保证生成的 SQL 与线上实际建表语句一致
+    """把所有表的建表语句导出到 scripts/schema.sql。
+
+    ★ 固定用 **MySQL 方言**导出：这份文件是给论文附录/人工审查看的参考 DDL，
+      而 MySQL 是两者中"约束更严"的那个（有 MEDIUMTEXT、有显式字符集）。
+      以它为准能同时说明字段长度上限与索引形态，SQLite 侧的 DDL 由
+      `create_all` 在运行时按需生成（`sqlite_master` 里可查）。
+    """
     from sqlalchemy.dialects import mysql
 
     dialect = mysql.dialect()
@@ -96,7 +112,7 @@ def print_table_summary() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="初始化项目的 MySQL 数据库")
+    parser = argparse.ArgumentParser(description="初始化数据库（SQLite 或 MySQL，由 HNE_DB_BACKEND 决定）")
     parser.add_argument(
         "--dump-sql", action="store_true", help="仅导出建表 SQL 到 scripts/schema.sql"
     )
@@ -122,8 +138,7 @@ def main() -> int:
         return 0
 
     print("=" * 64)
-    print(f"  数据库初始化  |  {settings.MYSQL_USER}@{settings.MYSQL_HOST}:"
-          f"{settings.MYSQL_PORT}/{settings.MYSQL_DB}")
+    print(f"  数据库初始化  |  {settings.database_label}")
     print("=" * 64)
 
     # ---- 步骤 1：连通性检查 ----
@@ -131,13 +146,18 @@ def main() -> int:
     if status["status"] != "ok":
         print("\n[失败] 无法连接数据库：")
         print(f"       {status.get('message')}")
-        print("\n请检查：")
-        print("  1. MySQL 服务是否已启动（服务名 MySQL80）")
-        print("  2. .env 里的 MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD 是否正确")
-        print("  3. 数据库 narrative_engine 是否已创建")
+        if settings.is_sqlite:
+            print("\n请检查：")
+            print("  1. 数据目录是否可写（HNE_SQLITE_PATH 指向的文件所在目录）")
+            print(f"  2. 目标路径：{settings.sqlite_file}")
+        else:
+            print("\n请检查：")
+            print("  1. MySQL 服务是否已启动（服务名 MySQL80）")
+            print("  2. .env 里的 MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD 是否正确")
+            print(f"  3. 数据库 {settings.MYSQL_DB} 是否已创建")
         dispose_engine()
         return 1
-    print(f"\n[OK] 数据库连接正常，MySQL 版本 {status.get('mysql_version')}")
+    print(f"\n[OK] 数据库连接正常 | 后端 {status.get('backend')} | 版本 {status.get('server')}")
 
     engine = get_engine()
 

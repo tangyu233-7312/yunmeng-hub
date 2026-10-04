@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -32,8 +33,16 @@ def test_all_tables_registered() -> None:
 
 # ==================== 连接池 ====================
 def test_pool_parameters_match_settings() -> None:
-    """确认连接池参数确实来自 .env 配置，而不是被悄悄忽略。"""
+    """确认连接池参数确实来自 .env 配置，而不是被悄悄忽略。
+
+    ★ 只在 MySQL 后端下断言：这些参数（pool_size / max_overflow）是**网络数据库**
+      才有的概念，SQLite 不走连接池的那套超时/回收逻辑（它的等价物是 PRAGMA，
+      由 tests/test_db_sqlite.py 覆盖）。默认后端是 sqlite，所以本用例在默认
+      配置下会被跳过 —— 这是有意的：断言本身没错，只是不适用于那个后端。
+    """
     settings = get_settings()
+    if settings.is_sqlite:
+        pytest.skip("连接池参数只适用于 MySQL 后端（默认后端为 sqlite）")
     pool = get_engine().pool
     assert pool.size() == settings.DB_POOL_SIZE
     assert pool._max_overflow == settings.DB_MAX_OVERFLOW

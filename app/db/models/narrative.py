@@ -12,9 +12,10 @@ from sqlalchemy import (
     String,
     text,
 )
-from sqlalchemy.dialects.mysql import MEDIUMTEXT
+
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.types import LongText, PkInt
 from app.db.base import Base, TimestampMixin
 
 
@@ -28,7 +29,7 @@ class NarrativeSession(Base, TimestampMixin):
     __table_args__ = {"comment": "叙事会话表"}
 
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True, comment="会话ID"
+        PkInt, primary_key=True, autoincrement=True, comment="会话ID"
     )
     user_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -103,7 +104,7 @@ class NarrativeSession(Base, TimestampMixin):
     #   （标记它覆盖第几轮到第几轮），**旧总结被替换而不是追加** —— 否则摘要越叠越长、
     #   同一段剧情被重复扫描，白占 token。
     rolling_summary: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT, nullable=True, comment="剧情滚动总结（前情提要；覆盖区间见 summary_*_round）"
+        LongText, nullable=True, comment="剧情滚动总结（前情提要；覆盖区间见 summary_*_round）"
     )
     # 总结覆盖到哪条消息为止，避免重复压缩
     summarized_until_message_id: Mapped[int | None] = mapped_column(
@@ -118,23 +119,23 @@ class NarrativeSession(Base, TimestampMixin):
     # ★ 第八轮：总结改成**用户可控**（开关 / 自动或提醒 / 每几轮 / 五种模式 / 自定义提示词 /
     #   字数上限 / 单独指定总结模型）。设置存会话级 JSON —— 每个故事的偏好可以不一样。
     summary_settings_json: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT,
+        LongText,
         nullable=True,
         comment="记忆总结设置 JSON（见 app/narrative/summary.py 的 default_settings）",
     )
     #: 历史版本（供面板上的「恢复上一次」）：最近 HISTORY_LIMIT 个版本
     summary_history_json: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT, nullable=True, comment="总结的历史版本 JSON 数组（恢复上一次用）"
+        LongText, nullable=True, comment="总结的历史版本 JSON 数组（恢复上一次用）"
     )
     # ★ 记忆锚点：用户手写的"永远要记住"的硬设定（最多 5 条 / 2000 字）。
     #   它跟世界书一样是作者意志，所以**整条固定注入**，既不参与召回、也不会被总结折叠。
     memory_anchors_json: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT, nullable=True, comment="记忆锚点 JSON 数组（用户手写，固定注入、永不折叠）"
+        LongText, nullable=True, comment="记忆锚点 JSON 数组（用户手写，固定注入、永不折叠）"
     )
     # ★ 第十五轮：自动翻译中间件（跨语言对话）。设置同样存会话级 JSON：
     #   同一张英文卡，用户可能只想"看懂回复"，也可能想"连自己的输入一起译过去"。
     translate_settings_json: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT,
+        LongText,
         nullable=True,
         comment="翻译中间件设置 JSON（见 app/narrative/translate.py 的 DEFAULT_SETTINGS）",
     )
@@ -145,7 +146,7 @@ class NarrativeSession(Base, TimestampMixin):
     #   落库 + 每轮回注 + 解析时校验，才能让状态在长对话里保持自洽。
     #   解析与校验见 app/narrative/state.py。
     state_json: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT,
+        LongText,
         nullable=True,
         comment="结构化状态 JSON（字段由 state_schema_json 定义，已校验）",
     )
@@ -158,7 +159,7 @@ class NarrativeSession(Base, TimestampMixin):
     # ★ NULL（迁移前的旧会话）= 没有记录：由 state.effective_schema 走兼容分支，
     #   已有状态的旧会话仍按旧五字段渲染，避免历史状态栏突然变空白。
     state_schema_json: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT,
+        LongText,
         nullable=True,
         comment="状态栏字段定义 JSON（含空 schema = 该卡未定义状态栏）",
     )

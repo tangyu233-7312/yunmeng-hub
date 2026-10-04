@@ -20,14 +20,26 @@ function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hne-setup-'));
 }
 
-/** 一份通过校验的最小配置。 */
+/**
+ * 一份通过校验的最小配置 —— 走 **MySQL 模式**。
+ *
+ * ★ 为什么显式带 `HNE_DB_BACKEND=mysql`：默认存储方式是 **sqlite**（零配置），
+ *   那样 MySQL 字段整组不参与校验，本文件里大量"MySQL 字段必填"的断言就失去意义了。
+ *   它们是"选了 MySQL 之后必须拦住"的断言，所以这里必须把模式说清楚。
+ */
 function validValues(extra = {}) {
   return {
     ...cfg.defaultValues(),
+    HNE_DB_BACKEND: 'mysql',
     HNE_MYSQL_PASSWORD: 'p@ss word#1',
     HNE_SECRET_KEY: 'a'.repeat(48),
     ...extra,
   };
+}
+
+/** 默认（SQLite / 零配置）的一组表单值。 */
+function sqliteValues(extra = {}) {
+  return { ...cfg.defaultValues(), ...extra };
 }
 
 // ------------------------------------------------------------------
@@ -53,13 +65,71 @@ test('defaultValues：给出所有字段的默认值，且必填项默认能过�
 //  校验
 // ------------------------------------------------------------------
 test('validateValues：缺必填项时逐字段报错（不是只给一句"配置不对"）', () => {
-  const result = cfg.validateValues({});
+  // MySQL 模式：连库那几项一个都不能少
+  const result = cfg.validateValues({ HNE_DB_BACKEND: 'mysql' });
   assert.equal(result.ok, false);
-  for (const key of ['HNE_MYSQL_HOST', 'HNE_MYSQL_PORT', 'HNE_MYSQL_USER', 'HNE_MYSQL_PASSWORD', 'HNE_MYSQL_DB', 'HNE_SECRET_KEY']) {
+  for (const key of ['HNE_MYSQL_HOST', 'HNE_MYSQL_PORT', 'HNE_MYSQL_USER', 'HNE_MYSQL_PASSWORD', 'HNE_MYSQL_DB']) {
     assert.ok(result.errors[key], `${key} 应该被判缺失`);
   }
   // 非必填的项不该报错
   assert.ok(!result.errors.HNE_API_KEY_ENCRYPTION_KEY);
+});
+
+// ------------------------------------------------------------------
+//  ★ 零配置：默认（SQLite）什么都不用填
+// ------------------------------------------------------------------
+test('★★ validateValues：默认（本机文件）配置**一项都不用填**就通过', () => {
+  const result = cfg.validateValues(sqliteValues());
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});
+
+test('★★ validateValues：默认模式下 MySQL 字段**完全不参与校验**', () => {
+  // 故意把 MySQL 字段填成明显错误的形态；选 sqlite 时它们不该被看
+  const result = cfg.validateValues(sqliteValues({
+    HNE_MYSQL_HOST: '有 空格 的主机',
+    HNE_MYSQL_PORT: 'not-a-port',
+    HNE_MYSQL_PASSWORD: '',
+  }));
+  assert.equal(result.ok, true, '选本机文件时，MySQL 字段不该拦住保存');
+  assert.deepEqual(result.errors, {});
+});
+
+test('validateValues：显式选 MySQL 之后，那一组又重新变成必填', () => {
+  // ★ 注意默认值已经给主机/端口/用户名/库名填了合理默认（127.0.0.1 / 3306 / …），
+  //   所以"切到 MySQL 之后还缺什么"这件事上，**口令是唯一没有合理默认的一项**。
+  //   第一版这里断言 HNE_MYSQL_HOST 会报错 —— 那是错的（它有默认值，本来就不缺）。
+  const withDefaults = cfg.validateValues(sqliteValues({ HNE_DB_BACKEND: 'mysql' }));
+  assert.equal(withDefaults.ok, false, '切到 MySQL 后，空口令必须被拦下');
+  assert.ok(withDefaults.errors.HNE_MYSQL_PASSWORD);
+
+  // 把 MySQL 那几项都清空，则必须**逐项**都报出来
+  const empty = cfg.validateValues({
+    HNE_DB_BACKEND: 'mysql',
+    HNE_MYSQL_HOST: '',
+    HNE_MYSQL_PORT: '',
+    HNE_MYSQL_USER: '',
+    HNE_MYSQL_PASSWORD: '',
+    HNE_MYSQL_DB: '',
+  });
+  assert.equal(empty.ok, false);
+  for (const key of ['HNE_MYSQL_HOST', 'HNE_MYSQL_PORT', 'HNE_MYSQL_USER', 'HNE_MYSQL_PASSWORD', 'HNE_MYSQL_DB']) {
+    assert.ok(empty.errors[key], `${key} 应该被判缺失`);
+  }
+});
+
+test('★★ validateValues：两个密钥**可以留空**（后端会自动生成）', () => {
+  const result = cfg.validateValues(sqliteValues({ HNE_SECRET_KEY: '', HNE_API_KEY_ENCRYPTION_KEY: '' }));
+  assert.equal(result.ok, true, '密钥留空不该被拦 —— 后端首次运行会自己生成');
+});
+
+test('validateValues：密钥填了就得合法（否则用户以为"我设了"，后端却另生成一把）', () => {
+  assert.equal(cfg.validateValues(sqliteValues({ HNE_SECRET_KEY: 'too-short' })).ok, false);
+  assert.equal(cfg.validateValues(sqliteValues({ HNE_API_KEY_ENCRYPTION_KEY: 'not-44-chars' })).ok, false);
+  // 长度对但形状错（44 个 base64url 字符、没有 '='）也必须被拦：
+  // 它解码出来是 33 字节，后端会拒
+  assert.equal(cfg.validateValues(sqliteValues({ HNE_API_KEY_ENCRYPTION_KEY: 'K'.repeat(44) })).ok, false);
+  // 合法的 Fernet 形状：43 个 base64url 字符 + 一个 '='
+  assert.equal(cfg.validateValues(sqliteValues({ HNE_API_KEY_ENCRYPTION_KEY: 'KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=' })).ok, true);
 });
 
 test('validateValues：合法配置通过', () => {
@@ -106,11 +176,15 @@ test('suggestSecrets：只给空着的密钥字段生成值，不覆盖用户已
 test('生成的密钥能通过校验，且两次生成不同（真的是随机的）', () => {
   const a = cfg.suggestSecrets(cfg.defaultValues());
   const b = cfg.suggestSecrets(cfg.defaultValues());
-  assert.equal(cfg.validateValues({ ...a, HNE_MYSQL_PASSWORD: 'x' }).ok, true);
+  // ★ 必须在**同一个模式下**校验：默认是 SQLite，而 SQLite 下 MySQL 口令不参与校验
+  //   （所以这里显式走 MySQL，才真正验证了"生成出来的密钥能过校验"）。
+  assert.equal(cfg.validateValues({ ...a, HNE_DB_BACKEND: 'mysql', HNE_MYSQL_PASSWORD: 'x' }).ok, true);
   assert.notEqual(a.HNE_SECRET_KEY, b.HNE_SECRET_KEY);
   assert.notEqual(a.HNE_API_KEY_ENCRYPTION_KEY, b.HNE_API_KEY_ENCRYPTION_KEY);
-  // Fernet 密钥必须是 44 位 base64
-  assert.match(a.HNE_API_KEY_ENCRYPTION_KEY, /^[A-Za-z0-9+/]{43}=$/);
+  // ★ Fernet 密钥是 base64**url** 变体（字母表含 `-` `_`，不含 `+` `/`），
+  //   形状固定为 43 个字符 + 一个 '='。这一条同时守着"生成器与校验器讲同一种语言"。
+  assert.match(a.HNE_API_KEY_ENCRYPTION_KEY, /^[A-Za-z0-9_-]{43}=$/);
+  assert.equal(cfg.isFernetShaped(a.HNE_API_KEY_ENCRYPTION_KEY), true);
 });
 
 // ------------------------------------------------------------------
@@ -145,6 +219,18 @@ test('renderEnvFile：写进固定值（只监听本机、用本地嵌入），�
   const parsed = cfg.parseEnvText(cfg.renderEnvFile(validValues()));
   assert.equal(parsed.HNE_HOST, '127.0.0.1');
   assert.equal(parsed.HNE_EMBEDDING_BACKEND, 'onnx_default');
+});
+
+test('★ renderEnvFile：从 MySQL 改回「本机文件」时，MySQL 的键必须被清掉', () => {
+  // 用户先填了 MySQL，又改回本机文件 —— 这是切换存储方式的真实路径
+  const initial = cfg.parseEnvText(cfg.renderEnvFile(validValues()));
+  const rewritten = cfg.parseEnvText(cfg.renderEnvFile(sqliteValues(), cfg.renderEnvFile(validValues())));
+
+  assert.equal(rewritten.HNE_DB_BACKEND, 'sqlite');
+  for (const key of Object.keys(initial)) {
+    if (!key.startsWith('HNE_MYSQL_')) continue;
+    assert.ok(!(key in rewritten), `${key} 应该被清掉（否则配置里留着会让人以为还在用 MySQL）`);
+  }
 });
 
 test('★ renderEnvFile：用户手工加过的其它配置必须原样保留（不能悄悄抹掉）', () => {
@@ -209,9 +295,43 @@ test('writeEnvFile：能写出并读回，且不会留下 .tmp 残file', () => {
 
 test('configIsUsable：缺必填项的配置判为不可用（否则应用会反复启动失败却没有入口去改）', () => {
   assert.equal(cfg.configIsUsable(null), false);
+  // ★ 空对象/只有一半 MySQL 信息：这些值**不是向导表单值**（表单有默认值），
+  //   而是"一个被手改坏、或缺项的 .env" —— 所以必须判为不可用。
+  //   ★ 注意不能拿 `cfg.defaultValues()` 来断言这一点：那份默认值里
+  //     `HNE_DB_BACKEND=sqlite` 而 MySQL 字段只有一个默认主机名，
+  //     属于"向导还没保存过"的中间状态，本来就不该按 .env 的判据去衡量。
   assert.equal(cfg.configIsUsable({}), false);
-  assert.equal(cfg.configIsUsable({ HNE_MYSQL_HOST: '127.0.0.1' }), false);
+  assert.equal(cfg.configIsUsable({ HNE_DB_BACKEND: 'mysql' }), false, '选了 MySQL 却什么都没填');
+  assert.equal(cfg.configIsUsable({ HNE_DB_BACKEND: 'mysql', HNE_MYSQL_HOST: 'h' }), false, '缺口令');
+  // ★ 反过来：选了本机文件时，**连空口令都不算缺项** ——
+  //   这正是"默认零配置一项都不用填"在可用性判据上的体现。
+  //   （`defaultValues()` 就是这种情况：存储方式=sqlite，MySQL 口令留空。）
+  assert.equal(cfg.configIsUsable(cfg.defaultValues()), true);
+  // ★ 反过来：**只有一个存储方式**就是一份完全可用的零配置。
+  //   连"残留了一个 MySQL 主机名"也仍然可用 —— 选 sqlite 时那些字段根本不参与判断，
+  //   这正是"改回本机文件之后老字段不会拦住用户"的保证。
+  assert.equal(cfg.configIsUsable({ HNE_DB_BACKEND: 'sqlite' }), true);
+  assert.equal(cfg.configIsUsable({ HNE_DB_BACKEND: 'sqlite', HNE_MYSQL_HOST: '127.0.0.1' }), true);
+  // ★ 老版本向导写的配置（没有 HNE_DB_BACKEND，但有完整 MySQL 信息）必须判为可用 ——
+  //   否则老用户一升级就被拽回向导，那是最典型的回归。
+  assert.equal(cfg.configIsUsable({
+    HNE_MYSQL_HOST: '127.0.0.1',
+    HNE_MYSQL_PORT: '3306',
+    HNE_MYSQL_USER: 'u',
+    HNE_MYSQL_PASSWORD: 'p',
+    HNE_MYSQL_DB: 'd',
+  }), true);
   assert.equal(cfg.configIsUsable(cfg.parseEnvText(cfg.renderEnvFile(validValues()))), true);
+  // ★ 零配置：向导只写出「本机文件」那一行，也是可用配置（不需要任何别的东西）
+  assert.equal(cfg.configIsUsable(cfg.parseEnvText(cfg.renderEnvFile(sqliteValues()))), true);
+});
+
+test('resolvedBackend：缺 HNE_DB_BACKEND 时按"有没有 MySQL 配置"推断（向后兼容的关键）', () => {
+  assert.equal(cfg.resolvedBackend({}), 'sqlite');
+  assert.equal(cfg.resolvedBackend({ HNE_DB_BACKEND: 'mysql' }), 'mysql');
+  assert.equal(cfg.resolvedBackend({ HNE_DB_BACKEND: 'sqlite', HNE_MYSQL_HOST: 'h' }), 'sqlite');
+  // 老配置：没有 DB_BACKEND，但有 MySQL 信息 → 必须理解成 mysql
+  assert.equal(cfg.resolvedBackend({ HNE_MYSQL_HOST: 'h', HNE_MYSQL_PASSWORD: 'p' }), 'mysql');
 });
 
 test('configIsUsable：被手改坏（必填项被清空）的配置判为不可用', () => {
@@ -221,8 +341,13 @@ test('configIsUsable：被手改坏（必填项被清空）的配置判为不可
 });
 
 test('missingRequired：列出缺哪些必填项（给界面显示"还缺什么"）', () => {
-  assert.deepEqual(cfg.missingRequired(null).sort(), [
-    'HNE_MYSQL_DB', 'HNE_MYSQL_HOST', 'HNE_MYSQL_PASSWORD', 'HNE_MYSQL_PORT', 'HNE_MYSQL_USER', 'HNE_SECRET_KEY',
+  // 完全空的配置：连"存储方式"都还没有，而它默认是 sqlite → 只差它自己
+  assert.deepEqual(cfg.missingRequired(null), ['HNE_DB_BACKEND']);
+  // 显式 sqlite：什么也不缺（其余字段都不是必填）
+  assert.deepEqual(cfg.missingRequired({ HNE_DB_BACKEND: 'sqlite' }), []);
+  // 显式 mysql：连库那几项全都要
+  assert.deepEqual(cfg.missingRequired({ HNE_DB_BACKEND: 'mysql' }).sort(), [
+    'HNE_MYSQL_DB', 'HNE_MYSQL_HOST', 'HNE_MYSQL_PASSWORD', 'HNE_MYSQL_PORT', 'HNE_MYSQL_USER',
   ].sort());
 
   const full = cfg.parseEnvText(cfg.renderEnvFile(validValues()));
@@ -232,13 +357,27 @@ test('missingRequired：列出缺哪些必填项（给界面显示"还缺什么"
   assert.deepEqual(cfg.missingRequired(full), ['HNE_MYSQL_USER']);
 });
 
-test('端到端：表单值 → .env 文本 → 解析 → 通过可用性判定', () => {
-  const values = cfg.suggestSecrets({ ...cfg.defaultValues(), HNE_MYSQL_PASSWORD: '真实口令 with 空格' });
+test('端到端（MySQL 模式）：表单值 → .env 文本 → 解析 → 通过可用性判定', () => {
+  const values = cfg.suggestSecrets({ ...validValues() });
   const text = cfg.renderEnvFile(values);
   const parsed = cfg.parseEnvText(text);
 
   assert.equal(cfg.configIsUsable(parsed), true);
-  assert.equal(parsed.HNE_MYSQL_PASSWORD, '真实口令 with 空格');
+  assert.equal(parsed.HNE_DB_BACKEND, 'mysql');
+  assert.equal(parsed.HNE_MYSQL_PASSWORD, 'p@ss word#1');
   assert.equal(parsed.HNE_MYSQL_HOST, '127.0.0.1');
   assert.equal(parsed.HNE_MYSQL_PORT, '3306');
+});
+
+test('★★ 端到端（零配置 / SQLite）：默认表单直接产出可用配置，且**不含任何 MySQL 键**', () => {
+  const text = cfg.renderEnvFile(sqliteValues());
+  const parsed = cfg.parseEnvText(text);
+
+  assert.equal(cfg.configIsUsable(parsed), true);
+  assert.equal(parsed.HNE_DB_BACKEND, 'sqlite');
+  // ★ 关键：选本机文件时，一个 MySQL 键都不该被写进配置 ——
+  //   否则用户会以为"这里配了 MySQL"，而实际上我们只想让他什么都不用管。
+  for (const key of Object.keys(parsed)) {
+    assert.ok(!key.startsWith('HNE_MYSQL_'), `${key} 不该出现在零配置里`);
+  }
 });

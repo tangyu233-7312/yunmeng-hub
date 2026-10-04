@@ -106,21 +106,55 @@ def configure_environment(args: argparse.Namespace) -> dict[str, str]:
         applied[key] = value
 
     # 先读 .env（真正来自环境变量的值优先）
+    #
+    # ★★ 这里踩过一个坑（零配置那一版实测抓到）：
+    #   原来在没有 `--env-file` 参数时就只认"资源根目录下的 .env"，**完全无视**
+    #   壳通过环境变量传进来的 `HNE_ENV_FILE`。而壳在"向导自检 / 保存前验证"这条路上
+    #   **只设环境变量、不传参数** —— 于是后端读的是**仓库根那份 .env**
+    #   （开发者的真实配置），而不是壳刚刚写出来的那份向导配置。
+    #
+    #   症状极具误导性：用户（或验收）刚在向导里选了「本机文件（SQLite）」，
+    #   自检却拿仓库里的 MySQL 口令去连库，报 `1045 Access denied` ——
+    #   看起来像"零配置没生效"，实际是**配置来源搞错了**，
+    #   而且它不报任何"我读了哪个文件"的错误。
+    #
+    #   修法：参数 > `HNE_ENV_FILE` > 资源根 .env，并把**最终选了哪份**打出来。
     env_files: list[Path] = []
     if args.env_file:
         env_files.append(Path(args.env_file))
+    elif os.environ.get("HNE_ENV_FILE", "").strip():
+        env_files.append(Path(os.environ["HNE_ENV_FILE"].strip()))
     else:
         env_files.append(_app_root() / ".env")
     for env_file in env_files:
         loaded = _load_env_file(env_file)
         if loaded:
             print(f"[backend] 已从 {env_file} 读入 {loaded} 项配置（不覆盖已有环境变量）", flush=True)
+        else:
+            print(f"[backend] 配置来源 {env_file}（不存在或没有可读的键，沿用环境变量/默认值）",
+                  flush=True)
 
     if args.data_dir:
+        # ★★ 这里有一个**名字与语义的坑**，是本轮打包验收实测抓到的：
+        #
+        #   壳传进来的 `--data-dir` 是 `<userData>\data`（见 desktop/src/paths.js 的
+        #   `userDataDataDir`，菜单里的"打开数据目录"也指它）；而后端的
+        #   `HNE_DATA_DIR` 是**数据根** —— 后端会在它下面自己拼
+        #   `data/app.sqlite3` 与 `config/.secrets.env`（见 app/core/config.py
+        #   的 sqlite_file、app/db/bootstrap.py 的 secrets_file）。
+        #
+        #   第一版把这两个当成同一个东西，于是打包后的库文件落在
+        #       <userData>\data\data\app.sqlite3        ← 多一层 data
+        #   密钥落在 `<userData>\data\config\.secrets.env`（而不是 <userData>\config）。
+        #   功能上还能跑（路径是自洽的），所以**不会报错** —— 只有把"数据该在哪"
+        #   当契约来验的时候才会发现。
+        #
+        #   修法：把 `--data-dir` 明确解释成"userData 下的数据目录"，数据根取它的父级。
         data_dir = Path(args.data_dir).resolve()
-        chroma_dir = data_dir / "chroma"
-        # 向量库实体（长期记忆）—— 必须在 import app 之前设好
-        set_env("HNE_CHROMA_PERSIST_DIR", str(chroma_dir))
+        data_root = data_dir.parent
+        set_env("HNE_DATA_DIR", str(data_root))
+        # 向量库实体（长期记忆）—— 显式给出，不依赖后端拼相对路径
+        set_env("HNE_CHROMA_PERSIST_DIR", str(data_dir / "chroma"))
 
     if args.log_dir:
         set_env("HNE_LOG_DIR", str(Path(args.log_dir).resolve()))
@@ -261,6 +295,30 @@ def run_self_check(args: argparse.Namespace) -> int:
     payload: dict | None = None
 
     while time.time() < deadline:
+        # ★★ 关键：**服务已经死了就别再等了**。
+        #
+        #   为什么必须加这个（用户实测的体验）：数据库口令写错时，lifespan 里
+        #   `check_connection()` 抛错 → uvicorn 启动流程结束 → 服务**永远不会监听**。
+        #   而原来的循环不知道这件事，会一秒一次地去连一个不存在的端口，
+        #   **一路等到超时**才打印"未就绪" —— 默认 120 秒、壳里传的是 240 秒，
+        #   用户就干等三四分钟，最后拿到一句"自检超时"，**完全不知道错在口令**。
+        #
+        #   判据用 `server.started`：uvicorn 只有在"真的开始监听"时才会把它置为 True。
+        #   所以"线程活着 + started 仍是 False"只可能是**启动阶段就失败了**
+        #   （真正在监听但暂时不健康的情形与此不冲突）。
+        #   `thread` 是 daemon 线程，真死了也读得到 `is_alive()`。
+        if not server.started and not thread.is_alive():
+            print(
+                f"[self-check] FAILED  后端进程在启动阶段就退出了（还没开始监听 {url}）。",
+                flush=True,
+            )
+            print(
+                "[self-check] 提示：最常见的原因是**数据库连不上或口令不对** —— "
+                "本进程上面的 ERROR 日志里有数据库自己的原话（例如 "
+                "`Access denied for user ...` 或 `Unknown database`），请以那条为准。",
+                flush=True,
+            )
+            return 1
         try:
             with httpx.Client(timeout=10.0) as client:
                 resp = client.get(url)

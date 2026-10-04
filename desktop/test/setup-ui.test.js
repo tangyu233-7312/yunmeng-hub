@@ -81,8 +81,11 @@ test('setup.html：密码框有「小眼睛」，可切换明文/圆点', () => 
   assert.match(html, /eye\.textContent = visible \? '🙈' : '👁'/,
     '切换后图标要跟着换（🙈 = 当前已显示，点它藏起来），否则用户不知道现在是哪种状态');
   assert.match(html, /input\.type = visible \? 'text' : 'password'/, '眼睛的本质就是切 input.type');
-  // 默认必须仍然是隐藏：一打开页面就把密钥摊在屏幕上不合适
-  assert.match(html, /const input = document\.createElement\('input'\);\s*\n\s*input\.type = field\.secret \? 'password' : 'text';/,
+  // 默认必须仍然是隐藏：一打开页面就把密钥摊在屏幕上不合适。
+  // ★ 断言的是"密码框的初始 type 由 field.secret 决定"这条**契约**，
+  //   而不是某一行的具体写法 —— 本页后来加了 `<select>`（存储方式），
+  //   input 的创建被挪进了 if/else，逐字匹配旧写法会让这条断言变成"改了就坏"的假警报。
+  assert.match(html, /input\.type = field\.secret \? 'password' : 'text';/,
     '初始必须是 password（默认隐藏）');
 });
 
@@ -182,4 +185,115 @@ test('setup-config.js：不可生成的字段不该带 generate（否则会画�
       assert.equal(typeof f.generate, 'function', `${f.key} 的 generate 必须是函数或干脆没有`);
     }
   }
+});
+
+// ------------------------------------------------------------------
+//  存储方式切换（菜单里进来的那条路）
+// ------------------------------------------------------------------
+test('★★ 接线：切换模式必须走 setup:switch，而不是当首启 save', () => {
+  // 这两条路的收尾**不同**：首启是"落盘并进入"，切换是"停旧后端、用新配置重启"。
+  // 如果切换页误调 save()，旧后端不会被停 —— 新配置起在另一个端口，
+  // 用户看到的还是旧数据，而界面上一切正常（最坏的一类故障）。
+  assert.match(html, /api\.switchBackend\(collect\(\)\)/, '切换页要调 switchBackend');
+  assert.match(html, /result = switchMode \? await api\.switchBackend\(collect\(\)\) : await api\.save\(collect\(\)\)/,
+    '要有明确的分支，别指望同一句调用兼容两种模式');
+  assert.match(html, /api\.switchFields\(\)/, '切换模式要用 switchFields 读字段（预填当前配置）');
+  assert.match(html, /URLSearchParams\(location\.search\)\.get\('mode'\) === 'switch'/,
+    '模式判据来自 ?mode=switch');
+});
+
+test('★ 接线：preload 要暴露 switchFields 与 switchBackend 两个入口', () => {
+  const preload = fs.readFileSync(path.join(SRC, 'preload.js'), 'utf8');
+  assert.match(preload, /switchFields:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('setup:fields',\s*\{\s*mode:\s*'switch'\s*\}\)/);
+  assert.match(preload, /switchBackend:\s*\(values\)\s*=>\s*ipcRenderer\.invoke\('setup:switch',\s*values\)/);
+  // 主进程侧必须有对应的 handler
+  assert.match(main, /ipcMain\.handle\('setup:switch'/);
+  assert.match(main, /options\.mode === 'switch'/);
+});
+
+test('★★ 回归：`switchMode` 必须在模块作用域声明（曾在 boot 里声明 → 提交必抛错）', () => {
+  // 真实事故：第一版把它写成 `const switchMode = …` 放在 `boot()` 内部，
+  // 而 `submit` 处理函数在**模块作用域**引用它 → 每次提交抛
+  // `ReferenceError: switchMode is not defined`。
+  // 更坏的是它发生在 setStatus('busy') 与 disabled=true **之后**、try **之前**：
+  //   · catch 不执行 → 用户看到状态栏纹丝不动、没有任何提示；
+  //   · 「保存并重启后端」按钮永久灰掉 → 页面变成死的。
+  const lines = codeLines(html);
+  assert.ok(lines.some((l) => /^\s*let switchMode = false;\s*$/.test(l)),
+    '要在模块作用域声明 `let switchMode = false;`');
+  // boot() 里只能**赋值**，不许再声明（声明就会遮蔽成局部的，处理函数照样取不到）
+  assert.equal(lines.some((l) => /^\s*(const|let)\s+switchMode\s*=/.test(l) && !/let switchMode = false;/.test(l)),
+    false, 'boot() 里不许再声明 switchMode，只能赋值');
+  assert.match(html, /switchMode = switchModeFromUrl;/,
+    'boot() 要用赋值把 URL 里的模式写进模块作用域那个变量');
+});
+
+test('★★ 回归：提交处理函数必须用 finally 兜底解开按钮（否则一次异常就永久禁用）', () => {
+  // 与上一条配套：即使还有别的"进 try 之前抛异常"的情况，也不能把按钮留在禁用态。
+  // 断言的是**结构**（try 后面有 finally），不是某一句文案。
+  const submitIdx = html.indexOf("el.form.addEventListener('submit'");
+  assert.ok(submitIdx > 0, '找不到 submit 处理函数');
+  const body = html.slice(submitIdx, submitIdx + 3000);
+  assert.match(body, /}\s*finally\s*\{/, 'submit 处理函数必须有 finally');
+  assert.match(body, /el\.save\.disabled = false;[\s\S]{0,120}el\.test\.disabled = false;/,
+    'finally 里要把两个按钮都解开');
+});
+
+test('★★ 接线：切到本机文件时不许有**生效**的 MySQL 键，但必须留注释版', () => {
+  // 这条同时钉住两件事，而且第二件是**用户实测的严重事故**：
+  //   ① 选了 sqlite 就不该有生效的 `HNE_MYSQL_*`（否则读配置的人会以为在连 MySQL）；
+  //   ② 但必须把 MySQL 连接信息以**注释**形式留着 —— 尤其是那串自动生成的
+  //      32 位随机口令。旧版把它们整组删掉，用户切回来时口令格是空的、
+  //      他又不可能记得随机串 → 只能瞎填 → 连不上 → 只看到"自检超时"。
+  const cfg = require('../src/setup-config');
+  const before = [
+    'HNE_DB_BACKEND=mysql',
+    'HNE_MYSQL_HOST=127.0.0.1',
+    'HNE_MYSQL_USER=narrative_app',
+    'HNE_MYSQL_PASSWORD=SomeRandomGeneratedPassword1234',
+    'HNE_MYSQL_DB=narrative_engine',
+  ].join('\n');
+  const after = cfg.renderEnvFile(
+    { HNE_DB_BACKEND: 'sqlite' }, before, cfg.parseEnvText(before));
+  assert.doesNotMatch(after, /^HNE_MYSQL_/m, '选 sqlite 时不许有生效的 MySQL 键');
+  assert.match(after, /^# HNE_MYSQL_PASSWORD=/m, '★ 口令必须留成注释（否则用户切不回来）');
+  assert.equal(cfg.stashOf(after).HNE_MYSQL_PASSWORD, 'SomeRandomGeneratedPassword1234');
+});
+
+test('★★ 接线：切换页要把注释里那份连接信息填回表单（含口令）', () => {
+  // 光把值留在文件里还不够 —— 切换页得**把它填回输入框**，否则用户还是看不到、
+  // 还是得自己回忆。这一段守的就是"填回去"这条接线。
+  const body = main.slice(main.indexOf('function buildSetupFields'));
+  assert.match(body, /setupConfig\.stashOf\(existingText\)/,
+    '切换模式要用 stashOf 把注释里那份读回来');
+  assert.match(body, /if \(switchMode\)/, '只在切换模式做（首启向导不该看到旧连接信息）');
+  // 口令属于 secret 字段，主进程会把它的值放进 values 里由页面统一填充；
+  // 这里断言"stash 的值确实进了 values"（而不是被 secret 过滤掉）。
+  const stashIdx = body.indexOf('setupConfig.stashOf(existingText)');
+  const block = body.slice(stashIdx, stashIdx + 600);
+  assert.match(block, /values\[key\] = value/, 'stash 里的值要写进 values（页面据此填充）');
+});
+
+test('★★ 接线：切换必须先自检、成功后才停旧后端（失败不能把在跑的后端弄停）', () => {
+  // 顺序反了会怎样：用户点一下切换、填错了 MySQL 口令 → 后端被停掉、
+  // 新配置又起不来 → 他连"用回原来的存储"都做不到（界面全挂）。
+  // 所以断言的是**语句顺序**，不是某一句存在。
+  const start = main.indexOf("ipcMain.handle('setup:switch'");
+  assert.ok(start > 0, '找不到 setup:switch handler');
+  const body = main.slice(start, start + 4000);
+  const checkAt = body.indexOf("selfCheckWithEnv(envFile, '切换前验证')");
+  const stopAt = body.indexOf("stopBackend('切换存储方式')");
+  assert.ok(checkAt > 0, '切换里必须先跑一次自检');
+  assert.ok(stopAt > 0, '切换成功后要停掉旧后端');
+  assert.ok(checkAt < stopAt, '自检必须在停旧后端**之前**（否则失败时用户就没有后端可用了）');
+  // ★ 失败分支要说清"原设置被恢复"，而且**真的做回滚**（不只是嘴上说）。
+  //   第一版只做到"不重启后端"，文件却已被写坏 —— 失败会被推迟到**下次启动**
+  //   才发作，而那时用户早忘了自己"只是试了一下"。
+  assert.match(body, /已把设置恢复成原来的样子/, '失败时要说清原设置被恢复');
+  assert.match(body, /writeEnvFile\(paths\.userEnvFile, existingText\)/,
+    '失败时必须把原文件内容写回去（原子回滚）');
+  const rollbackAt = body.indexOf('writeEnvFile(paths.userEnvFile, existingText)');
+  const failReturnAt = body.indexOf('已把设置恢复成原来的样子');
+  assert.ok(rollbackAt > 0 && failReturnAt > 0 && rollbackAt < failReturnAt,
+    '要**先回滚再返回**失败结论（顺序反了等于没回滚）');
 });

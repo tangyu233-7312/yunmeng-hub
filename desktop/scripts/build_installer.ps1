@@ -341,30 +341,60 @@ if (Test-Path $Unpacked) {
   $tempEscaped = [regex]::Escape($env:TEMP)
   $repoEscaped = [regex]::Escape($RepoRoot)
 
+  # ★ 每个条目都显式写出 `relativeOnly` —— **不能只在需要的那几条上写**：
+  #   PowerShell 5.1 的 `Set-StrictMode -Version Latest` 下，访问一个不存在的
+  #   哈希表键会**直接抛异常**（PropertyNotFoundStrict），而不是返回 $null。
+  #   实测踩到：前四条没写这个键，审计一跑就报
+  #   "The property 'relativeOnly' cannot be found on this object"。
   $dataPatterns = @(
-    @{ name = '配置文件 .env';   regex = '(^|\\)\.env(\.|$)' }
-    @{ name = '日志文件';        regex = '\.log$' }
-    @{ name = '数据库/导出文件'; regex = '\.(sqlite3?|db|dump|sql\.gz)$' }
-    @{ name = '会话或消息导出';  regex = '(session|export|messages).*\.(json|csv)$' }
-    # 这三条是"本机痕迹"：**构建机的用户名 / 临时目录 / 仓库路径**。
-    # 打包用的是 `electronDist` 与 `dist/backend`，正常都不该出现在产物里 ——
-    # 一旦出现，说明有人把它整个复制进去了（那里面可能就有个人路径）。
-    @{ name = '本机用户目录痕迹'; regex = $userEscaped }
-    @{ name = '本机临时目录痕迹'; regex = $tempEscaped }
-    @{ name = '仓库路径痕迹';     regex = $repoEscaped }
+    @{ name = '配置文件 .env';   regex = '(^|\\)\.env(\.|$)' ; relativeOnly = $false }
+    @{ name = '日志文件';        regex = '\.log$' ; relativeOnly = $false }
+    # ★ 数据库文件要连 SQLite 的**边车文件**一起抓（`-wal` / `-shm`）：
+    #   本项目的 SQLite 开了 WAL 模式（见 app/db/mysql.py 的 PRAGMA），
+    #   于是除了 `app.sqlite3` 还会有 `app.sqlite3-wal` / `app.sqlite3-shm` ——
+    #   **它们里面是用户数据的最新写入**，而原来的正则只匹配 `.sqlite3` 结尾，
+    #   正好漏掉这两个（`.gitignore` 里也漏了，同一轮一起补上了）。
+    @{ name = '数据库/导出文件'; regex = '\.(sqlite3?|db|dump|sql\.gz)(-(wal|shm))?$' ; relativeOnly = $false }
+    @{ name = '会话或消息导出';  regex = '(session|export|messages).*\.(json|csv)$' ; relativeOnly = $false }
+  )
+  # ★★ 这三条是"本机痕迹"：**构建机的用户名 / 临时目录 / 仓库路径**。
+  #    为什么单独一组、而且**只看相对路径** —— 因为这里踩了一个把整条流水线
+  #    卡死的假阳性（实测）：
+  #      release\ 就在仓库里，所以 `win-unpacked\chrome_100_percent.pak` 的
+  #      **完整路径**必然包含仓库路径，于是"仓库路径痕迹"一条把所有文件全命中，
+  #      审计直接报"安装目录里出现了疑似个人数据"并把构建判为失败。
+  #    危险之处在于：**它看起来像真的**（个人数据审计报警），
+  #    而且它把"仓库路径痕迹"这条**真正有用的检查**一起废掉了 ——
+  #    以后真有安装目录里的绝对路径被打进去，也不会有任何提示。
+  #    ★ 判据：痕迹指的是"名字里带着别人的路径"，而不是"文件恰好放在仓库下面"。
+  #      所以按**相对 unpacked 的路径**去匹配 —— 相对路径里出现仓库绝对路径
+  #      才是真痕迹（那说明它是从别处整份复制进来、名字里带着源路径）。
+  $dataPatterns += @(
+    @{ name = '本机用户目录痕迹'; regex = $userEscaped; relativeOnly = $true }
+    @{ name = '本机临时目录痕迹'; regex = $tempEscaped; relativeOnly = $true }
+    @{ name = '仓库路径痕迹';     regex = $repoEscaped; relativeOnly = $true }
   )
   Write-Host "[i] 本机痕迹模式已按环境生成（用户名/临时目录/仓库路径，不在脚本里写死）"
+  Write-Host "[i] 本机痕迹只看**相对路径**（release\ 就在仓库里，看绝对路径会 100% 假阳性 —— 实测踩过）"
   $offenders = @()
+  $unpackedLen = $Unpacked.Length + 1
   foreach ($pattern in $dataPatterns) {
-    $hits = @(Get-ChildItem $Unpacked -Recurse -File -Force -ErrorAction SilentlyContinue |
-      Where-Object { $_.FullName -match $pattern.regex })
+    # ★ 显式算一个"用来匹配的字符串"，不把 if/else 塞进管道脚本块里 ——
+    #   PowerShell 5.1 对此支持不好（会报 "Missing closing ')' in subexpression"），
+    #   而且那种写法可读性也差。
+    $hits = @()
+    foreach ($file in (Get-ChildItem $Unpacked -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+      $candidate = $file.FullName
+      if ($pattern.relativeOnly) { $candidate = $file.FullName.Substring($unpackedLen) }
+      if ($candidate -match $pattern.regex) { $hits += $file }
+    }
     if ($hits.Count -gt 0) {
       $offenders += ($hits | Select-Object -First 5 | ForEach-Object { "[$($pattern.name)] $($_.FullName)" })
     }
   }
   if ($offenders.Count -gt 0) {
     Fail ("安装目录里出现了疑似个人数据：`n      " + ($offenders -join "`n      ")) `
-      '安装包里只该有程序。用户的数据在 MySQL 与 %APPDATA%，不该被打进来'
+      '安装包里只该有程序。用户的数据在数据库目录与 %APPDATA%，不该被打进来'
   }
   # 单独说明：那两类良性命中，避免下一个人以为"漏查了"
   $chromaLike = @(Get-ChildItem $Unpacked -Recurse -File -Force -ErrorAction SilentlyContinue |

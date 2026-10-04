@@ -36,12 +36,13 @@ pydantic-settings 帮我们做了三件事：
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote_plus
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根目录：app/core/config.py -> app/core -> app -> 项目根
@@ -57,9 +58,33 @@ _PLACEHOLDERS: set[str] = {
 
 
 def _resolve_path(raw: str) -> Path:
-    """把配置里的相对路径解析为基于项目根目录的绝对路径。"""
+    """把配置里的相对路径解析为基于「数据根目录」的绝对路径。
+
+    数据根目录的优先级（这是「单机桌面应用」的关键设计）：
+
+        1. 环境变量 **HNE_DATA_DIR** —— 桌面壳（Electron）用它把全部可变数据
+           （SQLite 文件、向量库、日志）指到 userData 下，与安装目录彻底分开。
+           这样「卸载重装不丢数据」才成立，而且程序可以装在只读位置。
+        2. **项目根目录** —— 开发态与脚本（pytest / init_db.py）的行为，
+           与引入本机制之前**完全一致**，不会悄悄换地方。
+
+    ★ 为什么读 os.environ 而不是把它做成 Settings 字段：
+      做成字段的话 `data_dir` 属性会变成 `self.DATA_DIR`，而「哪些路径以它为基准」
+      需要在字段校验阶段就知道 —— 会引出「字段求值顺序」这类隐性依赖。
+      直接在解析函数里读环境变量，语义最简单：**它只是相对路径的基准点**。
+    """
     path = Path(raw).expanduser()
-    return path if path.is_absolute() else (BASE_DIR / path).resolve()
+    if path.is_absolute():
+        return path
+    root = os.environ.get("HNE_DATA_DIR", "").strip()
+    base = Path(root).expanduser().resolve() if root else BASE_DIR
+    return (base / path).resolve()
+
+
+def data_root() -> Path:
+    """当前数据根目录（给「SQLite 文件放哪」这类需要显式拼接的地方用）。"""
+    root = os.environ.get("HNE_DATA_DIR", "").strip()
+    return Path(root).expanduser().resolve() if root else BASE_DIR
 
 
 class Settings(BaseSettings):
@@ -112,10 +137,39 @@ class Settings(BaseSettings):
     # 用于加密用户自配的 LLM API Key（Fernet，44 位 base64）
     API_KEY_ENCRYPTION_KEY: str = ""
 
-    # ==================== MySQL ====================
-    MYSQL_HOST: str = "127.0.0.1"
+    # ==================== 数据库后端选择 ====================
+    # ★ 默认 sqlite：本项目是**单机桌面应用**，用户不该为了用它先去装一个数据库服务器。
+    #   sqlite  : 数据存成**一个文件**（默认 <数据目录>/data/app.sqlite3），
+    #             无需安装任何服务、无需填任何连接信息，装完即用。
+    #   mysql   : 保留为**可选**后端，给"已经有 MySQL / 想用 MySQL"的用户。
+    #             在 .env 里写 HNE_DB_BACKEND=mysql 即可切回去，其余代码无需改动。
+    #
+    # ★ 两者的取舍（写清楚，避免以后误以为 sqlite 什么都能顶）：
+    #   · SQLite 是**单写者**模型：同一时刻只允许一个写事务。单机单用户完全够用，
+    #     但如果将来要做"一个服务端多人共用"，必须回到 MySQL。
+    #   · 因此 MySQL 路径**必须一直保留可用**，不能被删掉、也不能无人测试
+    #     （tests/test_db_mysql.py + 环境变量开关守着它）。
+    #
+    # ★★ 旧配置必须留在 MySQL 上（见下面 _infer_db_backend 的校验器）：
+    #    老版本只有 MySQL 一种后端，所以老向导写出来的 `.env` **没有**
+    #    `HNE_DB_BACKEND` 这一行。引入 sqlite 默认值之后，那种配置会
+    #    "字段默认值生效" → 被**静默**换到一份空的 SQLite 库上，
+    #    用户看到的现象是"我原来的账号密码登不进去了"（实测踩到，见 §34）。
+    DB_BACKEND: Literal["sqlite", "mysql"] = "sqlite"
+    # SQLite 数据文件路径。留空表示用默认值 <数据根目录>/data/app.sqlite3；
+    # 填相对路径时以数据根目录为基准（见 _resolve_path）。
+    SQLITE_PATH: str = ""
+    # SQLite 写锁等待时间（毫秒）。桌面应用写并发极低，10 秒足够；
+    # 设成 0 会让"恰好同时写"直接抛 "database is locked"，对用户表现为随机报错。
+    SQLITE_BUSY_TIMEOUT_MS: int = Field(default=10000, ge=0)
+
+    # ==================== MySQL（可选后端） ====================
+    # ★ 这两个的默认值刻意留空，而不是 127.0.0.1 / narrative_app：
+    #   它们被用来判断"这份配置是不是一份 MySQL 配置"（见 _infer_db_backend）。
+    #   留空之后，只有**真的写过 MySQL 键**的配置才会被判成 MySQL 配置。
+    MYSQL_HOST: str = ""
     MYSQL_PORT: int = Field(default=3306, ge=1, le=65535)
-    MYSQL_USER: str = "narrative_app"
+    MYSQL_USER: str = ""
     MYSQL_PASSWORD: str = ""
     MYSQL_DB: str = "narrative_engine"
     MYSQL_CHARSET: str = "utf8mb4"
@@ -179,6 +233,49 @@ class Settings(BaseSettings):
     # field_validator 会在「配置值被读入之后」再做一次加工或校验。
     # 注意 @classmethod 是固定写法，不能省略。
 
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_db_backend(cls, data: Any) -> Any:
+        """**旧配置必须继续用 MySQL** —— 不让"新默认值"把老用户静默换库。
+
+        ==================== 为什么需要它（实测的事故）====================
+        默认后端从"只有 mysql"改成"默认 sqlite"之后：
+          · 老版本向导写的 `.env` 里**没有** `HNE_DB_BACKEND` 这一行
+            （那时只有一种选择，没必要写）；
+          · 于是 pydantic 的字段默认值 `sqlite` 生效；
+          · 结果：老用户升级后**被静默换到一份空的 SQLite 库**，
+            打开应用看到的是"用户名或密码错误" —— 他会以为账号被人改了。
+        （真实发生：见 docs/handoff.md §34。数据一条没丢，但表现极具误导性。）
+
+        ==================== 为什么必须在 `mode="before"` 做 ====================
+        第一版写在 `mode="after"` 里、判据用 `model_fields_set` —— **错的**：
+        pydantic 会把「从 `.env` 文件读到的键」也记进 `model_fields_set`，
+        而老配置里**每个** MySQL 键都来自 `.env`，于是"用户显式设过"恒为真，
+        推断永远不会触发（这个错误是实测抓到的：显式写 `HNE_DB_BACKEND=sqlite`
+        的零配置被推断成了 mysql）。
+
+        在 before 阶段拿到的 `data` 就是**原始输入**（环境变量 + `.env` + 调用方
+        显式传的），所以"键在不在里面"恰好回答"用户到底有没有表过态"。
+
+        ★★ 注意 `data` 里的键是**裸字段名**（`DB_BACKEND` / `MYSQL_HOST`），
+           **不带 `HNE_` 前缀** —— `env_prefix` 是"读环境变量时"用的，
+           before 阶段拿到的已经是剥掉前缀之后的设置键名。
+           第一版按 `HNE_DB_BACKEND` 去查，于是"键永远不在" → 后面又去取
+           `HNE_MYSQL_HOST`（同样取不到）→ **推断静默失效**，一切照旧。
+           （两处键名都错，而且不报错，只有实测才发现。）
+
+        ==================== 判据（与壳侧 resolvedBackend 同一套语义）====================
+        只在 `DB_BACKEND` **完全没出现**、且输入里**确实有 MySQL 连接信息**
+        （Host 或 User 非空）时，才推断成 mysql。
+        """
+        if isinstance(data, dict) and "DB_BACKEND" not in data:
+            host = str(data.get("MYSQL_HOST") or "").strip()
+            user = str(data.get("MYSQL_USER") or "").strip()
+            if host or user:
+                data = dict(data)
+                data["DB_BACKEND"] = "mysql"
+        return data
+
     @field_validator("API_V1_PREFIX")
     @classmethod
     def _normalize_api_prefix(cls, value: str) -> str:
@@ -214,8 +311,40 @@ class Settings(BaseSettings):
         return self.APP_ENV == "production"
 
     @property
+    def is_sqlite(self) -> bool:
+        """当前是否使用 SQLite 后端（多处分支判断都读它，避免各写各的字符串比较）。"""
+        return self.DB_BACKEND == "sqlite"
+
+    @property
+    def sqlite_file(self) -> Path:
+        """SQLite 数据文件的绝对路径（默认 <数据根目录>/data/app.sqlite3）。"""
+        raw = self.SQLITE_PATH.strip() or "./data/app.sqlite3"
+        return _resolve_path(raw)
+
+    @property
+    def database_url(self) -> str:
+        """当前后端的 SQLAlchemy 连接串（engine 只认这一个入口）。
+
+        SQLite 用 `sqlite+pysqlite:///绝对路径`：三个斜杠 + 绝对路径是 SQLAlchemy
+        的固定写法（Windows 上写成 `sqlite:///E:\\dir\\app.sqlite3` 也能被正确识别）。
+        """
+        if self.is_sqlite:
+            return f"sqlite+pysqlite:///{self.sqlite_file.as_posix()}"
+        return self.mysql_url
+
+    @property
+    def database_label(self) -> str:
+        """给日志/健康检查看的可读名字（不含任何口令）。"""
+        return f"sqlite:{self.sqlite_file}" if self.is_sqlite else f"mysql:{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DB}"
+
+    @property
     def mysql_url(self) -> str:
-        """SQLAlchemy 连接串（含数据库名）。密码做 URL 转义，避免特殊字符破坏连接串。"""
+        """MySQL 的连接串（含数据库名）。
+
+        ★ 注意：**不要直接用这个属性去建 Engine** —— 用 `database_url`
+          （它会按 `DB_BACKEND` 分派）。这里保留它是因为 `init_db.py` 导出
+          schema.sql、以及排障时想看一眼拼出来的串。
+        """
         return (
             f"mysql+pymysql://{quote_plus(self.MYSQL_USER)}:{quote_plus(self.MYSQL_PASSWORD)}"
             f"@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DB}"
@@ -224,7 +353,10 @@ class Settings(BaseSettings):
 
     @property
     def mysql_server_url(self) -> str:
-        """不含数据库名的连接串，用于建库前探测服务是否可达。"""
+        """不含数据库名的 MySQL 连接串，用于建库前探测服务是否可达。
+
+        ★ 只在 `DB_BACKEND=mysql` 时有意义（sqlite 没有"服务端"这个概念）。
+        """
         return (
             f"mysql+pymysql://{quote_plus(self.MYSQL_USER)}:{quote_plus(self.MYSQL_PASSWORD)}"
             f"@{self.MYSQL_HOST}:{self.MYSQL_PORT}/?charset={self.MYSQL_CHARSET}"
@@ -243,13 +375,27 @@ class Settings(BaseSettings):
     # -------------------- 行为方法 --------------------
     def ensure_dirs(self) -> None:
         """确保运行期需要的数据目录存在。"""
-        for directory in (self.chroma_dir, self.log_dir):
+        directories = [self.chroma_dir, self.log_dir]
+        # SQLite 模式下还要保证数据文件所在目录存在 —— sqlite3 只会报
+        # "unable to open database file"，不会替我们把父目录建出来。
+        if self.is_sqlite:
+            directories.append(self.sqlite_file.parent)
+        for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
 
     def validate_runtime(self) -> list[str]:
         """检查关键配置是否可用，返回告警列表（不抛异常，供启动时打印）。
 
         生产环境若存在告警，直接抛出 ConfigurationError，避免"带病上线"。
+
+        ★ 关于两个密钥：它们在启动流程里会被 `app.db.bootstrap.ensure_secrets()`
+          **自动生成并落盘**（在调用本方法之前），所以正常情况下这里不会报警。
+          仍然保留这两条检查，是因为本方法也可能被"只想看看配置"的脚本单独调用 ——
+          那时若确实没配，如实说出来比默默返回空列表更有用。
+
+        ★ `MYSQL_PASSWORD` 只在 `DB_BACKEND=mysql` 时才是问题：
+          默认的 sqlite 后端压根不连 MySQL，报"MySQL 连接池无法建立连接"
+          是纯误导（用户会去找一个他根本不需要装的软件）。
         """
         problems: list[str] = []
 
@@ -259,7 +405,7 @@ class Settings(BaseSettings):
         if self.API_KEY_ENCRYPTION_KEY in _PLACEHOLDERS:
             problems.append("API_KEY_ENCRYPTION_KEY 未设置，用户自配的 LLM API Key 无法加密存储")
 
-        if self.MYSQL_PASSWORD in _PLACEHOLDERS:
+        if not self.is_sqlite and self.MYSQL_PASSWORD in _PLACEHOLDERS:
             problems.append("MYSQL_PASSWORD 未设置，MySQL 连接池将无法建立连接")
 
         if self.is_production and problems:

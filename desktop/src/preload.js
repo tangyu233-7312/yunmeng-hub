@@ -63,8 +63,24 @@ contextBridge.exposeInMainWorld('yunmeng', {
  */
 contextBridge.exposeInMainWorld('yunmengSetup', {
   getFields: () => ipcRenderer.invoke('setup:fields'),
+  // ★ 切换页用的字段读取：同一个 `setup:fields`，但让它按"切换"模式组织
+  //   （预填当前的存储方式与连接信息、并把 page.mode 标成 switch）。
+  //   为什么要单独一个入口而不是让 preload 去猜 URL：`contextBridge` 暴露的
+  //   函数在渲染进程里跑，用 `location` 猜模式会变成"两条隐式契约",
+  //   显式一个入口更不容易长歪。
+  switchFields: () => ipcRenderer.invoke('setup:fields', { mode: 'switch' }),
   generate: (key) => ipcRenderer.invoke('setup:generate', String(key)),
   test: (values) => ipcRenderer.invoke('setup:test', values),
   save: (values) => ipcRenderer.invoke('setup:save', values),
   openConfigDir: () => ipcRenderer.invoke('setup:open-config-dir'),
+  // ★ 切换存储方式：写配置 → 自检 → 停旧后端 → 用新配置重启。
+  //   与 `save` 分开是刻意的：`save` 是"首启落盘并进入"，`switch` 是
+  //   "在运行中换库"，两者的收尾（是否保留旧后端、是否重建菜单）不同。
+  switchBackend: (values) => ipcRenderer.invoke('setup:switch', values),
+  // ★ 打开"切换存储方式"页。
+  //   为什么不靠菜单加速键：菜单的 `accelerator` 匹配对**键盘布局与 IME** 敏感
+  //   （实测：CDP 发 Ctrl+Shift+S 在中文输入法环境下不一定命中），
+  //   而这个动作是"用户要换数据库"这种低频但关键的操作，不该赌键码。
+  //   所以给渲染进程一个**显式**入口：菜单项照旧在，键盘只是额外一条路。
+  openSwitchPage: () => ipcRenderer.invoke('setup:open-switch-page'),
 });

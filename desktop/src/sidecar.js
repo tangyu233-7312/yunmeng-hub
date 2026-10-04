@@ -158,4 +158,38 @@ function sidecarArgs(options) {
   return args;
 }
 
-module.exports = { SIDECAR_NAME, sidecarCandidates, chooseBackend, sidecarArgs };
+/**
+ * 在**当前这份源码**上做验收时用的开关：跳过打包后端，强制走本机 Python。
+ *
+ * ==================== ★ 为什么需要它（实测踩到）====================
+ * 壳的优先级是"打包后端 → 本机 Python"，而 **`desktop/dist/backend/` 是构建产物、不入库**，
+ * 一旦开发者本地跑过一次 `build_backend.ps1`，那份 `backend.exe` 就会**一直赢**。
+ *
+ * 后果不是"慢一点"，而是**验收测的根本不是你正在改的代码**：
+ * 本轮就是这么被绊住的 —— 零配置判定明明写好了，向导自检却仍按 MySQL 连库，
+ * 因为那个 `backend.exe` 是**上一次构建**的（还没有双后端支持）。
+ * 而且它**不会报任何错**，只是行为与源码不一致 —— 正是本项目最反对的静默不一致。
+ *
+ * ★ 为什么不做成默认行为（"源码比 exe 新就自动用 Python"）：
+ *   那种时间戳启发式在很多正常场景下都会误判（刚 clone 下来源码普遍比 exe 新、
+ *   或者只改了一行注释），然后把"打包形态"的验收悄悄降级成开发形态 ——
+ *   又是静默换路径。所以这里用一个**显式**开关，宁可让人多打一个环境变量。
+ *
+ * 用法：`$env:HNE_DESKTOP_PREFER_PYTHON='1'; npm start`
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {boolean}
+ */
+function preferPythonFromSource(env) {
+  const raw = (env || process.env).HNE_DESKTOP_PREFER_PYTHON;
+  if (raw === undefined || raw === null) return false;
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+
+module.exports = {
+  SIDECAR_NAME,
+  sidecarCandidates,
+  chooseBackend,
+  sidecarArgs,
+  preferPythonFromSource,
+};

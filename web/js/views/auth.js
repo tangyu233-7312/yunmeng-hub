@@ -20,6 +20,14 @@ export function renderAuth(root, { onLoggedIn }) {
         </div>
         <div class="sub">支持自配任意大模型 API 的交互式叙事引擎</div>
 
+        <!-- ★★ 存储方式提示（用于"登录不上"时自查）
+             用户实测反馈过一件事：他切换存储方式之后拿原账号登录，界面只回
+             "用户名或密码错误"，于是第一反应是"我的账号被人改了吗"。
+             而真相是：两种存储（本机文件 / MySQL）是**两个互相独立的库** ——
+             账号都不互通，切过去就得在新库里重新注册。
+             这一块把"你现在连的是哪个库"直接写在登录页上，让那种误会不再发生。 -->
+        <div id="auth-storage-note" class="auth-storage-note hidden"></div>
+
         <div class="auth-tabs">
           <button data-tab="login" class="active">登录</button>
           <button data-tab="register">注册</button>
@@ -69,6 +77,43 @@ export function renderAuth(root, { onLoggedIn }) {
   const tabs = root.querySelectorAll('.auth-tabs button');
   const formLogin = $('#form-login', root);
   const formRegister = $('#form-register', root);
+
+  // ★★ 把"当前连的是哪个库"写在登录页上。
+  //
+  //   为什么要做：用户切换存储方式后拿原账号登录，界面只回"用户名或密码错误"，
+  //   他会以为账号被人改了 —— 而真相是**两种存储是两个互相独立的库**
+  //   （连账号都不互通）。这件事必须在用户**看得到的地方**说清楚，
+  //   而不是只写在一屏之外的"切换存储方式"页上。
+  //
+  //   ★ 失败就**静默隐藏**：这段提示只是"锦上添花"，绝不能让 /health 探不通
+  //     影响到登录本身（登录用的是另一个请求）。
+  (async () => {
+    const box = $('#auth-storage-note', root);
+    if (!box) return;
+    try {
+      const resp = await fetch('/health', { headers: { Accept: 'application/json' } });
+      if (!resp.ok) return;
+      const health = await resp.json();
+      const detail = ((health.components || {}).database || {}).detail || {};
+      const which = String(detail.backend || '');
+      const label = which === 'mysql' ? 'MySQL 数据库'
+        : which === 'sqlite' ? '本机文件（SQLite）' : '';
+      if (!label) return;
+      const where = which === 'sqlite' ? '应用数据目录下的 <code>data/app.sqlite3</code>'
+        : '你配置的 MySQL 实例';
+      box.innerHTML = `
+        <span class="auth-storage-tag">当前存储：${label}</span>
+        <div class="auth-storage-hint">
+          ${where}。★ 两种存储是<b>两个互相独立的库</b>，数据与<b>账号都不互通</b> ——
+          如果你在用 MySQL 时的账号在这里登录不上，多半是因为现在连的是另一个库：
+          菜单「数据 → 切换存储方式…」可以切回去；也可以在这里直接<b>注册</b>一个新账号。
+        </div>`;
+      box.classList.remove('hidden');
+    } catch {
+      /* 探不到就什么都不显示：这段只是提示，不该影响登录 */
+    }
+  })();
+
   tabs.forEach((tab) => {
     tab.addEventListener('click', () => {
       tabs.forEach((t) => t.classList.toggle('active', t === tab));

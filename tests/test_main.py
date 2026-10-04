@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import get_settings
 from app.main import app
 
 
@@ -34,8 +35,13 @@ def test_health_reports_database_component(client: TestClient) -> None:
     body = client.get("/health").json()
     assert "database" in body["components"]
     assert body["components"]["database"]["status"] == "ok"
-    # 顺便确认探活语句真的拿到了 MySQL 版本号
-    assert body["components"]["database"]["detail"]["mysql_version"]
+    # 顺便确认探活真的问出了"用的哪个后端 + 服务端版本"。
+    # ★ 这里断言的是中性的 `backend` / `server`，而不是早期的 `mysql_version`：
+    #   引入 SQLite 之后，"后端一定是 MySQL"这个前提不再成立，
+    #   把后端名字写死进键名会让健康检查对外说谎。
+    detail = body["components"]["database"]["detail"]
+    assert detail["backend"] == get_settings().DB_BACKEND
+    assert detail["server"]
 
 
 def test_root_ok(client: TestClient) -> None:

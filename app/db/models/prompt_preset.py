@@ -24,9 +24,10 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import BigInteger, Boolean, ForeignKey, String, text
-from sqlalchemy.dialects.mysql import JSON, MEDIUMTEXT
+from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.types import LongText, PkInt
 from app.db.base import Base, TimestampMixin
 
 
@@ -40,7 +41,7 @@ class PromptPreset(Base, TimestampMixin):
     __table_args__ = {"comment": "提示词预设表（规范模型行为的规则/破甲/采样参数）"}
 
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True, comment="预设ID"
+        PkInt, primary_key=True, autoincrement=True, comment="预设ID"
     )
     user_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -78,7 +79,7 @@ class PromptPreset(Base, TimestampMixin):
     #: ★ 单独存一列而不是塞进 config：它是**导入那一刻的结论**，
     #:   界面上要能随时回看，而不是每次重新推导（推导结果可能随版本变化）。
     import_notes: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT, nullable=True, comment="导入时的提醒与降级说明（换行分隔）"
+        LongText, nullable=True, comment="导入时的提醒与降级说明（换行分隔）"
     )
 
     is_active: Mapped[bool] = mapped_column(

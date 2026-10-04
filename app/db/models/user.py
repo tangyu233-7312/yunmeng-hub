@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy import BigInteger, Boolean, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.types import PkInt
 from app.db.base import Base, TimestampMixin
 
 
@@ -21,7 +22,7 @@ class User(Base, TimestampMixin):
     # ---------------- 主键 ----------------
     # BigInteger 对应 MySQL 的 BIGINT，容纳量远大于 INT，避免用户量增长后主键溢出
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True, comment="用户ID"
+        PkInt, primary_key=True, autoincrement=True, comment="用户ID"
     )
 
     # ---------------- 账号信息 ----------------

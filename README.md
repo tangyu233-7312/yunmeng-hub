@@ -8,7 +8,7 @@
 |---|---|
 | 语言 | Python 3.13 |
 | Web 框架 | FastAPI + Uvicorn |
-| 关系数据库 | MySQL 8.0（SQLAlchemy 2.0 + PyMySQL + QueuePool 连接池） |
+| 关系数据库 | **默认 SQLite**（一个文件，装完即用）／ **可选 MySQL 8.0**（SQLAlchemy 2.0 一套代码两种后端） |
 | 向量数据库 | ChromaDB 1.5（PersistentClient 持久化） |
 | LLM 接入 | httpx 自研统一适配层，兼容 OpenAI / Anthropic / Ollama 等异构协议 |
 | 认证 | PyJWT + bcrypt |
@@ -16,36 +16,77 @@
 前端（后续）：HTML / CSS / JavaScript，最终通过 Electron 打包为桌面应用。
 
 > **当前状态**：后端 3.1~3.10 完成，可视化控制台可直接使用（含叙事对话界面与消息级操作）。
-> **877 项 `pytest` 全绿**（另有 2 项按环境变量跳过）、**184 项端到端冒烟全过**、
-> **147 项真实浏览器探针全过**（控制台报错 0 条）。
+> **913 项 `pytest` 全绿**（SQLite 后端；另有 3 项按环境跳过 —— 真实预设 2 项 + 连接池参数 1 项。
+> 换到 MySQL 后端则是 **914 passed / 2 skipped**：那一项连接池断言只在 MySQL 下有意义。
+> 两种后端跑的是同一套用例）、
+> **184 项端到端冒烟全过**、**147 项真实浏览器探针全过**（控制台报错 0 条）。
 > 桌面版已完成三个阶段：Electron 壳 → PyInstaller 打包后端 → **Windows 安装包**
-> （`desktop/` 自带 **138 项 Node 自测**，多出一条命令即可装出来用，见 `desktop/README.md` §8）。
-> **仍然需要你自备 MySQL** —— 应用不附带数据库；后端也不再需要 Python。
+> （`desktop/` 自带 **160 项 Node 自测**，多出一条命令即可装出来用，见 `desktop/README.md` §8）。
+> **装完即用**：默认数据存成本机的一个 SQLite 文件，不需要安装任何数据库服务，
+> 也不需要事先建库建表 —— 表由后端启动时自动创建，密钥由后端首次运行自动生成。
+> 仍然需要你自备的只有一样：**你自己要用的那个大模型 API Key**。
 
 前端（后续）：HTML / CSS / JavaScript，已通过 Electron 打包为桌面应用。
+
+## 数据存哪里：SQLite（默认）与 MySQL（可选）
+
+云梦枢是**单机桌面应用**，所以默认用 SQLite —— 数据是**一个文件**，
+不需要为了用它先去装一个数据库服务器。两种后端跑的是**同一套代码**：
+
+| | `HNE_DB_BACKEND=sqlite`（默认） | `HNE_DB_BACKEND=mysql` |
+|---|---|---|
+| 需要额外安装 | **什么都不用** | MySQL 8 服务 + 建库建账号 |
+| 数据位置 | `<数据目录>/data/app.sqlite3` 一个文件 | MySQL 实例里的一个库 |
+| 建表 | 后端启动时自动（幂等） | 后端启动时自动（幂等），也可用 `scripts/init_db.py` |
+| 适合 | **单机单用户**（本项目的形态） | 多人共用同一个库、或你已经有 MySQL |
+| 已知限制 | **单写者**：同一时刻只允许一个写事务 | 需要维护一个数据库服务 |
+
+后端启动时会自己把该做的做完（`app/db/bootstrap.py`）：
+
+1. **建表**：`create_all`，已存在的表原样不动（幂等）。此前只有 `scripts/init_db.py` 会建表，
+   于是"连得上空库、一注册就报 table doesn't exist"—— 桌面应用不允许让用户先跑脚本。
+2. **生成密钥**：`SECRET_KEY` 与 `API_KEY_ENCRYPTION_KEY` 若为空/占位符/格式非法，
+   就自动生成并写到 `<数据目录>/config/.secrets.env`（0600）。**只补缺失的，绝不覆盖已有的** ——
+   因为换掉 `API_KEY_ENCRYPTION_KEY` 会让用户已保存的 LLM API Key 永远解不开。
+
+想切到 MySQL：在 `.env`（或桌面版的 `config\.env`）里写
+
+```ini
+HNE_DB_BACKEND=mysql
+HNE_MYSQL_HOST=127.0.0.1
+HNE_MYSQL_PORT=3306
+HNE_MYSQL_USER=narrative_app
+HNE_MYSQL_PASSWORD=你的密码
+HNE_MYSQL_DB=narrative_engine
+```
+
+**两处为了兼容两种后端而必须不同的地方**都集中在 `app/db/dialect.py`，并且各有测试盯着：
+
+- `LIKE ... ESCAPE '!'`：SQLAlchemy 默认生成的 `LIKE` **没有 ESCAPE 子句**，
+  而 SQLite **没有默认转义符** —— 于是用户搜 "50%" 会命中 0 条。显式写出 ESCAPE 后两边语义一致。
+- `JSON_CONTAINS` vs `instr`：MySQL 有 `JSON_CONTAINS`，SQLite 没有（标签筛选在那里退化为
+  文本子串匹配，靠 JSON 里元素两侧的引号保证"精确匹配而不是前缀命中"）。
+
+> 开发/测试侧同样零门槛：默认后端就是 sqlite，`pytest` 不需要任何外部服务。
+> 想验证 MySQL 那条路：`$env:HNE_DB_BACKEND='mysql'; .\.venv\Scripts\python.exe -m pytest -q`。
 
 ## 快速开始
 
 ```powershell
 # 1. 创建并激活虚拟环境
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.\\.venv\\Scripts\\Activate.ps1
 
 # 2. 安装依赖
 python -m pip install -r requirements.txt
 
-# 3. 配置环境变量
+# 3. 配置环境变量（★ 这一步现在可以跳过）
+#    默认后端是 sqlite，表与密钥都由后端自己搞定，所以**什么都不配也能跑**。
+#    想自己掌控（或用 MySQL）时再复制模板：
 Copy-Item .env.example .env
-# 然后编辑 .env，至少填写 HNE_MYSQL_PASSWORD
-# 生成密钥：
-#   python -c "import secrets; print(secrets.token_urlsafe(48))"
-#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-#
 # ★ 所有环境变量都必须带 HNE_ 前缀，原因见下方「配置命名空间」一节
 
-# 4. 初始化数据库（建表脚本见 scripts/init_db.py）
-
-# 5. 启动开发服务器
+# 4. 启动开发服务器（首次启动会在 ./data/ 下建库、建表并生成密钥）
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -258,7 +299,12 @@ tests/                 pytest 测试（586 项）
 > 而是尽量保留用户真正在乎的内容（故事、世界观），只解除关联。
 
 表结构的唯一事实来源是 `app/db/models/` 下的 ORM 模型，
-`scripts/schema.sql` 由脚本自动导出，请勿手工修改。
+`scripts/schema.sql` 由脚本自动导出（固定用 MySQL 方言编译，因为它的约束更严、信息更全），
+请勿手工修改。
+
+> **正常使用时不需要跑下面这些命令**：后端每次启动都会自动建表（幂等，
+> 见 `app/db/bootstrap.py` 的 `ensure_schema`）。下面的脚本是给
+> "想先看清结构 / 想干净重建 / 想单独排障"这些场合用的。
 
 ```powershell
 # 建表（可重复执行）
@@ -269,7 +315,20 @@ tests/                 pytest 测试（586 项）
 
 # 删表重建（会清空数据，仅开发用）
 .\.venv\Scripts\python.exe scripts\init_db.py --drop
+
+# 给**已有的库**补上新增的列（幂等；只做加法，绝不删数据）
+.\.venv\Scripts\python.exe scripts\migrate_db.py --dry-run   # 先看要执行什么
+.\.venv\Scripts\python.exe scripts\migrate_db.py
+
+# 想对 MySQL 实例操作就显式指定后端（默认是 sqlite）
+$env:HNE_DB_BACKEND='mysql'; .\.venv\Scripts\python.exe scripts\init_db.py
 ```
+
+> ⚠️ SQLite 侧的**列级升级**由 `app/db/schema_upgrade.py` 负责（**从 ORM 模型自动推导**）：
+> 它只做加法 —— `CREATE TABLE` / `CREATE INDEX` / `ALTER TABLE … ADD COLUMN`，
+> **永不** `DROP` / 改类型 / 删列（有代码级门禁 + 专门测试）。
+> 改类型、拆表这类复杂迁移目前**不支持**（那时需要重建整张表，得先备份数据）；
+> 库里多出来的列/表只会在 `migrate_db.py` 的输出里被**报告**，不会被动。
 
 ## 向量库与嵌入后端（长期记忆）
 
@@ -1612,12 +1671,26 @@ SSE 事件类型：
   现在前端会自动削掉多余段、后端直接拒绝并告诉你该填什么、测试失败时弹窗列出
   「实际请求地址 / 上游状态 / 上游原话」
 - **删消息后忘记重算统计** —— 界面上出现「共 2 条消息 · 累计 12000 token」这种算不回来的数字
+- **`json_contains` 只有 MySQL 有**：切到 SQLite 后标签筛选直接 `no such function`，
+  挂掉 3 个用例；而且第一版退化写法用原样中文去匹配，**永远匹配不上且不报错**
+  （列里存的是 `\uXXXX` 转义形式）。教训：跨后端的分支必须**两边都跑一遍测试**，
+  否则"只在一边能跑"这件事不会有任何提示
+- **SQLAlchemy 的 `LIKE` 不带 ESCAPE**：SQLite 没有默认转义符，
+  于是搜 "50%" 命中 0 条；显式写 `ESCAPE '!'` 之后两边才一致
+- **SQLite 默认 `PRAGMA foreign_keys = OFF`**：级联删除**静默失效**，
+  删用户不报错、只是留下一堆孤儿数据。必须在每条连接上打开它
+- **「我生成了密钥」与「后端用的是旧密钥」可以同时成立**：`Settings` 是 `lru_cache` 单例，
+  自举改了环境变量却没清缓存 —— 又一种"看起来做了、其实没生效"
 
 ## 运行测试
 
 ```powershell
-# 1) 单元测试（874 passed + 2 skipped；真实预设用例需设 HNE_REAL_PRESET）
+# 1) 单元测试（SQLite 后端：913 passed + 3 skipped；真实预设 2 项需设 HNE_REAL_PRESET）
+#    ★ 默认跑 SQLite，不需要任何外部服务；换到 MySQL 见下面那条
 .\.venv\Scripts\python.exe -m pytest -q
+
+# 1b) 换后端跑同一套用例（默认后端是 sqlite）
+$env:HNE_DB_BACKEND='mysql'; .\.venv\Scripts\python.exe -m pytest -q
 
 # 2) 冒烟测试（184 项，需要后端正在运行）
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000   # 另开一个窗口
@@ -1630,7 +1703,7 @@ SSE 事件类型：
 .\.venv\Scripts\python.exe scripts\benchmark.py
 .\.venv\Scripts\python.exe scripts\benchmark.py --from-db
 
-# 5) 桌面壳的 Node 自测（138 项，不需要 MySQL，也不需要 Electron）
+# 5) 桌面壳的 Node 自测（160 项，不需要数据库，也不需要 Electron）
 cd desktop
 npm test
 ```
@@ -1638,8 +1711,11 @@ npm test
 > ★ 2~4 会共用数据库与端口，**必须串行跑**，不要并行。
 
 注意：`tests/test_db.py` 与 `tests/test_chroma.py` 是**集成测试**，
-会真实连接 MySQL、读写向量库并执行本地模型推理
-（使用随机用户 ID，用例结束自动清理，可反复执行）。
+会真实读写数据库、向量库并执行本地模型推理
+（使用随机用户名，用例结束自动清理，可反复执行）。
+它们跑的是**当前配置的后端** —— 默认 sqlite，数据落在 `.pytest-data/`（已 gitignore），
+所以 clone 下来直接 `pytest` 就能全绿，不需要先装 MySQL。
+`tests/test_db_sqlite.py` 则**始终**测 SQLite 那条路（即使当前后端是 MySQL）。
 
 ## 桌面版（Electron 壳 + 安装包）
 
@@ -1647,7 +1723,7 @@ npm test
 三个阶段的用法各一句话：
 
 ```powershell
-# ① 开发态：仓库里直接跑（需要本机 Python + MySQL）
+# ① 开发态：仓库里直接跑（需要本机 Python；数据库默认 sqlite，不需要 MySQL）
 cd desktop
 npm install
 npm start
@@ -1663,13 +1739,17 @@ npm run build:installer
 找不到才退回本机 Python）、轮询 `/health` 就绪后加载控制台，退出时把后端子进程整棵树收掉。
 **后端契约与 `web/` 一行未改**，所以上面那套验收方式照旧有效。
 
-装出来的那份第一次打开会进**首次设置**页：填 MySQL 连接与两个密钥，
-保存时它**真的把后端起起来逐项自检**（数据库 / 向量库），通过才进控制台。
-配置写在**用户数据目录**（Windows：`%APPDATA%\云梦枢\config\.env`），
+装出来的那份第一次打开会进**首次设置**页，默认「存储方式 = 本机文件（SQLite）」：
+**什么都不用填**，点「保存并开始」即可用（表由后端建、密钥由后端生成）。
+想用 MySQL 就在那一屏切成 MySQL 再填连接信息；保存时它**真的把后端起起来逐项自检**
+（数据库 / 向量库），通过才进控制台。
+配置写在**用户数据目录**（Windows：`%APPDATA%\云梦枢\config\.env`，
+自动生成的密钥在同目录的 `.secrets.env`），
 **不在安装目录里** —— 卸载重装不丢；卸载也**不删**用户数据。
 
 > ⚠️ 诚实边界（三条，都不打算含糊）：
-> ① **仍然需要你自备 MySQL**（应用不附带数据库）；
+> ① 默认存储是本机文件，**不需要额外安装任何东西**；但如果你要选 MySQL，
+>    那就得自备一个 MySQL 8 实例（应用不附带数据库服务器）；
 > ② 安装包**没有代码签名**，首次运行会被 SmartScreen 提示"未知发布者"
 >    —— 这需要用户自己的代码签名证书，不是缺陷；
 > ③ 安装包只出了 **Windows x64**（NSIS），macOS / Linux 未做。
@@ -1680,7 +1760,7 @@ npm run build:installer
 ## 开发进度
 
 - [x] **3.1** FastAPI 应用初始化、配置加载、日志、全局异常、健康检查
-- [x] **3.2** MySQL 连接池 + ORM 模型 + 建库脚本
+- [x] **3.2** 数据库连接池 + ORM 模型 + 建库脚本（**后续扩展为 SQLite/MySQL 双后端**）
 - [x] **3.3** ChromaDB 初始化 + 可插拔嵌入策略 + 语义检索验证
 - [x] **3.4a** 统一 LLM 调用接口封装（数据结构 / 适配器抽象 / OpenAI 兼容协议 / 错误码归一化 / 重试）
 - [x] **3.4b** 生成参数层与上下文预算（温度 / 最大输出 / 思考强度 / 参数生效性诊断）

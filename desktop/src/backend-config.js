@@ -193,9 +193,65 @@ function buildBackendEnv(options) {
  */
 function sidecarDataEnv(options) {
   return {
+    // ★ 数据根目录：SQLite 文件、向量库、日志都以它为基准（后端侧见
+    //   app/core/config.py 的 _resolve_path）。它同时决定了"卸载重装不丢数据"。
+    HNE_DATA_DIR: options.dataDir,
     // 向量库实体（长期记忆）落在 userData，安装目录之外
     HNE_CHROMA_PERSIST_DIR: path.join(options.dataDir, 'chroma'),
   };
+}
+
+/**
+ * 「零配置」注入：把数据位置定下来，但**逐键尊重用户的显式选择**。
+ *
+ * ==================== 为什么需要它 ====================
+ * 云梦枢是单机桌面应用，用户装完就该能用。所以默认走 SQLite：
+ * 数据是一个文件、表由后端启动时自动建、密钥由后端首次运行自动生成 ——
+ * 用户全程不需要配任何东西（这正是"安装即用"）。
+ *
+ * ★ 为什么不能"发现用户配了数据库就整体不注入"（第一版就是这么错的）：
+ *   向导写出来的 `.env` **一定**含 `HNE_DB_BACKEND`（默认就是 sqlite）。
+ *   若按"配过数据库就退出"的规则，那个默认 SQLite 的用户反而拿不到
+ *   `HNE_DATA_DIR` —— 数据会按"相对项目根"落到安装目录附近，
+ *   "卸载重装不丢数据"这条就静默失效了。
+ *   所以改成**逐键判断**：用户显式设过的键不碰，其余该给默认的照给。
+ *
+ * ★ 逐键规则（`fileEnv` 与真实进程环境里出现过且非空 = 用户显式设过）：
+ *   · `HNE_DATA_DIR`      —— 用户没设就注入（它只决定"相对路径以谁为基准"，
+ *                            对 SQLite 与 MySQL 都成立，不存在覆盖选择的风险）
+ *   · `HNE_SQLITE_PATH`   —— 用户没设**且**后端是 sqlite 才注入
+ *   · `HNE_DB_BACKEND`    —— 用户没设**且**也没有任何 `HNE_MYSQL_*` 才注入 sqlite
+ *                            （只有 `HNE_MYSQL_*` 却没有 DB_BACKEND 的，是**老版本向导**
+ *                             写的配置，必须理解成 mysql，绝不能被我们改成 sqlite）
+ *
+ * @param {object} options
+ * @param {string} options.dataDir    userData 下的数据目录
+ * @param {Record<string,string>} [options.fileEnv] 用户 .env 里读到的键值
+ * @param {NodeJS.ProcessEnv} [options.baseEnv]     真实进程环境
+ * @returns {Record<string,string>} 要注入的键值（可能是空对象）
+ */
+function databaseEnvDefaults(options) {
+  const fileEnv = options.fileEnv || {};
+  const baseEnv = options.baseEnv || {};
+
+  /** 用户有没有自己设过这个键（.env 或真实环境变量，非空才算）。 */
+  const userSet = (key) => [fileEnv[key], baseEnv[key]].some(
+    (value) => value !== undefined && String(value).trim() !== '',
+  );
+
+  const out = {};
+  if (!userSet('HNE_DATA_DIR')) out.HNE_DATA_DIR = String(options.dataDir);
+
+  const explicitBackend = String(fileEnv.HNE_DB_BACKEND || baseEnv.HNE_DB_BACKEND || '').trim();
+  const hasMysqlConfig = ['HNE_MYSQL_HOST', 'HNE_MYSQL_PASSWORD', 'HNE_MYSQL_USER']
+    .some((key) => userSet(key));
+  const backend = explicitBackend || (hasMysqlConfig ? 'mysql' : 'sqlite');
+
+  if (!explicitBackend && !hasMysqlConfig) out.HNE_DB_BACKEND = 'sqlite';
+  if (backend === 'sqlite' && !userSet('HNE_SQLITE_PATH')) {
+    out.HNE_SQLITE_PATH = path.join(String(options.dataDir), 'data', 'app.sqlite3');
+  }
+  return out;
 }
 
 /**
@@ -262,6 +318,7 @@ module.exports = {
   isTruthy,
   buildBackendEnv,
   sidecarDataEnv,
+  databaseEnvDefaults,
   choosePort,
   preferredPort,
   parsePortValue,

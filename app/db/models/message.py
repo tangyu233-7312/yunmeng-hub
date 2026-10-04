@@ -14,9 +14,10 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.mysql import MEDIUMTEXT
+
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.types import LongText, PkInt
 from app.db.base import Base
 
 
@@ -40,7 +41,7 @@ class Message(Base):
     )
 
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True, comment="消息ID"
+        PkInt, primary_key=True, autoincrement=True, comment="消息ID"
     )
     session_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -59,7 +60,7 @@ class Message(Base):
     )
     content: Mapped[str] = mapped_column(
         # 单条消息可能很长（模型一次输出几千字），TEXT 的 64KB 上限偏紧，故用 MEDIUMTEXT
-        MEDIUMTEXT,
+        LongText,
         nullable=False,
         comment="消息正文",
     )

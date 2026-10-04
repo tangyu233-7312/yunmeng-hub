@@ -26,15 +26,17 @@
 
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
+const net = require('node:net');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const { resolvePaths, ensureDir } = require('./paths');
 const {
   detectPython, choosePort, preferredPort, truncate, sidecarDataEnv, buildBackendEnv, isTruthy,
+  databaseEnvDefaults,
 } = require('./backend-config');
 const setupConfig = require('./setup-config');
-const { sidecarCandidates, chooseBackend } = require('./sidecar');
+const { sidecarCandidates, chooseBackend, preferPythonFromSource } = require('./sidecar');
 const { isPackagedLayout, allowRepoFallback } = require('./packaging');
 const { isPortBusy } = require('./port-check');
 const { pickFreePort, waitForHealth } = require('./net-utils');
@@ -441,37 +443,154 @@ function loadBackendEnvValues() {
  *   在 Node 里只测 MySQL 会把"向量库挂了"漏掉 —— 那就成了"测试通过但一用就坏"。
  *   ★ 顺带的好处：**不需要引入 mysql2 之类的额外依赖**，桌面壳依旧零 runtime 依赖。
  */
+/**
+ * 用 TCP 探一下"主机:端口 上到底有没有东西在监听"。
+ *
+ * ★ 为什么要做这个（真实体验问题）：用户把口令填错时，后端会**一直重试**
+ *   直到它自己的 `--self-check-timeout`，而壳的兜底超时更短 —— 于是用户等了
+ *   3 分钟，最后只看到一句"自检超时"，**完全不知道错在哪**（实测：他填的是另一个
+ *   服务的口令，界面只说超时，他因此完全无法自查）。
+ *   而"MySQL 服务没启动"和"口令不对"是**两种不同原因、两种修法**，
+ *   这里先把前者排除掉：端口都拒绝连接，就是"数据库服务没起来"，
+ *   不必等 3 分钟，更不该把锅扣在口令上。
+ */
+function probeTcp(host, port, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let done = false;
+    const finish = (reachable, why) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve({ reachable, why });
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true, ''));
+    socket.once('timeout', () => finish(false, `连接超时（${timeoutMs}ms）`));
+    socket.once('error', (err) => finish(false, String((err && err.code) || err)));
+    try {
+      socket.connect(port, host);
+    } catch (error) {
+      finish(false, String(error && error.message));
+    }
+  });
+}
+
+/**
+ * 正式起后端之前，先做一次"几毫秒就能做完"的失败模式诊断。
+ *
+ * ★ 设计原则：**能立刻知道的，就不要让用户等 3 分钟**。
+ *   这几项都是"看一眼就有结论"的，而且占了新手失败原因的绝大多数：
+ *     · MySQL 服务没在跑 / 端口写错 → 端口上没人监听
+ *     · 数据目录不可写 → 建库会失败（那种报错很难懂）
+ *     · SQLite 路径指向一个目录 → 同样建不出来
+ *   诊断通过**不代表**配置一定对（口令错不错只有连一次才知道），
+ *   所以它是"提前拦掉明显错的"，不是"代替自检"。
+ *
+ * @returns {Promise<null | {message: string, detail: string}>} null = 没发现问题
+ */
+async function diagnoseRuntimeConfig(target, envValues) {
+  if (target === 'mysql') {
+    const host = String(envValues.HNE_MYSQL_HOST || '127.0.0.1').trim() || '127.0.0.1';
+    const port = Number(envValues.HNE_MYSQL_PORT || 3306) || 3306;
+    const probe = await probeTcp(host, port);
+    if (!probe.reachable) {
+      return {
+        message: `连不上 MySQL 服务（${host}:${port}）—— 先确认 MySQL 已启动、端口没写错。`,
+        detail: `TCP 连接失败：${probe.why}\n`
+          + '★ 这一步与服务口令无关：端口上根本没人监听，说明数据库服务没起来、或者地址/端口不对。\n'
+          + '（MySQL 装在本机的话：在「服务」里看 MySQL 服务是否正在运行；'
+          + '默认端口 3306，改过端口就填你实际用的那个。）',
+      };
+    }
+    if (!String(envValues.HNE_MYSQL_PASSWORD || '').trim()) {
+      // 空口令不一定错（有些本地配置确实没口令），所以只记一笔、不判失败。
+      logLine('[warn] MySQL 口令为空 —— 若它其实有口令，自检会报 Access denied');
+    }
+    return null;
+  }
+
+  // SQLite：最容易出的是"路径不可写"和"路径其实是个目录"
+  const raw = String(envValues.HNE_SQLITE_PATH || '').trim()
+    || path.join(paths.dataRoot || paths.userDataDir, 'data', 'app.sqlite3');
+  try {
+    if (fs.existsSync(raw) && fs.statSync(raw).isDirectory()) {
+      return {
+        message: 'SQLite 数据文件路径指向了一个**目录**，没法当数据库文件用。',
+        detail: `路径：${raw}\n请把它改成文件名（例如 app.sqlite3），或清空这一项用默认位置。`,
+      };
+    }
+    fs.mkdirSync(path.dirname(raw), { recursive: true });
+    fs.accessSync(path.dirname(raw), fs.constants.W_OK);
+  } catch (error) {
+    return {
+      message: '数据目录不可写，数据库建不出来。',
+      detail: `目录：${path.dirname(raw)}\n原因：${error && error.message}\n`
+        + '★ 常见原因：目录被别的程序占用，或被安全软件拦了写权限。',
+    };
+  }
+  return null;
+}
+
 function selfCheckWithEnv(envFile, label) {
   return new Promise((resolve) => {
     const envFileValues = setupConfig.parseEnvText(setupConfig.readEnvFile(envFile) || '');
     const explicitBackend = process.env.HNE_DESKTOP_BACKEND
       ? String(process.env.HNE_DESKTOP_BACKEND).trim() : null;
-    const choice = chooseBackend({
-      explicit: explicitBackend,
-      candidates: explicitBackend ? [explicitBackend] : sidecarCandidates({
-        desktopDir: paths.desktopDir,
-        appRoot: paths.appRoot,
-        resourcesPath: process.resourcesPath,
-        execDir: path.dirname(app.getPath('exe')),
-        platform: process.platform,
-      }),
-    });
+    // ★ 与 startBackend 同一个开关：在**当前源码**上验收时必须跳过打包后端。
+    //   这里曾经漏了 —— 于是"向导保存前自检"仍然用了上次构建的 backend.exe，
+    //   行为与源码不一致且不报错（本轮实测：零配置却被拿 MySQL 去连库）。
+    //   ★ 教训：**同一个决策出现在两处时，两处都要接线**；只改一处就会留下
+    //     一条"看起来正常、其实走的是旧路径"的分支。
+    const forceSourcePython = preferPythonFromSource(process.env) && !explicitBackend;
+    const choice = forceSourcePython
+      ? { kind: 'none', command: null, reason: '按 HNE_DESKTOP_PREFER_PYTHON 跳过打包后端', explicitSpecified: false, checked: [] }
+      : chooseBackend({
+        explicit: explicitBackend,
+        candidates: explicitBackend ? [explicitBackend] : sidecarCandidates({
+          desktopDir: paths.desktopDir,
+          appRoot: paths.appRoot,
+          resourcesPath: process.resourcesPath,
+          execDir: path.dirname(app.getPath('exe')),
+          platform: process.platform,
+        }),
+      });
 
     if (choice.kind === 'none') {
-      resolve({
-        ok: false,
-        message: '没有可用的后端（既没有打包后端 backend.exe，也没找到本机 Python）',
-        detail: '先构建打包后端：pwsh -File desktop/scripts/build_backend.sh（Windows 用 build_backend.ps1）\n'
-          + '或按项目 README 在仓库根建好 .venv 并安装 requirements.txt。',
-      });
-      return;
+      if (explicitBackend && !forceSourcePython) {
+        resolve({
+          ok: false,
+          message: '你指定的打包后端（HNE_DESKTOP_BACKEND）不存在',
+          detail: `指定的路径：${explicitBackend}`,
+        });
+        return;
+      }
+      // ★ 没有打包后端 → 用本机 Python 自检。
+      //   （这一段以前是"直接失败"，于是开发态做不了自检；既然 startBackend
+      //     本来就会回退到 Python，自检也必须能回退，否则两条路的行为不一致。）
+      const detection = detectPython({ appRoot: paths.appRoot, env: process.env });
+      if (!detection.python) {
+        resolve({
+          ok: false,
+          message: '没有可用的后端（既没有打包后端 backend.exe，也没找到本机 Python）',
+          detail: '先构建打包后端：pwsh -File desktop/scripts/build_backend.ps1\n'
+            + '或按项目 README 在仓库根建好 .venv 并安装 requirements.txt。',
+        });
+        return;
+      }
+      choice.kind = 'python';
+      choice.command = detection.python;
     }
 
     const port = 45000 + Math.floor(Math.random() * 3000); // 自检用的临时端口
     const args = choice.kind === 'sidecar'
       ? ['--self-check', '--host', '127.0.0.1', '--port', String(port),
         '--data-dir', paths.userDataDataDir, '--log-dir', paths.logsDir,
-        '--env-file', envFile, '--self-check-timeout', '240']
+        // ★★ 后端子进程自己的超时必须**短于**壳的兜底（180 秒）。
+        //   原来是 240 > 180：后端还在重试，壳先超时了，于是用户只看到
+        //   "自检超时"、看不到后端本来能给出的原因（实测就是"Access denied"）。
+        //   现在 150 < 180：让**更懂的那个**先说话，壳只当最后一道保险。
+        '--env-file', envFile, '--self-check-timeout', '150']
       : ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port)];
 
     logLine(`[info] 配置自检（${label}）：用 ${choice.kind} 起临时后端，端口 ${port}`);
@@ -480,7 +599,23 @@ function selfCheckWithEnv(envFile, label) {
     const env = buildBackendEnv({
       baseEnv: process.env,
       fileEnv: envFileValues,
-      overrides: { HNE_HOST: '127.0.0.1', HNE_PORT: String(port), HNE_ENV_FILE: envFile },
+      // ★★ 自检必须**注入与正式启动同一份**数据库默认值。
+      //   这里曾经漏了（只给 HOST/PORT/ENV_FILE），后果是实测抓到的：
+      //   自检那条路没有 HNE_DATA_DIR，于是它退回读**仓库根的 .env**，
+      //   把 SQLite 库建到了**仓库里**（`<repo>\data\app.sqlite3`），
+      //   而正式启动又按注入值建到 userData —— 一次启动在**两个地方**各建一个库。
+      //   ★ 教训：同一个决策（"这次数据放哪"）在两条路径上都要接线；
+      //     只接一条，另一条就会静默走别的来源，而且两边都不报错。
+      overrides: {
+        HNE_HOST: '127.0.0.1',
+        HNE_PORT: String(port),
+        HNE_ENV_FILE: envFile,
+        ...databaseEnvDefaults({
+          dataDir: paths.dataRoot,
+          fileEnv: envFileValues,
+          baseEnv: process.env,
+        }),
+      },
     });
 
     let output = '';
@@ -515,12 +650,39 @@ function selfCheckWithEnv(envFile, label) {
     }, 1500);
 
     let settled = false;
-    const timer = setTimeout(() => finish(false, null, `自检超时（${label}）`), 300000);
+    // ★ 自检的兜底超时：从 300 秒缩到 **180 秒**。
+    //   300 秒太长 —— 用户点一下「测试这份配置」，界面会静默等 5 分钟，
+    //   看起来就是"卡死了"（实测：他等了 3 分半还以为程序挂了）。
+    //   正常自检只要 2~30 秒（首次要加载本地嵌入模型），180 秒足够宽松。
+    const timer = setTimeout(() => {
+      // ★ 超时也要**把后端的原话带上**。原来这里不传 detail，于是用户等了 3 分钟、
+      //   点开「查看详情」却什么都没有 —— 而实际原因（比如数据库报
+      //   `Access denied for user ...`）就在子进程输出里躺着。
+      finish(false, null, `自检超时（${label}，已等 180 秒）`);
+    }, 180000);
+    // ★★ 关键修复：**不能只等 `close`**。
+    //   `exit` 与 `close` 是两件事：`exit` = 进程结束，`close` = 它的 stdio 管道
+    //   也全部关闭。PyInstaller 的 exe 是"bootloader 父进程 + 真身子进程",
+    //   实测会出现"真身已经跑完、退出码 0、`[self-check] OK` 也打出来了，
+    //   但某个后代进程还攥着 stdout 管道" → `close` 迟迟不来（或要几十秒后才来），
+    //   于是 `finish()` 不被调用、IPC 一直不返回、按钮一直是灰的。
+    //   用户看到的就是"一直显示正在检查，很久不动"。
+    //   所以：`exit` 之后给一个短宽限期（先冲刷管道），到点就按已拿到的输出判定。
+    let exitGrace = null;
+    const settleFromOutput = (code) => {
+      const verdictOk = output.includes('[self-check] OK');
+      logLine(`[info] 自检收尾：退出码=${code}，后端结论=${verdictOk ? 'ok' : '未报告成功'}`
+        + `（graceful=${exitGrace ? '是' : '否'}）`);
+      if (code === 0 && verdictOk) finish(true, { status: 'ok', components: {} });
+      else if (code === 0) finish(false, null, '自检报告失败（后端组件没全就绪）');
+      else finish(false, null, `自检失败（退出码 ${code}）`);
+    };
 
     function finish(ok, payload, message) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (exitGrace) clearTimeout(exitGrace);
       if (probe) clearInterval(probe);
       if (child.pid) killTree(child.pid);
       if (ok) {
@@ -545,7 +707,10 @@ function selfCheckWithEnv(envFile, label) {
       resolve({
         ok: false,
         message: message || '后端没能就绪',
-        detail: tailLines(output, 14),
+        // ★ 超时那条也要带输出：否则用户点「查看详情」只看到一句"超时"，
+        //   而数据库给的原因（Access denied / Unknown database / 端口拒绝）
+        //   明明就在子进程输出里。
+        detail: [message ? `后端输出末尾：` : '', tailLines(output, 14)].filter(Boolean).join('\n'),
       });
     }
 
@@ -563,7 +728,10 @@ function selfCheckWithEnv(envFile, label) {
         // 非 sidecar（python -m uvicorn）没有自检模式，正常退出就是没起来
         finish(false, null, '后端进程退出了（退出码 0）');
       } else {
-        logLine('[info] 自检子进程退出码 0，等 close 事件按后端结论判定');
+        // ★★ 退出码 0 的 sidecar：**别无限等 `close`**（见上面 exitGrace 的说明）。
+        //   给 3 秒让管道冲刷完，然后按已经拿到的输出判定。
+        logLine('[info] 自检子进程退出码 0，等 3 秒收尾（不等 close，避免被残留管道拖住）');
+        exitGrace = setTimeout(() => { if (!settled) settleFromOutput(code); }, 3000);
       }
     });
     if (choice.kind === 'sidecar') {
@@ -577,11 +745,7 @@ function selfCheckWithEnv(envFile, label) {
       //   用后端自己的结论 + 退出码，就不会被这类噪音误导。
       child.once('close', (code) => {
         if (settled) return;
-        const verdictOk = output.includes('[self-check] OK');
-        logLine(`[info] 自检子进程结束：退出码=${code}，后端结论=${verdictOk ? 'ok' : '未报告成功'}`);
-        if (code === 0 && verdictOk) finish(true, { status: 'ok', components: {} });
-        else if (code === 0) finish(false, null, '自检报告失败（后端组件没全就绪）');
-        else finish(false, null, `自检失败（退出码 ${code}）`);
+        settleFromOutput(code);
       });
     }
   });
@@ -712,18 +876,31 @@ async function startBackend() {
     ? String(process.env.HNE_DESKTOP_BACKEND).trim()
     : null;
 
-  const sidecarChoice = chooseBackend({
-    explicit: explicitBackend,
-    candidates: explicitBackend
-      ? [explicitBackend] // 显式指定 = 只认它（不掺默认候选，避免"悄悄用到别的"）
-      : sidecarCandidates({
-        desktopDir: paths.desktopDir,
-        appRoot: paths.appRoot,
-        resourcesPath: process.resourcesPath,
-        execDir: path.dirname(app.getPath('exe')),
-        platform: process.platform,
-      }),
-  });
+  // ★★ 在**当前这份源码**上验收时，必须强制走本机 Python —— 否则
+  //   `desktop/dist/backend/backend.exe`（上次构建的产物，不入库）会一直赢，
+  //   于是"你改的代码"根本没被跑到，而且**不报任何错**。
+  //   本轮真踩了：零配置改动写好后，向导自检仍按 MySQL 连库，
+  //   因为那个 exe 是上一次构建的。详见 sidecar.js 的 preferPythonFromSource。
+  const forceSourcePython = preferPythonFromSource(process.env) && !explicitBackend;
+  if (preferPythonFromSource(process.env)) {
+    logLine('[info] HNE_DESKTOP_PREFER_PYTHON=1：跳过打包后端，强制用本机 Python'
+      + '（为了验收的就是当前源码）');
+  }
+
+  const sidecarChoice = forceSourcePython
+    ? { kind: 'none', command: null, reason: '按 HNE_DESKTOP_PREFER_PYTHON 跳过打包后端', explicitSpecified: false, checked: [] }
+    : chooseBackend({
+      explicit: explicitBackend,
+      candidates: explicitBackend
+        ? [explicitBackend] // 显式指定 = 只认它（不掺默认候选，避免"悄悄用到别的"）
+        : sidecarCandidates({
+          desktopDir: paths.desktopDir,
+          appRoot: paths.appRoot,
+          resourcesPath: process.resourcesPath,
+          execDir: path.dirname(app.getPath('exe')),
+          platform: process.platform,
+        }),
+    });
 
   let mode;
   let command;
@@ -773,6 +950,33 @@ async function startBackend() {
     HNE_ENV_FILE: envFile,
     ...(mode === 'sidecar' ? sidecarDataEnv({ dataDir: paths.userDataDataDir }) : {}),
   };
+
+  // ★ 「零配置」：把数据位置定下来（SQLite 文件、向量库、日志都挂在它下面）。
+  //   注意这里**只定位置、不定后端** —— 用不用 MySQL 完全由用户的 .env 说了算。
+  //   ★ 放在 envOverrides 里（而不是 fileEnv 里）是刻意的：这样用户 .env 里
+  //     若显式写了 HNE_DATA_DIR，仍然是他赢（见 databaseEnvDefaults 的注释与
+  //     backend-config.js 的优先级说明）。
+  //
+  // ★★ `dataDir` 必须传**数据根**（`paths.dataRoot`）—— 它 = `paths.dataDir` 的
+  //   父级：开发态是仓库根，打包态是 userData。
+  //   这一条是打包验收实测抓到的（零配置跑完，库文件落在
+  //   `<userData>\data\data\app.sqlite3`，比预期多一层 `data`）：
+  //     后端把 `HNE_DATA_DIR` 当作**数据根**，再在它下面拼 `data/app.sqlite3`
+  //     与 `config/.secrets.env`（见 app/core/config.py 的 sqlite_file、
+  //     app/db/bootstrap.py 的 secrets_file）。所以传 `userDataDataDir`
+  //     （它本身就是 `<userData>/data`）等于说"数据根在 data 里面"。
+  //   ★ 注意这与 `--data-dir` 参数**含义不同**：那个参数指的就是 `<userData>/data`。
+  //     两个名字像、语义差一层 —— 本轮就是在这儿踩的，所以两边都留了话。
+  const databaseEnv = databaseEnvDefaults({
+    dataDir: paths.dataRoot,
+    fileEnv: envFileValues,
+    baseEnv: process.env,
+  });
+  if (Object.keys(databaseEnv).length) {
+    Object.assign(envOverrides, databaseEnv);
+    logLine('[info] 已注入数据库默认值（零配置）：'
+      + Object.entries(databaseEnv).map(([k, v]) => `${k}=${v}`).join(' '));
+  }
 
   const spawnOptions = {
     appRoot: paths.appRoot,
@@ -1063,6 +1267,21 @@ function showAbout() {
   });
 }
 
+/**
+ * 打开"切换存储方式"页（菜单项与 `setup:open-switch-page` 共用这一段）。
+ *
+ * ★ 抽成一个函数是刻意的：这个动作有**两个入口**（菜单、渲染进程的显式调用），
+ *   本项目已经吃过"同一个决策两处各写一份、只接线了一处"的亏（见 §32 那几条）。
+ */
+function openSwitchPage() {
+  setStep('setup');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // ★ 与"首次设置"的区别：`?mode=switch` 让页面预填**当前**的存储方式与连接信息，
+    //   并把保存动作换成 `setup:switch`（写配置 → 自检 → 停旧后端 → 重启）。
+    mainWindow.loadFile(paths.setupPage, { query: { mode: 'switch' } });
+  }
+}
+
 function buildMenu() {
   const template = [
     {
@@ -1107,7 +1326,15 @@ function buildMenu() {
         { type: 'separator' },
         { label: '打开配置文件（.env）', click: () => openPathSafely(paths.userEnvFile) },
         {
-          label: '重新运行首次设置（换数据库 / 改密钥）',
+          label: '切换存储方式（本机文件 ↔ MySQL）…',
+          // ★ 加速键只是"顺手给一个键盘入口"，**不是**验收依赖的路径 ——
+          //   `accelerator` 匹配对键盘布局/IME 敏感，而换数据库是低频关键操作，
+          //   不该赌键码（渲染进程那边有 `openSwitchPage()` 这条确定的路）。
+          accelerator: 'CmdOrCtrl+Shift+S',
+          click: () => openSwitchPage(),
+        },
+        {
+          label: '重新运行首次设置（重填密钥 / 从头配一遍）',
           click: () => {
             // 同一个窗口直接换成设置页，设置完再走 finishSetup 回到控制台
             setStep('setup');
@@ -1173,19 +1400,44 @@ function registerIpc() {
     return true;
   });
 
-  // ---- 首启设置页 ----
-  ipcMain.handle('setup:fields', () => {
+  // ---- 首启设置页 / 存储方式切换页 ----
+  //
+  // ★★ `switchMode`：同一个页面两种用途。
+  //   首启（false）：全新配置，MySQL 字段按"有没有配过"来决定要不要显示。
+  //   切换（true）：用户从菜单进来的，要能**看到并改**当前用的存储方式与连接信息，
+  //                 所以非密钥字段全部预填既存值。
+  //   ★ 为什么不另开一个页面：字段渲染、本地体检、保存流程完全一样，
+  //     复制一份出来必然两边逐渐长歪 —— 这个项目已经吃过"两条路径只接线一条"的亏。
+  function buildSetupFields(switchMode) {
     const existingText = setupConfig.readEnvFile(paths.userEnvFile);
     const parsed = existingText === null ? null : setupConfig.parseEnvText(existingText);
     const missing = setupConfig.missingRequired(parsed);
 
     // ★ 只回传**非密钥**字段的已有值。"已配过哪几项"用 missing 表达，
-    //   口令与密钥**不回传**到页面（少一份风险，用户重填一次即可）。
+    //   口令与密钥**不回传**到页面（少一份风险）。
+    //   ★ 切换模式下这一点尤其重要：密钥留空会被 `preserveSecrets` 原样保留
+    //     （否则切一下存储方式就会把用户已保存的 API Key 变成解不开的密文）。
     const values = setupConfig.defaultValues();
     if (parsed) {
       for (const field of setupConfig.SETUP_FIELDS) {
         if (field.secret) continue;
         if (parsed[field.key]) values[field.key] = parsed[field.key];
+      }
+      if (parsed.HNE_DB_BACKEND) values.HNE_DB_BACKEND = parsed.HNE_DB_BACKEND;
+      // ★★ 把"之前用 MySQL 时的连接信息"补回来（存在注释里的那份）。
+      //   没有这一步会怎样（实测踩到）：用户从 MySQL 切到本机文件之后，
+      //   配置里生效的 MySQL 键就没了；等他反悔想切回来时，口令格是空的、
+      //   而那是串自动生成的 32 位随机口令 —— 他只能瞎填一个 → 连不上 → 超时。
+      //   ★ 只在**切换模式**下填：首启向导不该把一个"现在没在用"的旧连接信息
+      //     预填给新用户看，那只会让他困惑。
+      if (switchMode) {
+        const stash = setupConfig.stashOf(existingText);
+        for (const [key, value] of Object.entries(stash)) {
+          if (!values[key]) values[key] = value;
+        }
+        if (Object.keys(stash).length) {
+          logLine(`[info] 已把上次用 MySQL 时的连接信息填回切换页：${Object.keys(stash).join(', ')}`);
+        }
       }
     }
 
@@ -1199,6 +1451,12 @@ function registerIpc() {
         secret: Boolean(f.secret),
         numeric: Boolean(f.numeric),
         advanced: Boolean(f.advanced),
+        // ★ 选择项（如「存储方式」）要连同候选一起发过去，否则渲染端只能画成
+        //   一个自由文本框 —— 用户得靠猜才知道能填什么。
+        options: f.options ? f.options.map((o) => ({ value: o.value, label: o.label })) : null,
+        // ★ 只有选了 MySQL 才需要填、才参与校验的字段（见 setup.html 的
+        //   syncDatabaseFields 与 setup-config.js 的 validateValues）。
+        dbOnly: Boolean(f.dbOnly),
         default: f.default,
         // ★★ 这里踩过一个真 bug（用户实测抓到）：第一版发的是
         //   `generate: typeof f.generate === 'function' ? f.key : null` —— 字符串，
@@ -1211,10 +1469,18 @@ function registerIpc() {
       values,
       existing: parsed !== null,
       missing,
+      //: 'initial'（首次设置）| 'switch'（改存储方式/连接）
+      mode: switchMode ? 'switch' : 'initial',
+      //: 当前实际在用的存储方式（切换页把它标出来，免得用户猜"我现在是哪种"）
+      currentBackend: parsed ? setupConfig.resolvedBackend(parsed) : null,
       envFile: paths.userEnvFile,
       dataDir: paths.userDataDataDir,
     };
-  });
+  }
+
+  ipcMain.handle('setup:fields', (_event, options) => buildSetupFields(
+    Boolean(options && options.mode === 'switch'),
+  ));
 
   ipcMain.handle('setup:generate', (_event, key) => {
     const field = setupConfig.SETUP_FIELDS.find((f) => f.key === String(key));
@@ -1226,6 +1492,15 @@ function registerIpc() {
     const checked = setupConfig.validateValues(values || {});
     if (!checked.ok) {
       return { ok: false, message: '还有几项需要填好：', errors: checked.errors };
+    }
+    // ★★ 先做几毫秒级的失败模式诊断，再做真正的自检。
+    //   为什么：口令错时后端会一直重试到它自己的超时（240 秒），而壳的兜底是 180 秒 ——
+    //   用户等了 3 分钟，最后只看到一句"超时"，**完全不知道错在哪**（真实反馈）。
+    //   而"MySQL 服务没起来"这种原因**一眼就能看出来**，不该让他等。
+    const diagnosis = await diagnoseRuntimeConfig(
+      setupConfig.resolvedBackend(values || {}), values || {});
+    if (diagnosis) {
+      return { ok: false, message: diagnosis.message, detail: diagnosis.detail, errors: checked.errors };
     }
     const probeFile = path.join(paths.userDataDir, 'config', '.env.probe');
     try {
@@ -1264,16 +1539,25 @@ function registerIpc() {
         setupConfig.renderEnvFile(values || {}, existing),
       );
       logLine(`[info] 配置已写入 ${envFile}`);
-      // ★ 写完立刻自证一遍：把文件读回来解析，确认**每个必填项都非空**。
-      //   只在日志里记长度、不记值。这一步能在"写完就没人再看"的链路上
-      //   抓住任何"值没落地"的问题（本轮就是靠它定位的）。
+      // ★ 写完立刻自证一遍：把文件读回来解析，确认**当前模式下该有的必填项都非空**。
+      //   只在日志里记键名、不记值。这一步能在"写完就没人再看"的链路上
+      //   抓住任何"值没落地"的问题。
+      //
+      // ★★ 这里踩过一个坑（零配置那一版实测抓到的）：
+      //   原来判据是朴素的 `.filter((f) => f.required)` —— 于是选「本机文件（SQLite）」
+      //   时，它会把**整组 MySQL 字段**算成"必填但为空"，日志里打出一行 ERROR：
+      //      写出的配置里必填项为空：HNE_MYSQL_HOST, HNE_MYSQL_PORT, …
+      //   而那份配置其实**完全正确**（零配置本来就不该有 MySQL 键）。
+      //   危害不只是日志难看：排障的人会顺着这行 ERROR 去查 MySQL，
+      //   而真正的问题在别处 —— 这正是本项目最反对的"把排查引向错误方向"。
+      //   现在改成 `missingRequired`，它内部按 `HNE_DB_BACKEND` 分派，
+      //   与向导的校验、与"配置可用性判定"用的是**同一套判据**。
       const written = setupConfig.parseEnvText(setupConfig.readEnvFile(envFile) || '');
-      const emptyRequired = setupConfig.SETUP_FIELDS
-        .filter((f) => f.required && !String(written[f.key] || '').trim())
-        .map((f) => f.key);
+      const emptyRequired = setupConfig.missingRequired(written);
       logLine(emptyRequired.length
         ? `[error] 写出的配置里必填项为空：${emptyRequired.join(', ')}`
-        : `[info] 写出的配置自证通过（${Object.keys(written).length} 个键，必填项都非空）`);
+        : `[info] 写出的配置自证通过（${Object.keys(written).length} 个键，`
+          + `当前存储方式 ${setupConfig.resolvedBackend(written)} 的必填项都非空）`);
     } catch (error) {
       return {
         ok: false,
@@ -1302,6 +1586,158 @@ function registerIpc() {
     openPathSafely(path.dirname(paths.userEnvFile));
     return true;
   });
+
+  // 存储方式切换（菜单「数据 → 切换存储方式…」）----
+  //
+  // ★ 菜单项与这个 IPC 入口**共用同一段动作**（`openSwitchPage`），
+  //   免得菜单能用、键盘/程序化调用走另一条又长歪的路径。
+  ipcMain.handle('setup:open-switch-page', () => {
+    openSwitchPage();
+    return true;
+  });
+  //
+  // ★ 为什么不复用 setup:save：那条路的收尾是 `finishSetup()`（换加载页、建菜单、
+  //   泵后端）。切换时**必须先把当前后端停掉**再泵，否则旧后端还占着端口与
+  //   数据库连接，新的起不来（或者起在别的端口上，用户看到的还是旧数据）。
+  //
+  // ★ 自检先跑、再停旧后端：自检用的是**临时端口**，不会撞上正在跑的那个；
+  //   而且"新配置起不来"时我们要**保持旧后端还活着** —— 用户点一下切换失败，
+  //   不该连带把正在用的服务弄停。
+  ipcMain.handle('setup:switch', async (_event, values) => {
+    const checked = setupConfig.validateValues(values || {});
+    if (!checked.ok) {
+      return { ok: false, message: '还有几项需要填好：', errors: checked.errors };
+    }
+
+    // ★★ 与「测试这份配置」同一套快速诊断 —— 而且这里更该先做：
+    //   切换模式下**当前后端还在跑**，如果拿一个必然连不上的配置去等 3 分钟，
+    //   用户既浪费时间、又不知道原因（他会以为是自己哪里点错了）。
+    //   ★ 注意这里是**只诊断、不写配置**：诊断不过就原样返回，配置文件一个字都没动。
+    const diagnosis = await diagnoseRuntimeConfig(
+      setupConfig.resolvedBackend(values || {}), values || {});
+    if (diagnosis) {
+      return { ok: false, message: diagnosis.message, detail: diagnosis.detail, errors: checked.errors };
+    }
+
+    // ★ 保住已存密钥：切换页不回传密钥，空值如果直接写下去，
+    //   后端会重新生成加密密钥 —— 用户已保存的模型 API Key 就再也解不开了。
+    const existingText = setupConfig.readEnvFile(paths.userEnvFile) || '';
+    const parsedExisting = setupConfig.parseEnvText(existingText);
+    // ★★ 口令也一样：切回来时若表单里没填（用户没改），要用**注释里存的那份**。
+    //   为什么必须带上 stash（实测踩到）：用户切到本机文件后，生效的 MySQL 键没了，
+    //   只剩注释里那一份；如果这里只从"生效键"里补，切回 MySQL 时口令就又空了。
+    //   合并顺序：注释里存的在前（那是"上次真正能用的那份"），生效键在后覆盖。
+    const forSecrets = { ...setupConfig.stashOf(existingText), ...parsedExisting };
+    const { values: merged, preserved } = setupConfig.preserveSecrets(values || {}, forSecrets);
+    if (preserved.length) {
+      logLine(`[info] 切换存储方式：沿用了已保存的密钥 ${preserved.join(', ')}（页面不回传密钥，避免误清）`);
+    }
+
+    let envFile;
+    try {
+      envFile = setupConfig.writeEnvFile(
+        paths.userEnvFile,
+        setupConfig.renderEnvFile(merged, existingText, forSecrets),
+      );
+      const written = setupConfig.parseEnvText(setupConfig.readEnvFile(envFile) || '');
+      const backend = setupConfig.resolvedBackend(written);
+      logLine(`[info] 存储方式已改为 ${backend}，配置写入 ${envFile}`);
+      const stillMissing = setupConfig.missingRequired(written);
+      if (stillMissing.length) {
+        logLine(`[error] 写出后仍缺必填项：${stillMissing.join(', ')}`);
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        message: '写入配置失败',
+        detail: `${error && error.message}\n目标路径：${paths.userEnvFile}`,
+      };
+    }
+
+    const result = await selfCheckWithEnv(envFile, '切换前验证');
+    if (!result.ok) {
+      // ★★ 失败必须**把配置文件恢复原样**，而不只是"不重启后端"。
+      //
+      //   第一版只做到"旧后端继续跑"，可文件已经被写坏了 —— 于是：
+      //     · 用户当场还能继续用（旧后端在内存里跑着）；
+      //     · 但**下次打开应用**它会读这份坏配置 → 起不来，
+      //       而那时用户早就忘了自己"只是试了一下"。
+      //   这是最阴的一类故障：失败被推迟到下一次启动才发作。
+      //
+      //   ★ 态度：用户点「切换」失败，等于"我试了一下、没成"，
+      //     那就该**什么都没发生过**。所以这里做原子回滚：
+      //     写之前先把原文件内容读在手里（`existingText`），失败就写回去。
+      if (existingText) {
+        try {
+          setupConfig.writeEnvFile(paths.userEnvFile, existingText);
+          logLine('[warn] 切换自检未通过：已把配置回滚成原来的样子（用户"试了一下"，不该留下副作用）');
+        } catch (restoreError) {
+          logLine(`[error] 回滚配置失败：${restoreError && restoreError.message}`);
+        }
+      } else {
+        // 原本就没有配置文件（几乎不会走到：切换页得有配置才有意义）
+        try {
+          fs.unlinkSync(paths.userEnvFile);
+          logLine('[warn] 切换自检未通过：原本没有配置文件，已删除刚写下的那份');
+        } catch { /* 删不掉就算了，下面会如实告诉用户 */ }
+      }
+      return {
+        ok: false,
+        message: '这份配置起不来后端，**已把设置恢复成原来的样子**（当前后端仍在运行）。'
+          + '请按下面的原因改一改再试。',
+        detail: result.detail || result.message,
+      };
+    }
+
+    const target = setupConfig.resolvedBackend(
+      setupConfig.parseEnvText(setupConfig.readEnvFile(envFile) || ''),
+    );
+    const targetLabel = target === 'mysql' ? 'MySQL 数据库' : '本机文件（SQLite）';
+    logLine(`[info] 切换前自检通过（目标存储：${target}），准备重启后端`);
+
+    // 自检通过 → 停掉旧后端，再用新配置泵一个新的
+    stopBackend('切换存储方式');
+    setTimeout(() => {
+      switchBackendAfterConfigChange().catch((error) => logLine(`[error] switchBackend: ${error}`));
+    }, 50);
+    // ★ 回给页面的那句话必须**把最容易误解的一点说透**（用户实测踩到过）：
+    //   他切成「本机文件」之后拿原账号登录，界面只回"用户名或密码错误"，
+    //   于是第一反应是"我的账号被人改了？"—— 而真相是：
+    //   两种存储是**两个互相独立的库**，新库里一个账号都没有。
+    //   所以这里明确写清"账号与故事都在原来那个库里、切回去就看到"，
+    //   并顺带说明"在空库里需要先注册一个本地账号"。
+    return {
+      ok: true,
+      backend: target,
+      message: `已切换到「${targetLabel}」并验证通过，正在重启后端…`
+        + '★ 两种存储是**两个互相独立的库**：原来那个库里的账号与故事都还在，'
+        + '用上面的菜单随时切回去就能看到。'
+        + (target === 'sqlite'
+          ? '本机文件如果是全新的，里面还没有账号 —— 先在登录页「注册」一个本地账号即可。'
+          : ''),
+    };
+  });
+}
+
+/**
+ * 切换存储方式之后的收尾：换加载页 → 泵一个新后端 → 回控制台。
+ *
+ * ★ 与 `finishSetup()` 的区别只有一处：**不调 `ensureInitialConfig()`**
+ *   （那是"把 userData 配置镜像到仓库根"的开发态便利，与切换无关），
+ *   其余顺序刻意保持一致 —— 两条路走同一套收尾逻辑，行为才不会分叉。
+ */
+async function switchBackendAfterConfigChange() {
+  setStep('pumping');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await mainWindow.loadFile(paths.loadingPage);
+  }
+  const ok = await pumpBackend();
+  if (ok && state.consoleUrl && mainWindow && !mainWindow.isDestroyed()) {
+    setStep('console');
+    await mainWindow.loadURL(state.consoleUrl);
+  } else {
+    logLine('[error] 切换存储方式后后端没能起来（旧配置仍在文件里，可在菜单里再切回去）');
+  }
 }
 
 // ------------------------------------------------------------------

@@ -209,6 +209,97 @@ async def main() -> int:
                 return 1
             ok(f"落在 {await cdp.run('location.href')}")
 
+            print("\n[1b] 「存储方式」选择项：默认本机文件，MySQL 字段随之隐藏/出现")
+            storage_tag = str(await cdp.run(
+                "document.querySelector('#f-HNE_DB_BACKEND')?.tagName || '(none)'"
+            ))
+            if storage_tag == "SELECT":
+                ok("存储方式渲染成了下拉框（用户不用猜能填什么）")
+            else:
+                bad(f"存储方式不是下拉框，实际是 {storage_tag}")
+            option_values = await cdp.run(
+                "JSON.stringify([...document.querySelector('#f-HNE_DB_BACKEND').options].map(o => o.value))"
+            )
+            if "sqlite" in str(option_values) and "mysql" in str(option_values):
+                ok(f"两个选项都在：{option_values}")
+            else:
+                bad(f"选项不对：{option_values}")
+            default_backend = str(await cdp.run("document.querySelector('#f-HNE_DB_BACKEND').value"))
+            if default_backend == "sqlite":
+                ok("全新 profile 下默认就是「本机文件（SQLite）」= 零配置")
+            else:
+                bad(f"全新 profile 的默认存储方式不是 sqlite，而是 {default_backend}")
+
+            # ★ 切到"本机文件"：MySQL 那一组必须**整组隐藏且禁用** ——
+            #   否则用户会以为"不填就不给用"，零配置就是假的。
+            await cdp.run("""
+              (() => {
+                const sel = document.querySelector('#f-HNE_DB_BACKEND');
+                sel.value = 'sqlite';
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+              })()
+            """)
+            await asyncio.sleep(0.3)
+            hidden_mysql = await cdp.run("""
+              [...document.querySelectorAll('#mysql-grid [data-db-only]')]
+                .filter(b => b.style.display === 'none').length
+            """)
+            total_mysql = await cdp.run("document.querySelectorAll('#mysql-grid [data-db-only]').length")
+            disabled_inputs = await cdp.run("""
+              [...document.querySelectorAll('#mysql-grid input')].filter(i => i.disabled).length
+            """)
+            if int(total_mysql) >= 5 and int(hidden_mysql) == int(total_mysql):
+                ok(f"选「本机文件」时 {total_mysql} 个 MySQL 字段全部隐藏")
+            else:
+                bad(f"MySQL 字段没有全部隐藏：{hidden_mysql}/{total_mysql}")
+            if int(disabled_inputs) == int(total_mysql):
+                ok("隐藏的同时也禁用了（避免残留值被写进配置）")
+            else:
+                bad(f"隐藏了但没禁用：{disabled_inputs}/{total_mysql}")
+            # ★ 零配置的关键结论：**什么都不填**就该能过本地体检。
+            #   这里调的是页面里真正在用的那个纯函数（与保存路径同一份代码），
+            #   字段定义从主进程现取 —— 不自己造一份，免得"测的不是真东西"。
+            zero_ok = str(await cdp.run("""
+              (async () => {
+                const info = await window.yunmengSetup.getFields();
+                const v = {};
+                for (const f of info.fields) {
+                  const el = document.querySelector('#f-' + f.key);
+                  v[f.key] = el ? el.value : '';
+                }
+                return window.HneSetupValidate.precheck({ fields: info.fields, values: v }).ok;
+              })()
+            """, True))
+            if zero_ok == "True":
+                ok("零配置（本机文件）：一格都不填也能过本地体检")
+            else:
+                bad(f"选本机文件时本地体检仍然拦人：{zero_ok}")
+
+            # 切回 MySQL，让余下用例走原来的那条路
+            # ★ 为什么不用环境变量 `HNE_DB_BACKEND=mysql` 一步到位：
+            #   向导表单的默认值来自**配置文件**（main.js 的 getSetupFields 只读
+            #   `config\.env`），壳的进程环境变量**不参与**表单预填 ——
+            #   第一版验收就是这么假设的，于是"环境变量没生效"被报成失败。
+            #   而按用户的方式点一下下拉框，本来就是更真实的路径。
+            await cdp.run("""
+              (() => {
+                const sel = document.querySelector('#f-HNE_DB_BACKEND');
+                sel.value = 'mysql';
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+              })()
+            """)
+            await asyncio.sleep(0.3)
+            shown_mysql = await cdp.run("""
+              [...document.querySelectorAll('#mysql-grid [data-db-only]')]
+                .filter(b => b.style.display !== 'none').length
+            """)
+            if int(shown_mysql) == int(total_mysql):
+                ok("切回 MySQL 后字段重新出现")
+            else:
+                bad(f"切回 MySQL 后字段没全部出现：{shown_mysql}/{total_mysql}")
+
             print("\n[2] 「随机生成」按钮（跨 IPC 契约那条 bug 的墓碑）")
             buttons = await cdp.run(
                 "[...document.querySelectorAll('button')].filter(b => b.textContent.trim() === '随机生成').length"

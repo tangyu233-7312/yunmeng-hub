@@ -538,6 +538,25 @@ body.log-open .topbar {
   width: 100%; max-width: 400px; box-shadow: var(--shadow-lg);
 }
 .auth-box h1 { margin: 0 0 4px; font-size: 19px; }
+
+/* 登录页的「当前存储」提示。
+   ★ 为什么要显式写这块样式：它承载的是一条**避免误判**的信息
+     （"账号登不上"很可能只是因为你连的是另一个库），
+     所以必须看得清、但不喧宾夺主 —— 用左侧一条竖线做视觉锚点，
+     文字比正文小一号，颜色压到 faint。 */
+.auth-storage-note {
+  margin: 0 0 16px; padding: 9px 12px;
+  background: var(--surface-2, rgba(127, 127, 127, .08));
+  border-left: 3px solid var(--brand, #7c8cff);
+  border-radius: 6px;
+}
+.auth-storage-tag { font-size: 12.5px; color: var(--text-dim); font-weight: 600; }
+.auth-storage-hint {
+  font-size: 12px; color: var(--text-faint); line-height: 1.65; margin-top: 4px;
+}
+.auth-storage-hint code {
+  background: rgba(127, 127, 127, .16); border-radius: 3px; padding: 0 4px;
+}
 /* 登录页的品牌区：图标 + 「云梦枢」+ 一句副标题。
    图标是透明底位图，这里给它一点投影，落在渐变底上更立体。 */
 .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }

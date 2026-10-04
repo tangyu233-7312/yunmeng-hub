@@ -130,19 +130,30 @@
     </div>
 
     <p class="lead">
-      云梦枢需要一个 <b>MySQL 数据库</b>来存角色卡、会话与消息（向量记忆存在本地目录，不用你管）。
+      云梦枢默认把数据存成<b>本机的一个文件</b>（SQLite）—— 不用安装 MySQL、
+      不用建库建号，<b>装完就能用</b>。角色卡、会话、消息都在里面，
+      向量记忆存在本地目录（也不用你管）。
       这里填的配置会写进 <b>应用数据目录</b>（不在安装目录里），<b>卸载重装不会丢</b>。
     </p>
+    <p class="lead">
+      如果你<b>已经有 MySQL 8</b> 并想用它，把下面的「存储方式」改成 MySQL 即可。
+    </p>
+    <p class="lead" id="switch-note" style="display:none"></p>
     <p class="lead" id="existing-note" style="display:none"></p>
 
     <form id="form" autocomplete="off">
       <fieldset>
-        <legend>MySQL 连接</legend>
+        <legend>存储方式</legend>
+        <div class="grid" id="storage-grid"></div>
+      </fieldset>
+
+      <fieldset id="mysql-fieldset">
+        <legend>MySQL 连接（选「本机文件」时不需要填）</legend>
         <div class="grid" id="mysql-grid"></div>
       </fieldset>
 
       <fieldset>
-        <legend>安全密钥</legend>
+        <legend>安全密钥（可以留空）</legend>
         <div class="grid" id="secret-grid"></div>
       </fieldset>
 
@@ -162,7 +173,9 @@
     <div class="status" id="status"></div>
 
     <div class="foot">
-      测试连接会用<b>真正的后端</b>起一次服务并逐项检查数据库与向量库 ——
+      默认（本机文件）不需要填任何东西：数据表由后端启动时自动创建，
+      密钥由后端首次运行时自动生成并保存在应用数据目录里。
+      「测试连接」会用<b>真正的后端</b>起一次服务并逐项检查数据库与向量库 ——
       所以它通过就意味着"能用了"，而不是"格式看起来对"。
       必填项没填时会<b>当场</b>告诉你，不会去起后端。
     </div>
@@ -178,15 +191,34 @@
   const inputs = {};
   /** 字段定义（boot 时从主进程取；本地体检要用它判断哪些是必填） */
   let fieldDefs = [];
+  /**
+   * 这次是不是「切换存储方式」模式。
+   *
+   * ★★ 必须声明在**模块作用域**（而不是 boot() 里面）—— 这里踩了一个真 bug：
+   *   第一版写成 `const switchMode = ...` 放在 `boot()` 内部，而 `submit` 处理函数
+   *   在**模块作用域**引用它。于是每次提交都抛
+   *   `ReferenceError: switchMode is not defined`。
+   *
+   *   为什么这个 bug 特别坏（两层）：
+   *     ① 异常发生在**进入 try 之前**，所以 `catch` 里的 `setStatus('err', …)`
+   *        根本没机会执行 —— 用户看到的是状态栏**纹丝不动**，没有任何提示；
+   *     ② 它在 `setStatus('busy')`、并把两个按钮 `disabled = true` **之后**抛，
+   *        于是「保存并重启后端」按钮**永久灰掉**，页面成了死的。
+   *   先起页面能正常渲染（boot 跑完了），所以从外面看"页面好好的，就是点不动"。
+   */
+  let switchMode = false;
   const el = {
     form: document.getElementById('form'),
+    storageGrid: document.getElementById('storage-grid'),
     mysqlGrid: document.getElementById('mysql-grid'),
+    mysqlFieldset: document.getElementById('mysql-fieldset'),
     secretGrid: document.getElementById('secret-grid'),
     advancedGrid: document.getElementById('advanced-grid'),
     status: document.getElementById('status'),
     test: document.getElementById('btn-test'),
     save: document.getElementById('btn-save'),
     openDir: document.getElementById('btn-open-dir'),
+    switchNote: document.getElementById('switch-note'),
     existingNote: document.getElementById('existing-note'),
     logo: document.getElementById('logo'),
   };
@@ -256,6 +288,31 @@
       eye.setAttribute('aria-label', visible ? '隐藏这一格的内容' : '显示这一格的内容');
       eye.setAttribute('aria-pressed', visible ? 'true' : 'false');
     }
+  }
+
+  /**
+   * 按「存储方式」显示/隐藏 MySQL 那一组字段。
+   *
+   * ★ 为什么必须有这一步：默认存储是**本机文件（SQLite）**，这时页面上一堆
+   *   必填的 MySQL 输入框会让人以为"不填就不给用" —— 而它们其实一个都不需要。
+   *   隐藏（而不是只标成"可选"）才与"装完即用"的语义一致。
+   *
+   * ★ 隐藏时同时把字段标成 disabled：禁用的输入框不会参与表单提交，
+   *   于是 collect() 也拿不到它们的旧值 —— 避免"用户先选了 MySQL 填了半截，
+   *   又改回本机文件，结果那些残留值被写进配置"这种脏状态。
+   *   （collect() 仍然会读到 disabled 元素的 value，所以下面还要显式清空。）
+   */
+  function syncDatabaseFields() {
+    const select = document.getElementById('f-HNE_DB_BACKEND');
+    const mysqlMode = (select ? select.value : 'sqlite') === 'mysql';
+    const boxes = el.mysqlGrid.querySelectorAll('[data-db-only]');
+    for (const box of boxes) {
+      box.style.display = mysqlMode ? '' : 'none';
+      for (const control of box.querySelectorAll('input, select')) {
+        control.disabled = !mysqlMode;
+      }
+    }
+    if (el.mysqlFieldset) el.mysqlFieldset.style.display = mysqlMode ? '' : 'none';
   }
 
   /**
@@ -329,6 +386,8 @@
   function buildField(field, container) {
     const wrap = document.createElement('div');
     wrap.className = 'field' + (field.key === 'HNE_SECRET_KEY' || field.key === 'HNE_API_KEY_ENCRYPTION_KEY' ? ' wide' : '');
+    // 标了 dbOnly 的字段跟着「存储方式」显示/隐藏（见 syncDatabaseFields）
+    if (field.dbOnly) wrap.dataset.dbOnly = '1';
 
     const label = document.createElement('label');
     label.textContent = field.label + (field.required ? ' *' : '');
@@ -338,11 +397,28 @@
     const row = document.createElement('div');
     row.className = 'row';
 
-    const input = document.createElement('input');
-    input.type = field.secret ? 'password' : 'text';
-    if (field.numeric) input.inputMode = 'numeric';
+    // ★ 选择项（`options`）渲染成 <select>：存储方式这种东西写成一个文本框
+    //   会逼用户去猜"到底能填什么"，而且填错了要到后端报错才知道。
+    let input;
+    if (Array.isArray(field.options) && field.options.length) {
+      input = document.createElement('select');
+      for (const option of field.options) {
+        const tag = document.createElement('option');
+        tag.value = option.value;
+        tag.textContent = option.label || option.value;
+        input.appendChild(tag);
+      }
+      input.addEventListener('change', () => {
+        clearError(field.key);
+        syncDatabaseFields();
+      });
+    } else {
+      input = document.createElement('input');
+      input.type = field.secret ? 'password' : 'text';
+      if (field.numeric) input.inputMode = 'numeric';
+    }
     input.id = 'f-' + field.key;
-    input.placeholder = field.placeholder || '';
+    if (field.placeholder) input.placeholder = field.placeholder;
     row.appendChild(input);
 
     // ★★ 这里踩过一个真 bug（用户实测抓到，值得写清楚）：
@@ -450,12 +526,36 @@
   }
 
   async function boot() {
-    const info = await api.getFields();
+    // ★ 同一个页面的两种用途：`?mode=switch` = 菜单里「切换存储方式」进来的。
+    //   刻意复用同一份字段渲染与本地体检 —— 另开一个页面必然两边逐渐长歪
+    //   （这个项目已经吃过"两条路径只接线一条"的亏）。
+    const switchModeFromUrl = new URLSearchParams(location.search).get('mode') === 'switch';
+    // ★ 写进**模块作用域**的那个变量（`submit` 处理函数要用它）。
+    //   别再在这里 `const switchMode = ...` —— 那会在处理函数里变成
+    //   ReferenceError，而且异常发生在 try 之前、按钮会被永久禁用（实测踩过）。
+    switchMode = switchModeFromUrl;
+    const info = switchMode ? await api.switchFields() : await api.getFields();
     fieldDefs = info.fields || [];
+
+    if (switchMode) {
+      document.querySelector('h1').textContent = '切换存储方式';
+      document.title = '云梦枢 · 切换存储方式';
+      const current = info.currentBackend === 'mysql' ? 'MySQL 数据库' : '本机文件（SQLite）';
+      el.switchNote.style.display = '';
+      el.switchNote.innerHTML =
+        '当前正在使用：<b>' + current + '</b>。改好之后点「保存并重启后端」，'
+        + '应用会用新配置<b>重启一次后端</b>（几秒到几十秒，首次加载本地嵌入模型会慢一些）。'
+        + '<br>★ <b>数据不会自动搬家</b>：两种存储各自是独立的库 —— '
+        + '角色卡 / 世界书可以用「导出 / 导入」在两边搬运（V2 JSON 或 PNG，无损），'
+        + '会话对话目前没有现成的搬运工具。';
+      el.save.textContent = '保存并重启后端';
+      el.test.textContent = '测试这份配置';
+    }
 
     for (const field of info.fields) {
       if (field.advanced) buildField(field, el.advancedGrid);
       else if (field.key === 'HNE_SECRET_KEY' || field.key === 'HNE_API_KEY_ENCRYPTION_KEY') buildField(field, el.secretGrid);
+      else if (field.key === 'HNE_DB_BACKEND') buildField(field, el.storageGrid);
       else buildField(field, el.mysqlGrid);
     }
 
@@ -463,12 +563,21 @@
       if (inputs[key]) inputs[key].input.value = value;
     }
 
-    if (info.existing) {
+    // ★ 字段建好、值填好之后才同步可见性 —— 否则会先按"还没选值"的默认状态渲染一次
+    syncDatabaseFields();
+
+    if (switchMode) {
+      // ★ 只提示，不再二次赋值：非密钥字段的当前值已经由主进程放在 `info.values` 里
+      //   （见 main.js 的 buildSetupFields），再写一遍是多余的、还容易与上面那次赋值长出分歧。
+      setStatus('', '选好存储方式后点「保存并重启后端」。密钥留空 = 继续用现在这份，不会被清掉。');
+    } else if (info.existing) {
       el.existingNote.style.display = '';
       el.existingNote.innerHTML = '检测到已有一份配置（<b>只有缺的必填项需要补</b>）：'
         + (info.missing && info.missing.length ? '<code>' + info.missing.join('</code> <code>') + '</code>' : '没有缺项');
     }
-    setStatus('', '填好后点「测试连接」——它会真的把后端起起来检查一遍。');
+    if (!switchMode) {
+      setStatus('', '默认（本机文件）直接点「保存并开始」就能用；想用 MySQL 就先在上面切成 MySQL。');
+    }
   }
 
   el.form.addEventListener('submit', async (event) => {
@@ -477,11 +586,19 @@
     if (!gateLocal()) return;
     el.save.disabled = true;
     el.test.disabled = true;
-    setStatus('busy', '正在保存并启动后端…这可能需要几十秒（首次启动要加载本地嵌入模型）。');
+    if (switchMode) {
+      // ★ 切换模式：目标提示语必须与真正发生的事一致 ——
+      //   这里会**重启后端**，而不是"进入控制台"。
+      setStatus('busy', '正在用新配置自检并重启后端…这可能需要几十秒（首次加载本地嵌入模型较慢）。'
+        + '若这份配置起不来，你原来的设置会保留、当前后端继续运行。');
+    } else {
+      setStatus('busy', '正在保存并启动后端…这可能需要几十秒（首次启动要加载本地嵌入模型）。');
+    }
     try {
-      const result = await api.save(collect());
+      // ★ 两条路分开：首启是"落盘并进入"，切换是"在运行中换库"（收尾不同，见 main.js）
+      const result = switchMode ? await api.switchBackend(collect()) : await api.save(collect());
       if (result && result.ok) {
-        setStatus('ok', result.message || '配置已保存，正在进入控制台…');
+        setStatus('ok', result.message || (switchMode ? '已切换，正在重启后端…' : '配置已保存，正在进入控制台…'));
       } else {
         showErrors((result && result.errors) || {});
         setStatus('err', (result && result.message) || '没能启动后端。', (result && result.detail) || '');
@@ -492,6 +609,18 @@
       setStatus('err', '保存失败：' + (error && error.message ? error.message : error));
       el.save.disabled = false;
       el.test.disabled = false;
+    } finally {
+      // ★★ 兜底：**只要没成功进控制台，按钮就必须回到可点状态**。
+      //   为什么要有这个 finally（实测教训）：处理函数一旦在"进 try 之前"抛异常
+      //   （第一版就是 `ReferenceError: switchMode is not defined`），
+      //   上面那个 catch 根本不会执行 —— 而按钮在它之前已经被 disable 了，
+      //   于是页面变成"看着好好的、点不动、也没有任何错误提示"。
+      //   判据用"是否已经导航走"：成功时主进程会把窗口切到加载页/控制台，
+      //   那时按钮状态已无意义；失败时页面还在，必须解开。
+      if (document.getElementById('btn-save')) {
+        el.save.disabled = false;
+        el.test.disabled = false;
+      }
     }
   });
 
@@ -501,6 +630,17 @@
     el.test.disabled = true;
     el.save.disabled = true;
     setStatus('busy', '正在用这些配置真的起一次后端并检查各组件…（不改动你的配置）');
+    // ★★ 显示**已用时间**：这一步要真的起一个后端（首次会加载本地嵌入模型），
+    //   实测 2~30 秒；而"界面上只有一句静态文字"会让人以为程序卡死了
+    //   （真实反馈："它一直显示这个不动了，已经很久了"）。
+    //   走秒本身也让"还在干活"变得可见，并且能一眼看出是"慢"还是"真挂了"。
+    const startedAt = Date.now();
+    const ticker = setInterval(() => {
+      const secs = Math.round((Date.now() - startedAt) / 1000);
+      setStatus('busy', `正在用这些配置真的起一次后端并检查各组件…已用 ${secs} 秒`
+        + '（不改动你的配置）\n通常 2~30 秒；首次加载本地嵌入模型会慢一些，'
+        + '最长等 3 分钟，到点会明确报超时。');
+    }, 1000);
     try {
       const result = await api.test(collect());
       showErrors((result && result.errors) || {});
@@ -512,6 +652,9 @@
     } catch (error) {
       setStatus('err', '测试失败：' + (error && error.message ? error.message : error));
     } finally {
+      // ★ 必须停掉走秒，否则它会把最终结论**覆盖成"已用 N 秒"**
+      //   （用户就再也看不到结果了 —— 这正是"看起来卡住"的另一半原因）。
+      clearInterval(ticker);
       el.test.disabled = false;
       el.save.disabled = false;
     }

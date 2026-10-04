@@ -169,32 +169,49 @@ def _send(client: TestClient, user: dict, session_id: int, text: str = "我推�
 # ==================================================================
 #  一、默认插件与 CRUD
 # ==================================================================
-def test_first_list_creates_two_empty_defaults_then_never_duplicates(
+def test_first_list_creates_two_empty_defaults_plus_theme_then_never_duplicates(
     client: TestClient, user: dict
 ) -> None:
+    """新账号第一次访问插件列表：2 个空壳 + **1 个默认主题**，且只发一次。
+
+    ★ 本用例这一轮改过（**意图变了，不是把断言删松**）：
+      用户反馈"新建的账号打开控制台是浅色的，而老账号是深空星云主题"——
+      根因是主题只在「内置示例目录」里，要用户自己去点「添加」。
+      现在新账号会**默认带上并启用** `yunmeng_nebula`（见 plugin_service.ensure_defaults）。
+      所以 total 从 2 变成 3：多出来的那一个就是主题。
+    """
     first = client.get(PLUGINS, headers=user["headers"])
     assert first.status_code == 200, first.text
     data = first.json()["data"]
-    assert data["total"] == 2, data
+    assert data["total"] == 3, data
     kinds = sorted(item["kind"] for item in data["items"])
-    assert kinds == ["prompt", "regex"]
-    # ★ 默认插件必须是**空的**：预置规则会悄悄改用户的提示词
+    assert kinds == ["css", "prompt", "regex"]
+    # ★ 两个空壳必须仍然是**空的**：预置规则会悄悄改用户的提示词
     for item in data["items"]:
-        assert item["is_builtin"] is True
         if item["kind"] == "regex":
+            assert item["is_builtin"] is True
             assert item["config"]["rules"] == []
-        else:
+        elif item["kind"] == "prompt":
+            assert item["is_builtin"] is True
             assert item["config"]["content"] == ""
+
+    # ★★ 主题：存在、**已启用**、真的有样式，而且**不是** is_builtin
+    #   （用户要能像自己的插件那样改它/停它/删它）
+    theme = next(item for item in data["items"] if item["kind"] == "css")
+    assert "星云暗涌" in theme["name"], theme["name"]
+    assert theme["enabled"] is True, "默认主题必须是启用状态，否则用户看到的还是浅色"
+    assert len(str(theme["config"].get("css") or "")) > 500, "主题样式不能是空的"
+    assert theme["is_builtin"] is False, "主题不该标成 is_builtin —— 那会让它变成不可改的内置条目"
     assert data["security_note"] and data["allowed_hosts"] == list(plugin_service.ALLOWED_HOSTS)
 
     again = client.get(PLUGINS, headers=user["headers"]).json()["data"]
-    assert again["total"] == 2, "重复访问不能把默认插件越加越多"
+    assert again["total"] == 3, "重复访问不能把默认插件越加越多"
 
-    # 删掉默认插件后不能再自动重建（用户的删除是明确的意图）
+    # 删掉默认插件后不能再自动重建（用户的删除是明确的意图）——**包括主题**
     for item in again["items"]:
         assert client.delete(f"{PLUGINS}/{item['id']}", headers=user["headers"]).status_code == 200
     after = client.get(PLUGINS, headers=user["headers"]).json()["data"]
-    assert after["total"] == 0, "删掉的默认插件不该被自动重建"
+    assert after["total"] == 0, "删掉的默认插件不该被自动重建（主题也一样）"
 
 
 def test_toggle_priority_and_delete(client: TestClient, user: dict) -> None:
@@ -242,8 +259,8 @@ def test_bad_config_is_rejected(client: TestClient, user: dict, payload: dict) -
     body = {"name": "非法插件", **payload}
     response = client.post(PLUGINS, json=body, headers=user["headers"])
     assert response.status_code in (400, 422), response.text
-    # 不能留下半装状态
-    assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 2
+    # 不能留下半装状态（默认 3 个：2 个空壳 + 主题；见 ensure_defaults 的说明）
+    assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 3
 
 
 def test_css_sanitizer_blocks_escape_and_remote_import() -> None:
@@ -407,7 +424,8 @@ def test_install_rejects_redirect_outside_allowlist(client: TestClient, user: di
             client=_mock_client(_manifest(), location="https://evil.example/x.json"),
         )
     assert "重定向" in str(exc.value)
-    assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 2
+    # 默认 3 个（2 个空壳 + 主题）—— 失败的安装不能留下半条
+    assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 3
 
 
 def test_install_rejects_oversize_and_bad_manifest(client: TestClient, user: dict) -> None:
@@ -441,8 +459,8 @@ def test_install_rejects_oversize_and_bad_manifest(client: TestClient, user: dic
                 db, user["id"], BLOB_URL, client=_mock_client(_manifest(spec="other_spec"))
             )
         assert "spec" in str(exc4.value)
-    # 四次失败都不能留下东西
-    assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 2
+    # 四次失败都不能留下东西（默认 3 个：2 个空壳 + 主题）
+    assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 3
 
 
 def test_install_surfaces_download_error(client: TestClient, user: dict) -> None:
@@ -622,7 +640,7 @@ def test_add_from_catalog_then_no_duplicate(client: TestClient, user: dict, fake
     marked = next(item for item in again["catalog"] if item["key"] == "authors_note")
     assert marked["installed"] is True
     assert marked["update_available"] is False, "刚添加的就是最新版，不该提示有更新"
-    assert again["total"] == 3, "默认两个空壳 + 刚添加的一个"
+    assert again["total"] == 4, "默认 2 个空壳 + 默认主题 + 刚添加的一个"
 
     # ★ 第十七轮改了语义：同一个接口现在同时承担"添加"与"**更新**"。
     #   已经是最新时不假装"又成功了一次"，而是如实说"已经是最新版"。
@@ -630,7 +648,7 @@ def test_add_from_catalog_then_no_duplicate(client: TestClient, user: dict, fake
     #     而"内容在添加时就被拷贝、内置主题升级后用户看不出变化"正是本轮要修的问题。）
     dup = client.post(f"{PLUGINS}/catalog/authors_note", headers=user["headers"])
     assert dup.status_code == 400 and "已经是最新版" in dup.text
-    assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 3
+    assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 4
 
     missing = client.post(f"{PLUGINS}/catalog/nonexistent", headers=user["headers"])
     assert missing.status_code == 404
@@ -668,7 +686,7 @@ def test_catalog_can_update_a_stale_builtin_copy(client: TestClient, user: dict)
     listed2 = client.get(PLUGINS, headers=user["headers"]).json()["data"]
     entry2 = next(i for i in listed2["catalog"] if i["key"] == "authors_note")
     assert entry2["update_available"] is False
-    assert listed2["total"] == 3, "更新不该多出一条插件"
+    assert listed2["total"] == 4, "更新不该多出一条插件（默认 2 空壳 + 主题 + 这一条）"
 
 
 def test_catalog_does_not_clobber_same_name_different_kind(client: TestClient, user: dict) -> None:

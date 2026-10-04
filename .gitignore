@@ -6,6 +6,14 @@
 .env
 .env.*
 !.env.example
+# ★★ 配置备份目录：本项目的运维动作会往这里放带**真实口令**的 .env 副本
+#   （见 docs/handoff.md §35.4：切换存储/改口令前的自动备份）。
+#   `.env.*` 挡不住它 —— 因为被忽略的是**目录**，而目录名不匹配 `*.` 前缀那条规则。
+#   实测确认过：没加这条时 `git check-ignore .env-backups` 返回"没被忽略"，
+#   也就是说一次 `git add -A` 就能把明文数据库口令提交上去。
+.env-backups/
+*.env.bak
+*.bak.env
 *.key
 *.pem
 
@@ -37,8 +45,20 @@ data/chroma/
 data/logs/
 data/exports/
 *.sqlite3
+# ★ SQLite 的 WAL 模式会额外生成 -wal / -shm 两个文件（见 app/db/mysql.py 的 PRAGMA）。
+#   它们和主库文件是一体的，**同样绝不能进版本库** —— 里面是用户数据的最新写入。
+#   实测踩到：`.pytest-data/` 被整目录忽略所以没露出来，但开发态跑一次
+#   `data/app.sqlite3` 就在仓库根留下 `-wal` / `-shm` 两个未跟踪文件。
+*.sqlite3-wal
+*.sqlite3-shm
 *.db
+*.db-wal
+*.db-shm
 *.sql.gz
+# ★ 测试期的数据根目录（tests/conftest.py 把 HNE_DATA_DIR 指到这里）：
+#   它装着 SQLite 文件、向量库、日志，以及**自动生成的密钥**（config/.secrets.env）。
+#   密钥绝不能进版本库，所以整个目录忽略掉。
+.pytest-data/
 
 # 探针/脚本跑出来的报告与截图（随时可重新生成，不必进版本库）
 # ★ 用通配而不是逐个列文件名：以前是逐个列的，于是**每次新增一个脚本产出就要回来补一行**，

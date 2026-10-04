@@ -9,6 +9,19 @@
 绝不 DROP、绝不改类型、绝不删数据 —— 那是 `init_db.py --drop` 的事，
 而那个命令在这台机器上是**红线**（库里有用户的真实故事）。
 
+==================== ★ 两种后端，两条来源 ====================
+
+| 后端 | 差异从哪来 | 说明 |
+|---|---|---|
+| **SQLite（默认）** | `app/db/schema_upgrade.py` **从 ORM 模型自动推导** | 模型是唯一事实来源；DDL 用 SQLite 方言编译（`init_db.py` 建表走同一套编译路径） |
+| **MySQL（可选）** | 下面那张**手写 DDL 表**（`_MYSQL_EXPECTED`） | 历史原因：它比模型推导早，而且能顺手补外键与索引 |
+
+★ 为什么 MySQL 侧还留着那份手写表：它包含**模型推导做不到**的东西 ——
+  外键约束（SQLite/MySQL 都无法"给已有表加外键"而不重建表，但 MySQL 侧
+  当年是靠 `ALTER TABLE … ADD CONSTRAINT` 补上的）以及给老库补索引。
+  **两份都跑**（先手写、再模型推导兜底），后者还能顺带发现"手写表漏掉的列"。
+  这不是重复劳动：手写表一旦抄漏，模型推导会把它抓出来并补上。
+
 ==================== 用法 ====================
     # 先看会执行什么 SQL（不连库改任何东西）
     .\\.venv\\Scripts\\python.exe scripts\\migrate_db.py --dry-run
@@ -18,6 +31,9 @@
 
     # 顺便把缺的表也建出来（等价于跑一次 init_db.py，不 --drop）
     .\\.venv\\Scripts\\python.exe scripts\\migrate_db.py --create-tables
+
+    # 想操作 MySQL 实例就显式指定后端（默认是 sqlite）
+    $env:HNE_DB_BACKEND='mysql'; .\\.venv\\Scripts\\python.exe scripts\\migrate_db.py --dry-run
 """
 
 from __future__ import annotations
@@ -35,6 +51,7 @@ from app.core.logging import setup_logging  # noqa: E402
 from app.db.base import Base  # noqa: E402
 import app.db.models  # noqa: E402,F401  —— 必须导入，否则 Base.metadata 里没有表定义
 from app.db.mysql import dispose_engine, get_engine  # noqa: E402
+from app.db.schema_upgrade import apply_upgrade, describe, plan_upgrade  # noqa: E402
 
 
 def _missing_columns(inspector, table: str, expected: dict) -> list[tuple[str, str]]:
@@ -47,6 +64,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="幂等地补齐数据库新增的列")
     parser.add_argument("--dry-run", action="store_true", help="只打印将要执行的 SQL")
     parser.add_argument("--create-tables", action="store_true", help="顺便建出缺失的表")
+    parser.add_argument(
+        "--model-driven",
+        action="store_true",
+        help="只跑「从 ORM 模型推导」的那条路（跳过 MySQL 手写 DDL 表）",
+    )
     args = parser.parse_args()
 
     setup_logging()
@@ -54,8 +76,7 @@ def main() -> int:
     engine = get_engine()
 
     print("=" * 66)
-    print(f"  数据库结构补齐  |  {settings.MYSQL_USER}@{settings.MYSQL_HOST}:"
-          f"{settings.MYSQL_PORT}/{settings.MYSQL_DB}")
+    print(f"  数据库结构补齐  |  {settings.database_label}")
     print("=" * 66)
 
     if args.create_tables:
@@ -63,14 +84,57 @@ def main() -> int:
         Base.metadata.create_all(bind=engine)
         print("[OK] 缺失的表已创建（已存在的表未被改动）")
 
-    # ---------------------------------------------------------------
-    #  需要补的列：表名 → {列名: DDL}
-    #
-    #  ★ 加新列时**只往这里追加**，不要修改已有条目 ——
-    #    已经跑过的库不会重复执行（下面按 information_schema 判断）。
-    #  ★ 全部用 NULL 允许的列：加列时不需要给已有行填默认值，
-    #    这也意味着线上加列是**瞬时且安全**的。
-    # ---------------------------------------------------------------
+    statements: list[str] = []
+    if not settings.is_sqlite and not args.model_driven:
+        statements.extend(_plan_mysql_handwritten(engine))
+
+    # ---- 第二条来源：从 ORM 模型自动推导（两种后端都跑）----
+    plan = plan_upgrade(engine)
+    print()
+    for line in describe(plan):
+        print(line)
+
+    all_statements = statements + plan.statements
+    if not all_statements and not plan.missing_tables:
+        # ★ 这句话由 describe(plan) 输出（它也会说"已经是最新的"）——
+        #   两处都打会变成重复两行，用户会以为跑了两遍。
+        dispose_engine()
+        return 0
+
+    if args.dry_run:
+        print("\n[预演] 未执行任何语句。")
+        dispose_engine()
+        return 0
+
+    # MySQL 手写的那几条先跑（含外键/索引），再跑模型推导的那批
+    executed = 0
+    if statements:
+        with engine.begin() as conn:
+            for sql in statements:
+                print(f"  [执行] {sql[:88]}…")
+                conn.execute(text(sql))
+                executed += 1
+    executed += apply_upgrade(engine, plan)
+
+    print(f"\n[完成] 共执行 {executed} 条语句，结构已补齐。"
+          "建议再跑一次 --dry-run 确认没有剩余项。")
+    dispose_engine()
+    return 0
+
+
+def _plan_mysql_handwritten(engine) -> list[str]:  # noqa: ANN001 - Engine
+    """MySQL 侧的历史手写 DDL 表：只返回**该执行**的 `ALTER TABLE` 语句。
+
+    ★ 为什么要保留这一份（而不是全交给模型推导）：
+      这里包含模型推导**表达不了**的东西 —— `ADD CONSTRAINT … FOREIGN KEY`
+      与配套索引。当年是靠它给老库补上 `prompt_preset_id` 的外键的。
+    ★ 它**只对 MySQL 生效**：里面的 `MEDIUMTEXT` / `COMMENT` / `TINYINT(1)`
+      SQLite 一条都不认（这正是"SQLite 用户没有升级手段"那个欠账的成因）。
+    ★ 加新列时**只往这张表里追加**，不要改已有条目：已经跑过的库不会重复执行
+      （下面按 inspector 的实际列判断），而改动历史条目等于伪造历史。
+    """
+    #: 表名 → {列名: DDL}。全部用 NULL 允许（或带默认值）的列：
+    #: 加列时不需要回填已有行，所以线上加列是**瞬时且安全**的。
     expected: dict[str, dict[str, str]] = {
         "messages": {
             "state_meta_json": (
@@ -168,33 +232,15 @@ def main() -> int:
                     "`fk_narrative_sessions_prompt_preset` FOREIGN KEY (`prompt_preset_id`) "
                     "REFERENCES `prompt_presets` (`id`) ON DELETE SET NULL"
                 )
-                statements.append(
-                    "CREATE INDEX `ix_narrative_sessions_prompt_preset_id` "
-                    "ON `narrative_sessions` (`prompt_preset_id`)"
-                )
-
-    if not statements:
-        print("\n[OK] 结构已经是最新的，不需要改动。")
-        dispose_engine()
-        return 0
-
-    print("\n将要执行：")
-    for sql in statements:
-        print(f"  {sql}")
-
-    if args.dry_run:
-        print("\n[预演] 未执行任何语句。")
-        dispose_engine()
-        return 0
-
-    with engine.begin() as conn:
-        for sql in statements:
-            print(f"  [执行] {sql[:80]}…")
-            conn.execute(text(sql))
-
-    print("\n[完成] 结构已补齐。建议再跑一次 --dry-run 确认没有剩余项。")
-    dispose_engine()
-    return 0
+                # ★ 这条索引**刻意不在这里补**：
+                #   模型推导那条路（app/db/schema_upgrade.py）按 inspector 的实际
+                #   索引判断，发现缺了会自己发一条 CREATE INDEX。
+                #   两处都发就会在"老 MySQL 库"上生成**两条一模一样的 CREATE INDEX**，
+                #   第二条当场报 "Duplicate key name"（实测推演出来了，见
+                #   app/db/schema_upgrade.apply_upgrade 的幂等处理与
+                #   tests/test_schema_upgrade.py::test_apply_upgrade_skips_existing_index）。
+                #   所以这里只留外键，索引交给那一处。
+    return statements
 
 
 if __name__ == "__main__":

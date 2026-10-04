@@ -17,10 +17,11 @@
 from __future__ import annotations
 
 from loguru import logger
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError
+from app.db.dialect import like_contains
 from app.db.models import CharacterCard, WorldBook
 
 #: 列表默认 / 最大每页条数，与角色卡保持一致
@@ -30,11 +31,6 @@ MAX_LIMIT = 100
 #: V2 规范里 character_book 内部、由本表独立列承载的键。
 #: 其余键（scan_depth / token_budget / extensions / 未知字段）全进 extra_data。
 _BOOK_MAPPED_KEYS = frozenset({"name", "description", "entries"})
-
-
-def _escape_like(term: str) -> str:
-    """转义 LIKE 通配符（理由同角色卡服务：用户搜 "50%" 时那个百分号是字面意思）。"""
-    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _entry_stats(entries: list | None) -> tuple[int, int]:
@@ -177,9 +173,11 @@ def _list_conditions(user_id: int, q: str | None) -> list:
     """列表查询的公共过滤条件（两种列表函数共用，避免两边条件写歪）。"""
     conditions = [WorldBook.user_id == user_id]
     if q:
-        keyword = f"%{_escape_like(q.strip())}%"
+        # 与角色卡一样走 app/db/dialect.like_contains：显式 ESCAPE，
+        # 否则 SQLite 上"搜 50%"会命中 0 条（它没有默认转义符）。
+        term = q.strip()
         conditions.append(
-            or_(WorldBook.name.like(keyword), WorldBook.description.like(keyword))
+            like_contains(WorldBook.name, term) | like_contains(WorldBook.description, term)
         )
     return conditions
 

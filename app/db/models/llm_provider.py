@@ -19,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.types import PkInt
 from app.db.base import Base, TimestampMixin
 
 
@@ -57,7 +58,7 @@ class LLMProvider(Base, TimestampMixin):
     )
 
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True, comment="配置ID"
+        PkInt, primary_key=True, autoincrement=True, comment="配置ID"
     )
     user_id: Mapped[int] = mapped_column(
         BigInteger,

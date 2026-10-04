@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from sqlalchemy import JSON, BigInteger, Boolean, ForeignKey, String, Text, text
-from sqlalchemy.dialects.mysql import MEDIUMTEXT
+
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.types import LongText, PkInt
 from app.db.base import Base, TimestampMixin
 
 
@@ -54,7 +55,7 @@ class CharacterCard(Base, TimestampMixin):
     __table_args__ = {"comment": "角色卡表"}
 
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True, comment="角色卡ID"
+        PkInt, primary_key=True, autoincrement=True, comment="角色卡ID"
     )
     user_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -89,7 +90,7 @@ class CharacterCard(Base, TimestampMixin):
         Text, nullable=True, comment="初始场景，即故事从哪里开始"
     )
     example_dialogue: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT, nullable=True, comment="对话示例（few-shot 范例，用于稳定输出风格）"
+        LongText, nullable=True, comment="对话示例（few-shot 范例，用于稳定输出风格）"
     )
 
     # ---------------- 开场白 ----------------
@@ -99,7 +100,7 @@ class CharacterCard(Base, TimestampMixin):
     #
     #   对应 SillyTavern 角色卡 V2 规范里的 first_mes / alternate_greetings。
     greeting: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT, nullable=True, comment="开场白（角色说的第一句话，故事从这里开始）"
+        LongText, nullable=True, comment="开场白（角色说的第一句话，故事从这里开始）"
     )
     # 备选开场白：对应规范里的 alternate_greetings（界面上的「换一个开头」）
     alternate_greetings: Mapped[list] = mapped_column(
@@ -113,12 +114,12 @@ class CharacterCard(Base, TimestampMixin):
     # 角色卡可以自带一段系统提示词，优先级**高于**引擎的默认人设提示词。
     # 对应规范的 system_prompt / post_history_instructions。
     system_prompt: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT,
+        LongText,
         nullable=True,
         comment="自定义系统提示词（留空则用引擎按人设字段自动拼装的那份）",
     )
     post_history_instructions: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT,
+        LongText,
         nullable=True,
         comment="尾注指令，追加在对话历史之后（用于强化文风或输出格式要求）",
     )

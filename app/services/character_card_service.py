@@ -38,6 +38,7 @@ from app.core.exceptions import (
     ForbiddenError,
     NotFoundError,
 )
+from app.db.dialect import json_array_contains, like_contains
 from app.db.models import CharacterCard, NarrativeSession, WorldBook
 from app.schemas.character_card import CharacterCardCreate, CharacterCardImport
 from app.schemas.world_book import normalize_entries
@@ -122,23 +123,24 @@ def _build_filters(user_id: int, scope: str, q: str | None, tag: str | None):
     conditions = [_scope_condition(user_id, scope)]
 
     if q:
-        keyword = f"%{_escape_like(q.strip())}%"
-        # 名字或简介命中即算匹配。用 like 而非 ilike：
-        # 本项目建表用的是 utf8mb4_unicode_ci 排序规则，本身就不区分大小写。
+        # 名字或简介命中即算匹配。
+        # ★ 用 like_contains（app/db/dialect.py）而不是 `column.like(...)`：
+        #   后者编译出来没有 ESCAPE 子句，而 SQLite **没有默认转义符** ——
+        #   用户搜 "50%" 时会匹配到 0 条（本该命中 1 条），实测就是这么挂的。
+        # 用 like 而非 ilike：MySQL 建表用的是 utf8mb4_unicode_ci，本身不区分大小写。
+        #   ★ SQLite 侧的已知差异：它的 LIKE 对非 ASCII 是区分大小写的，
+        #     而中文没有大小写，所以中文搜索行为一致；英文关键词在 SQLite 上更严格
+        #     （属于"更精确"而非"更错"）。这一点在 README 的双后端章节里写明。
+        term = q.strip()
         conditions.append(
-            or_(CharacterCard.name.like(keyword), CharacterCard.description.like(keyword))
+            or_(
+                like_contains(CharacterCard.name, term),
+                like_contains(CharacterCard.description, term),
+            )
         )
 
     if tag:
-        # ★ 标签存在 JSON 列里，普通等值比较没用，得用 MySQL 的 JSON_CONTAINS。
-        #   json.dumps("奇幻") 会得到 '"奇幻"'（带引号的 JSON 字符串字面量），
-        #   正好是 JSON_CONTAINS 要求的「候选元素」格式：
-        #       JSON_CONTAINS('["奇幻","侦探"]', '"奇幻"')  ->  1
-        conditions.append(
-            func.json_contains(
-                CharacterCard.tags, json.dumps(tag.strip(), ensure_ascii=False)
-            )
-        )
+        conditions.append(json_array_contains(CharacterCard.tags, tag.strip()))
 
     return conditions
 

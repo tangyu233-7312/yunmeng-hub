@@ -53,6 +53,7 @@ from sqlalchemy import JSON, BigInteger, ForeignKey, String, Text
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.types import PkInt
 from app.db.base import Base, TimestampMixin
 
 
@@ -74,7 +75,7 @@ class WorldBook(Base, TimestampMixin):
     __table_args__ = {"comment": "世界书表"}
 
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True, comment="世界书ID"
+        PkInt, primary_key=True, autoincrement=True, comment="世界书ID"
     )
     user_id: Mapped[int] = mapped_column(
         BigInteger,

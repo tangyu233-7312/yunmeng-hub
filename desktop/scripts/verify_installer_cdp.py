@@ -1,4 +1,4 @@
-"""通过 CDP 验收**装出来的**云梦枢：填首次设置表单 → 保存 → 必须进控制台。
+"""通过 CDP 验收**装出来的**云梦枢：走首次设置 → 保存 → 必须进控制台。
 
 为什么单独写这个脚本
 --------------------
@@ -7,15 +7,28 @@
 调用首次设置页自己的保存入口（就是「保存并开始」按钮调用的那个），
 然后核对它返回的结论与最终的页面 URL。
 
-★ 为什么不"点按钮"而是调 `yunmengSetup.save()`：
+★ 为什么要"点按钮"而不是只调 `yunmengSetup.save()`：
   点按钮是"发射后不管"，脚本只能靠等；而 save() 返回的正是那句
-  「配置已保存并验证通过」/「起不来后端」的结论本身。
-  能拿到结论，就能把失败原因原样报出来，而不是"超时了，不知道为啥"。
+  「配置已保存并验证通过」/「起不来后端」的结论本身 —— 能拿到结论就能把
+  失败原因原样报出来。所以两者都要：**先点一下按钮**（证明用户真能走通），
+  再读它给出的结论。
+
+==================== ★ 两种模式（默认零配置）====================
+不加 `--env-file` = **零配置模式**（这才是默认形态）：
+    存储方式必须是「本机文件（SQLite）」、MySQL 字段必须隐藏，
+    **一个字段都不填**直接保存，然后核对：
+      · 进得了控制台；
+      · `<userData>\\data\\app.sqlite3` 真的被建出来了（数据落在 userData，不是安装目录）。
+
+加了 `--env-file` = **MySQL 模式**：把存储方式切成 MySQL、按该文件填连接信息。
 
 ★ 账号口令从 `--env-file` 读，**不写进命令行**（命令行会被别的进程看到）。
 
 用法：
-    python desktop/scripts/verify_installer_cdp.py --port 47000 --env-file .env --log-dir %TEMP%\\xxx
+    # 零配置（默认形态）
+    python desktop/scripts/verify_installer_cdp.py --port 47000 --userdata "%APPDATA%\\云梦枢"
+    # MySQL 可选形态
+    python desktop/scripts/verify_installer_cdp.py --port 47000 --env-file .env
 退出码 0 = 通过；非 0 = 失败（原因打印在 stdout）。
 """
 
@@ -24,6 +37,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import urllib.request
 
@@ -102,14 +116,17 @@ class Cdp:
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--env-file", required=True)
+    parser.add_argument("--env-file", default="", help="MySQL 模式的 .env；不传 = 零配置（SQLite）模式")
+    parser.add_argument("--userdata", default="", help="userData 目录（用来核对 SQLite 文件真的建在这）")
     parser.add_argument("--log-dir", default="")
     args = parser.parse_args()
 
-    env_values = load_env_file(args.env_file)
-    if not env_values.get("HNE_MYSQL_PASSWORD"):
-        print("× 给定的 .env 里没有 HNE_MYSQL_PASSWORD，没法拿它做验收")
+    mysql_mode = bool(args.env_file)
+    env_values = load_env_file(args.env_file) if mysql_mode else {}
+    if mysql_mode and not env_values.get("HNE_MYSQL_PASSWORD"):
+        print("× 给定的 .env 里没有 HNE_MYSQL_PASSWORD，没法拿它做 MySQL 模式的验收")
         return 2
+    print(f"  验收模式：{'MySQL（可选形态）' if mysql_mode else '零配置（默认形态 · SQLite）'}")
 
     deadline = asyncio.get_event_loop().time() + 60
     target = None
@@ -169,6 +186,57 @@ async def main() -> int:
             return 11
         print(f"  「随机生成」按钮 {buttons} 个，与可生成字段 {len(generatable)} 个一一对应 —— 不再有「有文案没按钮」")
 
+        # ------------------------------------------------------------------
+        #  ★ 存储方式：默认必须是「本机文件（SQLite）」，且 MySQL 字段整组隐藏
+        # ------------------------------------------------------------------
+        storage_tag = await cdp.eval("document.querySelector('#f-HNE_DB_BACKEND')?.tagName || ''")
+        if storage_tag != "SELECT":
+            print(f"× 「存储方式」不是下拉框，实际是 {storage_tag!r} —— 用户得靠猜能填什么")
+            return 12
+        backend_value = await cdp.eval("document.querySelector('#f-HNE_DB_BACKEND').value")
+        total_mysql = int(await cdp.eval("document.querySelectorAll('#mysql-grid [data-db-only]').length") or 0)
+        if total_mysql < 5:
+            print(f"× MySQL 字段只有 {total_mysql} 个，页面结构不对")
+            return 13
+
+        if mysql_mode:
+            await cdp.eval("""
+              (() => {
+                const sel = document.querySelector('#f-HNE_DB_BACKEND');
+                sel.value = 'mysql';
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+              })()
+            """)
+            await asyncio.sleep(0.3)
+            if str(await cdp.eval("document.querySelector('#f-HNE_DB_BACKEND').value")) != "mysql":
+                print("× 切不到 MySQL 模式")
+                return 14
+            hidden_after = await cdp.eval(
+                "[...document.querySelectorAll('#mysql-grid [data-db-only]')]"
+                ".filter(b => b.style.display === 'none').length"
+            )
+            if int(hidden_after or 0) != 0:
+                print(f"× 切到 MySQL 后仍有 {hidden_after} 个字段隐藏着")
+                return 15
+            print(f"  已切到 MySQL：{total_mysql} 个连接字段全部可见")
+        else:
+            if str(backend_value) != "sqlite":
+                print(f"× 全新安装的默认存储方式不是 sqlite，而是 {backend_value!r}（零配置就假了）")
+                return 12
+            hidden_now = await cdp.eval(
+                "[...document.querySelectorAll('#mysql-grid [data-db-only]')]"
+                ".filter(b => b.style.display === 'none').length"
+            )
+            disabled_now = await cdp.eval(
+                "[...document.querySelectorAll('#mysql-grid input')].filter(i => i.disabled).length"
+            )
+            if int(hidden_now or 0) != total_mysql or int(disabled_now or 0) != total_mysql:
+                print(f"× 选本机文件时 MySQL 字段没有全部隐藏/禁用："
+                      f"隐藏 {hidden_now}/{total_mysql}、禁用 {disabled_now}/{total_mysql}")
+                return 13
+            print(f"  默认「本机文件（SQLite）」：{total_mysql} 个 MySQL 字段已隐藏并禁用 —— 一格都不用填")
+
         values = {f["key"]: (f.get("default") or "") for f in field_defs}
         from_env = 0
         for key in keys:
@@ -177,30 +245,52 @@ async def main() -> int:
                 from_env += 1
         # 生成型字段（密钥）：这里仍然走"生成器"，因为要的是可复现的自动化填值；
         # 但**按钮是否存在**已经由上面那条断言单独守住了（两件事分开测，别互相掩盖）。
-        for f in field_defs:
-            if f.get("generatable") and not (values.get(f["key"]) or "").strip():
-                values[f["key"]] = await cdp.eval(
-                    f"window.yunmengSetup.generate({json.dumps(f['key'])})", True
-                )
-        print(f"  表单字段 {len(field_defs)} 个（其中 {from_env} 个取自 --env-file）")
+        # ★ 零配置模式下**刻意一个密钥都不填** —— 留给后端自己生成，
+        #   这正是"安装即用"要验的那条路（`ensure_secrets` 会被真正执行一次）。
+        if mysql_mode:
+            for f in field_defs:
+                if f.get("generatable") and not (values.get(f["key"]) or "").strip():
+                    values[f["key"]] = await cdp.eval(
+                        f"window.yunmengSetup.generate({json.dumps(f['key'])})", True
+                    )
 
-        # ★ 就是「保存并开始」按钮调用的那个入口
-        result = await cdp.eval(
-            "window.yunmengSetup.save(%s)" % json.dumps(values), True
+        # ★★ 填值的**方式**很关键（这里返工过一次，值得写清楚）：
+        #   必须把值写进**页面上的输入框**，再触发提交让页面自己去 collect()。
+        #   第一版是"把 values 直接交给 window.yunmengSetup.save(values)"——
+        #   对零配置没影响（反正不填），但在 MySQL 模式下**页面上的输入框始终是空的**，
+        #   于是页面的本地体检（gateLocal → precheck）读到空口令，直接拦下：
+        #       "先补上这几项再试：MySQL 口令"
+        #   而脚本还傻乎乎地"点了按钮"，报出来的现象是"保存没成功"，
+        #   看起来像功能坏了 —— 实际是**验收脚本没走用户走的那条路**。
+        #   ★ 又一条同类教训：验收要在**真页面上**把该填的填进去，
+        #     不能替用户把活干了（上一轮「随机生成」按钮就是这么被漏掉的）。
+        filled = await cdp.eval(
+            "(() => { const v = %s; let n = 0;"
+            " for (const k of Object.keys(v)) {"
+            "   const el = document.getElementById('f-' + k);"
+            "   if (!el) continue;"
+            "   el.value = v[k];"
+            "   el.dispatchEvent(new Event('input', { bubbles: true }));"
+            "   el.dispatchEvent(new Event('change', { bubbles: true }));"
+            "   n++;"
+            " } return n; })()" % json.dumps(values)
         )
-        if not isinstance(result, dict):
-            print(f"× save() 没有返回结论：{result!r}")
-            return 6
-        if not result.get("ok"):
-            print(f"× 保存/验证失败：{result.get('message')}")
-            if result.get("detail"):
-                print("  细节：")
-                for line in str(result["detail"]).splitlines():
-                    print(f"    {line}")
-            return 7
-        print(f"  save() 结论：{result.get('message')}")
+        print(f"  表单字段 {len(field_defs)} 个（其中 {from_env} 个取自 --env-file），已填进页面 {filled} 个")
 
-        # 保存成功后主进程会把窗口导航到控制台
+        # ★★ 走用户真正走的那条路：**点「保存并开始」按钮**（而不是直接调 save()）。
+        #   第一版验收直接调 save()，于是"按钮本身坏没坏"完全看不见 —— 同类事故
+        #   本项目已经踩过一次（「随机生成」按钮从来没被创建过，验收却全绿）。
+        await cdp.eval("document.getElementById('form').requestSubmit()")
+        await asyncio.sleep(1.5)
+        btn_state = await cdp.eval("document.getElementById('btn-save').disabled")
+        status_text = str(await cdp.eval("document.getElementById('status').textContent") or "")
+        if btn_state is None:
+            print("× 找不到「保存并开始」按钮 —— 用户就没有可点的入口")
+            return 16
+        print(f"  已点击「保存并开始」（按钮进入 disabled={btn_state}），页面提示：{status_text.splitlines()[0][:60] if status_text else '(空)'}")
+
+        # 按钮那条路是"发射后不管"，但结论与导航都能从页面上观察到：
+        # 保存失败时按钮会被重新启用并显示红字，成功时页面会导航走。
         deadline = asyncio.get_event_loop().time() + 240
         url_after = ""
         while asyncio.get_event_loop().time() < deadline:
@@ -212,9 +302,43 @@ async def main() -> int:
                 break
             await asyncio.sleep(1)
         if "/console/" not in url_after:
-            print(f"× 保存成功但没能进控制台，当前 URL：{url_after}")
+            status = await cdp.eval("document.getElementById('status')?.textContent")
+            print(f"× 点「保存并开始」后没能进控制台，当前 URL：{url_after}")
+            print(f"  页面提示：{str(status)[:300]}")
             return 8
         print(f"  已进入控制台：{url_after}")
+
+        # ------------------------------------------------------------------
+        #  ★ 零配置模式特有：数据必须真的落在 userData 下的 SQLite 文件里
+        # ------------------------------------------------------------------
+        if not mysql_mode:
+            if not args.userdata:
+                print("× 零配置模式必须传 --userdata，否则无法核对数据落在哪")
+                return 17
+            db_file = os.path.join(args.userdata, "data", "app.sqlite3")
+            if not os.path.isfile(db_file):
+                print(f"× 自动建库失败：没有在 {db_file} 建出 SQLite 文件")
+                return 18
+            head = b""
+            with open(db_file, "rb") as fh:
+                head = fh.read(15)
+            if head != b"SQLite format 3":
+                print(f"× {db_file} 不是 SQLite 库（头 15 字节：{head!r}）")
+                return 19
+            size = os.path.getsize(db_file)
+            print(f"  ★ 自动建库成功：{db_file}（{size} 字节，头 15 字节是 SQLite 魔数）")
+
+            secrets_file = os.path.join(args.userdata, "config", ".secrets.env")
+            if not os.path.isfile(secrets_file):
+                print(f"× 后端没有自动生成密钥：{secrets_file} 不存在")
+                return 20
+            with open(secrets_file, "r", encoding="utf-8") as fh:
+                secrets_text = fh.read()
+            for key in ("HNE_SECRET_KEY", "HNE_API_KEY_ENCRYPTION_KEY"):
+                if f"{key}=" not in secrets_text:
+                    print(f"× 自动生成的密钥文件里缺 {key}")
+                    return 21
+            print("  ★ 自动生成密钥成功：.secrets.env 里两个键都在（值不打印）")
 
         # 控制台得真的渲染出来（拿标题当证据，别只信 URL）
         title = await cdp.eval("document.title")

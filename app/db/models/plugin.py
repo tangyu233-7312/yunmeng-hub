@@ -24,9 +24,10 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String, text
-from sqlalchemy.dialects.mysql import JSON, MEDIUMTEXT
+from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.db.types import LongText, PkInt
 from app.db.base import Base, TimestampMixin
 
 #: 四种插件类型（与前端 tab、schema 的 Literal 保持一致）
@@ -40,7 +41,7 @@ class Plugin(Base, TimestampMixin):
     __table_args__ = {"comment": "插件表（声明式：正则替换 / 提示词注入 / CSS 主题）"}
 
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True, comment="插件ID"
+        PkInt, primary_key=True, autoincrement=True, comment="插件ID"
     )
     user_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -91,5 +92,5 @@ class Plugin(Base, TimestampMixin):
     )
     #: 原始清单（导入时的原样保留：导出/排查时能看到作者写了什么，不丢字段）
     raw_manifest: Mapped[str | None] = mapped_column(
-        MEDIUMTEXT, nullable=True, comment="安装时的原始 JSON 清单（原样保存，便于审计）"
+        LongText, nullable=True, comment="安装时的原始 JSON 清单（原样保存，便于审计）"
     )

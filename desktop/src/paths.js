@@ -42,6 +42,15 @@ function resolvePaths(options) {
   //   打包后 appRoot 是安装目录，于是"关于"里显示的数据目录指向一个
   //   根本不会被写入的位置（用户照着去看，什么也没有）。
   const dataDir = packaged ? userDataDataDir : path.join(appRoot, 'data');
+  // ★★ `dataRoot` 是**数据根**：后端会在它下面自己拼 `data/app.sqlite3` 与
+  //   `config/.secrets.env`（见 app/core/config.py 的 sqlite_file、
+  //   app/db/bootstrap.py 的 secrets_file）。所以它 = dataDir 的父级：
+  //     开发态 → 仓库根（数据落在 <仓库根>\data，与引入桌面壳之前完全一致）
+  //     打包态 → userData（数据落在 <userData>\data，安装目录之外）
+  //   ★ 它与 `dataDir` **不是一个东西**，本轮就因为把两者混用，
+  //     在打包产物里建出了 `<userData>\data\data\app.sqlite3`（多一层 data）。
+  //     这两个名字像、语义差一层，所以各自都留一句话。
+  const dataRoot = packaged ? userDataDir : appRoot;
 
   return {
     baseDir,
@@ -65,6 +74,8 @@ function resolvePaths(options) {
     setupPage: path.join(baseDir, 'setup.html'),
     // 后端的数据目录（打包态在 userData 下，开发态在仓库根 —— 见上面的 dataDir）
     dataDir,
+    // 数据**根**（相对路径的基准；见上面的 dataRoot）
+    dataRoot,
     // 页面引用的图标 / 打包用的图标
     runtimeIcon: path.join(appRoot, 'web', 'img', 'logo-256.png'),
     packagedIcon: path.join(desktopDir, 'build', 'icon.ico'),

@@ -29,6 +29,7 @@ from app.core.config import get_settings
 from app.core.context import new_request_id, set_request_id
 from app.core.exceptions import ConfigurationError, register_exception_handlers
 from app.core.logging import setup_logging
+from app.db.bootstrap import ensure_schema, ensure_secrets, secrets_file
 from app.db.chroma import check_vector_store, dispose_chroma
 from app.db.mysql import check_connection, dispose_engine
 from app.schemas.common import ComponentStatus, HealthResponse
@@ -144,31 +145,72 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
 
     # ---- 启动阶段 ----
-    # 注意顺序：先配好日志，后面的日志才有统一格式；先建目录，日志文件才写得进去
+    # ★ 顺序有讲究，每一步都为下一步准备前提：
+    #
+    #   1) 自举（bootstrap）**必须最先做**：它要生成/载入本机密钥并写进 os.environ，
+    #      而 Settings 是 lru_cache 单例 —— 一旦有别的代码先调用了 get_settings()，
+    #      之后再改环境变量就不会生效了（经典"我设了但它没生效"）。
+    #      ★ 它同时也保证了"用户不配任何密钥也能用"。
+    #   2) 日志：后面的输出才有统一格式（自举内部也会记日志，所以它先于 setup_logging
+    #      时用的是 loguru 默认 sink，不会丢；换成 info 级别的启动摘要更清楚）。
+    #   3) 建目录：日志文件、SQLite 文件才放得进去。
+    #   4) 建表：**幂等**。空库首启 → 建全部表；老库 → 原样不动。
+    #      必须在探活之前，这样"探活通过"才真的意味着"能用"。
+    # 4) 建表：**幂等**。空库首启 → 建全部表；老库 → 原样不动。
+    #      必须在探活之前，这样"探活通过"才真的意味着"能用"。
+    generated_keys = ensure_secrets()
     setup_logging()
+
+    # ★★ 必须**重新取一次** Settings —— 这是实测抓到的一处误导性日志：
+    #   `ensure_secrets()` 刚把自动生成的密钥写进 `os.environ` 并清了 Settings 缓存，
+    #   而上面 `settings = get_settings()` 拿到的那个实例**还是自举之前的**
+    #   （它的 API_KEY_ENCRYPTION_KEY 仍是空串）。于是启动日志里会出现：
+    #       已自动生成并保存本机密钥：HNE_API_KEY_ENCRYPTION_KEY、HNE_SECRET_KEY
+    #       配置告警: API_KEY_ENCRYPTION_KEY 未设置，用户自配的 LLM API Key 无法加密存储
+    #   —— 前一行说"生成了"，后一行说"没设置"。两句话都不假，但放在一起
+    #   会让排障的人去查一个根本不存在的配置问题（本项目最反对的"把人引向错误方向"）。
+    #   ★ 教训：**改完配置一定要重新取配置**，别继续用旧的那份引用。
+    settings = get_settings()
     settings.ensure_dirs()
 
     logger.info("=" * 62)
     logger.info(
-        "{} v{} 启动中 | 环境: {}", settings.APP_NAME, settings.APP_VERSION, settings.APP_ENV
+        "{} v{} 启动中 | 环境: {} | 数据库后端: {}",
+        settings.APP_NAME,
+        settings.APP_VERSION,
+        settings.APP_ENV,
+        settings.database_label,
     )
+    if generated_keys:
+        # 如实告诉用户"你自己没配、我替你生成了一份，放在哪" ——
+        # 而不是让他以为"我没配但好像也能跑"。
+        logger.info(
+            "已自动生成本机密钥 {}（保存在 {}）",
+            "、".join(sorted(generated_keys)),
+            secrets_file(),
+        )
     # validate_runtime 会检查密钥、数据库密码等是否填写，返回告警列表
     for problem in settings.validate_runtime():
         logger.warning("配置告警: {}", problem)
     logger.info("接口文档: http://{}:{}/docs", settings.HOST, settings.PORT)
 
-    # ---- 启动自检：MySQL ----
+    # ---- 启动自检：建表 ----
+    # 原先只有 scripts/init_db.py 建表，运行时从不建 —— 用户连上空库能通过探活、
+    # 一注册就报表不存在。桌面应用不允许"让用户先跑一个脚本"，所以这里自建。
+    ensure_schema()
+
+    # ---- 启动自检：数据库连接 ----
     # 创建 Engine 本身并不会真正连接数据库（SQLAlchemy 是惰性连接），
-    # 所以这里主动发一条 SELECT 1 探活，目的是「启动时就把问题暴露出来」，
+    # 所以这里主动发一条轻量查询探活，目的是「启动时就把问题暴露出来」，
     # 而不是等用户发第一个请求才报错。
     db_status = check_connection()
     if db_status["status"] == "ok":
-        logger.info("MySQL 连接正常 | 版本 {}", db_status.get("mysql_version"))
+        logger.info("数据库连接正常 | {} | 版本 {}", db_status.get("backend"), db_status.get("server"))
     else:
-        logger.error("MySQL 连接失败 | {}", db_status.get("message"))
+        logger.error("数据库连接失败 | {}", db_status.get("message"))
         if settings.is_production:
             # 生产环境连不上数据库直接拒绝启动，避免「带病上线」
-            raise ConfigurationError("MySQL 连接失败，拒绝启动", detail=db_status)
+            raise ConfigurationError("数据库连接失败，拒绝启动", detail=db_status)
 
     # ---- 启动自检：ChromaDB 向量库 + 嵌入后端 ----
     # probe=True 会真实执行一次嵌入推理。这样做的价值是「把问题挡在启动阶段」：
