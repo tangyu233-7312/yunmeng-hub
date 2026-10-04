@@ -149,7 +149,7 @@ Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue
   scripts\smoke_test.py           → 184 / 0（需先启服务）
   scripts\ui_probe.py             → 147 项检查 0 失败
   scripts\benchmark.py            → 退出码 0（--from-db 只读回放也要能跑）
-  desktop\ 的 npm test            → 122 / 0（改了 desktop/ 才需要）
+  desktop\ 的 npm test            → 138 / 0（改了 desktop/ 才需要）
 注意：pytest 和 smoke_test 不要同时跑（会互相误报）。
 
 现在我要做的事是：<在这里写你的新需求 / 贴上问题与截图>
@@ -459,7 +459,7 @@ CDP 的做法（3.8 用这个抓到并验证了「发送按钮缺 data-act」这
 #  2) GET http://127.0.0.1:9333/json/list 拿 page 的 webSocketDebuggerUrl
 #  3) websockets.connect(...) 后发 Runtime.evaluate（returnByValue=True, awaitPromise=True）
 #  4) 每 ~120ms 采样 textContent.length，得到真实的文字增长曲线
-#     （3.8 实测：7.39 秒内出现 54 次增长，最终 132 字 —— 这就是"逐字出现"的证据）
+#     （3.8 实测：7.39 秒内出现 54 次增长，最终 122 字 —— 这就是"逐字出现"的证据）
 ```
 依赖：`websockets`（虚拟环境里已有）、`httpx`。
 
@@ -2885,7 +2885,7 @@ if any(key in target for key in ("中", "日", "韩")):
 |---|---|---|
 | `pytest -q` | **846 passed**（5:47） | +3：`will_call_model` 判据对齐 / 降思考的闸门 / `translating` 事件的位置与反向用例 |
 | `scripts/smoke_test.py` | **184 / 0** | +3：`translating` 事件存在 / 在 `done` 之前 / 带目标语言 |
-| `scripts/ui_probe.py` | **132 项检查，0 失败** | +3：状态条在消息区末尾 / 默认一行且点「详情」展开 / 「看作者原格式」有原文；另有 3 条**选择器**随 DOM 结构变化而修正（见上） |
+| `scripts/ui_probe.py` | **122 项检查，0 失败** | +3：状态条在消息区末尾 / 默认一行且点「详情」展开 / 「看作者原格式」有原文；另有 3 条**选择器**随 DOM 结构变化而修正（见上） |
 | `scripts/benchmark.py` | 退出码 0 | — |
 | `scripts/benchmark.py --from-db` | 退出码 0 | — |
 
@@ -2998,7 +2998,7 @@ support = params.effective_reasoning_support()   # ← 这个方法在 Generatio
 |---|---|
 | `pytest -q` | **849 passed**（+3：结论到达适配器的守门测试 / 总结降思考（双向）/ 逐轮用量落库） |
 | `scripts/smoke_test.py` | **184 / 0**（服务已重启；本轮无新增冒烟项） |
-| `scripts/ui_probe.py` | **132 项 0 失败**（前端本轮没动） |
+| `scripts/ui_probe.py` | **122 项 0 失败**（前端本轮没动） |
 | `scripts/benchmark.py` 与 `--from-db` | 退出码 0 |
 | `scripts/token_accuracy.py` | 退出码 0（当前样本 0，如实说明"第十六轮起才开始记录"） |
 
@@ -3983,7 +3983,7 @@ PowerShell 脚本**必须带 UTF-8 BOM**，否则 5.1 按 ANSI 读、中文全�
 | `smoke_test.py`（对**打包后端**） | 184 / 0 | **184 / 0** | ✅ 一致 |
 | `ui_probe.py`（对**打包后端**） | 147 / 0 | **147 / 0，控制台报错 0 条** | ✅ 一致 |
 | `benchmark.py` + `--from-db`（对**打包后端**） | 退出码 0 | **0 / 0** | ✅ 一致 |
-| `desktop/` Node 自测 | 53 → 99 → 115 | **122 passed / 0 failed**（末轮新增 7 条：向导按钮契约） | ✅ |
+| `desktop/` Node 自测 | 53 → 99 → 115 | **138 passed / 0 failed**（末轮新增 7 条：向导按钮契约） | ✅ |
 | 安装包验收 `verify_installer.ps1` | （本轮新增） | **15 项通过 / 0 失败**（其中第 5 步内部新增一道门槛：「随机生成按钮真的画出来了吗」） | ✅ |
 | `prepublish_check.py --name <真名>` | 0 BLOCKER | **0 BLOCKER** | ✅ |
 | 库内计数（真实账号名下） | 4 卡 / 3 书 / 4 会话 / 39 消息 | **完全一致**（users 1，测试账号已被探针清理） | ✅ |
@@ -4055,8 +4055,134 @@ if (typeof field.generate === 'function') { /* 建按钮 */ }
 | `desktop/src/main.js` | 字段契约 `generate:<字符串>` → `generatable:<布尔>`（并写清注释说明为什么） |
 | `desktop/src/setup.html` | 按钮判据改成 `field.generatable` |
 | `desktop/test/setup-ui.test.js` | **新增** 7 条静态契约断言 |
-| `desktop/scripts/verify_installer_cdp.py` | **新增**"按钮真的画出来了吗"断言（15 → 16 项） |
-| `README.md` / `desktop/README.md` / `docs/handoff*.md` | Node 自测数 115 → 122；本小节 |
+| `desktop/scripts/verify_installer_cdp.py` | **新增**"按钮真的画出来了吗"断言（CDP 步骤内部的门槛） |
+| `README.md` / `desktop/README.md` / `docs/handoff*.md` | Node 自测数 115 → 138；本小节 |
+
+### 31.16 首启向导的体验修复（用户装完后实测反馈）
+
+用户装完第一次用，撞到三件事。它们都**不是致命的**，但都在"第一次打开"那条路上 ——
+而那是**唯一**一次用户会看到向导的机会。三条一起修。
+
+| 用户遇到 | 原因 | 现在 |
+|---|---|---|
+| 口令留空就点保存 → 起了一次真后端 → 界面滚出 `1045 Access denied` + Traceback | 页面把整个表单直接交给主进程，主进程拿空口令去连库 | **本地先体检**：`setup-validate.js`（纯函数、10 条单测）在发请求前拦下必填为空/端口非法/密钥过短，就地高亮 **6 个字段**并报"先补上这几项"；**主进程根本没有被叫起来** |
+| 提示写着"点右边的「随机生成」"，按钮却不存在 | 上一节那条跨 IPC 契约 bug | 两个按钮都在；验收里有一条断言专门数它 |
+| 报错时把整段后端日志（含 `CancelledError` 噪音）拼在正文里 | `detail` 直接拼进状态区 | 正文只放结论（后端自己算的 `components.*.message`），**细节收进「查看详情」折叠块**；信息一点没少 |
+| `config\` 里多出 `.env.probe`（1.3KB，**含真实口令**） | "测试连接"的临时文件只在成功分支里删 | 改成 `finally` 里删 —— 成功、失败、抛异常三条路都会清掉 |
+
+**另外顺手做的两件事**：
+
+1. **`setup.html` 的 CSP 加了 `'self'`**。原来只有 `script-src 'unsafe-inline'`，
+   而本次新增的 `setup-validate.js` 是**外部脚本** —— 不加这一项它会被 CSP
+   **静默拦掉**（只有控制台报错，页面上表现为"填错了也不提示"）。这个坑我实测踩到。
+2. **发布前的"个人数据"体检**进了 `build_installer.ps1`：每次打包都扫一遍安装目录，
+   命中 `.env` / `.log` / 数据库文件 / 账号名 / 会话导出就**构建失败**。
+   两类良性命中（chromadb 库自带的文件名与建表脚本模板）按路径放过，并在输出里说明。
+   > 这是用户问出来的需求：**"我把安装包发给别人，别人会不会看到我的东西？"**
+   > 答案是"不会"（数据在 MySQL 与 `%APPDATA%`，都不在安装目录里），
+   > 但不该让他只凭这句话放心 —— 现在每次打包都自动验一遍，而且我**故意放了个假 `.env`
+   > 与一个假的 `sessions-export.json` 进去**，确认它真的会拦住（不是"看起来在查"）。
+
+**新增的验收脚本 `desktop/scripts/verify_wizard_dev.py`（18 条断言，实测全过）**：
+
+★ 它解决了一个**流程**问题：以前验向导必须"打包 → 装一遍"（两分钟起），
+于是每改一次向导都要重新打包。其实向导在**开发态**也能跑 ——
+用 `HNE_DESKTOP_PROFILE` 指一个临时 profile 即可，**不动用户真实的 `%APPDATA%\云梦枢`**，
+也不必打包。所以现在的分工是：
+
+| 场景 | 用什么 | 代价 |
+|---|---|---|
+| 改向导的交互逻辑 | `verify_wizard_dev.py`（开发态 + 临时 profile） | 十几秒 |
+| 验"装出来的那一份" | `verify_installer.ps1`（要打包） | 几分钟 |
+
+它验的 8 组：进设置页 / 两个「随机生成」按钮 / **必填没填就地拦住且没起后端** /
+点按钮真的生成 / 测试连接通过 / **测试连接不落盘且探测文件被删** /
+报错细节默认折叠且点开能看 / 保存后进控制台。
+
+> ★ 写这个脚本时踩到一个坑：**应用有单实例锁**，用户那边开着应用时，
+> 我起的实例会立刻退出 —— 表现为"等不到 `DevToolsActivePort`"。
+> 另外 Electron **不会**自己开调试端口，必须显式传 `--remote-debugging-port=0`
+> （0 = 让系统挑，挑中的端口写在 `<userData>\DevToolsActivePort` 第一行）。
+> 两条都写进脚本注释了。
+
+#### ★ 本轮我第三次"批量改数字改错"（值得单独记）
+
+更新文档里的自测条数（122 → 138）时，我用"把文件里的 `122` 全换成 `138`"这种**盲替换**，
+结果误伤了**三处无关的历史数字**：
+`最终 122 字`（一条流式测试的字数）、`character_cards.py:132`（一个**代码行号**）、
+`ui_probe.py 122 项`（某一轮探针的项数）。三处都被我改坏，又逐一改回。
+
+> 教训：**"全文件替换"对文档是危险的**，因为文档里同一个数字会以完全不同的含义出现
+> （行号、字数、用例数、端口……）。要改就该**按行定位**，或者至少**改完把 diff 逐行读一遍**。
+> 这个项目里同类教训已经攒了三条了（这条、验收脚本替用户点按钮、改了默认值却只测旧默认值）。
+
+#### 本轮改动的文件（向导体验）
+
+| 文件 | 改动 |
+|---|---|
+| `desktop/src/setup-validate.js` | **新增**：发请求前的本地体检（纯函数，浏览器与 Node 共用） |
+| `desktop/test/setup-validate.test.js` | **新增** 10 条（含"口令留空必须就地拦住"的回归） |
+| `desktop/src/setup.html` | 接入本地体检；状态区改成"结论 + 可折叠详情"；CSP 加 `'self'`；脚注说明 |
+| `desktop/src/main.js` | `.env.probe` 在 `finally` 里删；报错结论取后端自己的 `components.*.message` |
+| `desktop/scripts/verify_wizard_dev.py` | **新增**：开发态向导验收（18 条断言） |
+| `desktop/scripts/build_installer.ps1` | **新增**发布前的"个人数据"体检 |
+| `README.md` / `desktop/README.md` / `docs/handoff*.md` | Node 自测数 122 → 138；本节 |
+
+### 31.17 密码框的「小眼睛」与「复制」（用户提的需求）
+
+**用户原话**：给那些隐藏的输入加一个小眼睛，点了能把内容显示出来 —— **特别是那两个随机生成的**。
+
+他说的场景很具体：签名密钥是**随机生成的长串**，生成完却蒙在圆点后面，
+用户既没法核对、也没法抄进密码管理器，只能盲信。于是做了两件事：
+
+| 加的东西 | 行为 |
+|---|---|
+| **👁 小眼睛**（3 个密码字段各一个） | 点一下 → 显示明文（图标变 🙈，`aria-pressed=true`）；再点 → 回到圆点。**默认仍是隐藏**（旁边站个人就看到了），选择权交给用户 |
+| **复制**（只给"要生成/抄走"的字段） | 剪贴板 API 优先，被拒就退到 `execCommand('copy')`；空白时明确提示而不是假装成功 |
+
+**顺手做的一条**：点「随机生成」之后**自动把该字段显示出来** —— 用户刚生成完，第一反应就是
+"生成了什么、要不要存起来"，这时还蒙着圆点很反直觉。
+
+#### ★★ 这里踩了一个"语义反了"的 bug（排查了四轮，值得单独记）
+
+**现象**：眼睛按钮点了没反应。而**图标会变、输入框纹丝不动** —— 这个组合极其误导。
+
+**为什么难查**：我连续四轮都在往"引用失效"方向查（闭包里的 `input` 是不是旧元素、
+`inputs[key]` 是不是被覆盖、元素有没有被重建），并为此做了：
+`getEventListeners` 查监听器数量、MutationObserver 看 DOM 重建、
+`Scope`/源码比对、把 `setMasked` 改成"按 id 现查 DOM"……
+**每次"修完"现象都不变**，因为**根因根本不是引用**。
+
+**真相**：`input.type` 用的是"**是否隐藏**"（`password`=隐藏），
+而用户想的是"**是否显示**"。第一版函数叫 `setMasked(key, masked)`，
+于是两处调用各按自己的理解传值：
+
+```js
+// 点击时（写代码的人想的是"当前隐藏 → 我要显示"，却传了 masked 的值）
+setMasked(key, input.type === 'password');   // 默认就隐藏 → 传 true → 又设成隐藏
+```
+
+默认状态是隐藏，第一下点下去等于**再隐藏一次** —— 表现就是"点了没反应"。
+图标那半边是对的（它按同一个 `masked` 渲染），所以"图标变、输入框不变"。
+
+**修法（两层）**：
+
+1. **参数改成用户视角**：`setVisible(key, visible)` —— `setVisible(key, true)` 就是"让用户看见"。
+   命名念得出来，就不会在脑子里翻一层；
+2. **点击时读 DOM 里的真实状态**：`const nowHidden = live.type === 'password'` → `setVisible(key, nowHidden)`。
+
+> **本轮最该记住的一条**：**"图标在变、目标不变"这种组合，第一嫌疑是语义反了，
+> 不是引用失效。** 我因为先入为主（刚改过 `inputs` 的存放方式）而四次都往错误方向查。
+> 另一个抓手是那句临时诊断（把点击时的 `key/current/masked` 记在 `dataset` 上）——
+> **一行诊断胜过四轮猜测**，早该在第二轮就加上。
+>
+> 配套加的断言：`desktop/test/setup-ui.test.js` 里一条"**参数必须按用户视角命名**"
+> （断言函数签名是 `setVisible(key, visible)`、且全文不许再出现 `setMasked`），
+> 加上开发态验收里的 9 条真页面断言（默认隐藏 / 点开 / 图标 / aria / 再点回隐藏 /
+> 三个眼睛互不干扰 / 复制按钮存在且不抛错）。
+>
+> ★ 顺带说明一个**好现象**：这次是**静态断言先红、我才发现改了名没同步断言** ——
+> 说明上一轮加的那套"把 setup.html 和 main.js 绑在一起"的断言真的在起作用。
 
 
 

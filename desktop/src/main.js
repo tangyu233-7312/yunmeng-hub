@@ -529,10 +529,13 @@ function selfCheckWithEnv(envFile, label) {
           .filter(([, info]) => (info || {}).status !== 'ok')
           .map(([name, info]) => `${name}=${(info || {}).status}`);
         if (bad.length) {
+          const summary = summarizeComponentError(components);
           resolve({
             ok: false,
-            message: '后端起来了，但有的组件不可用',
-            detail: `${bad.join('\n')}\n\n后端原话：\n${tailLines(output, 8)}`,
+            message: summary ? `有的组件不可用 —— ${summary.split('\n')[0]}` : '后端起来了，但有的组件不可用',
+            // 第一行是后端自己的结论（比如 MySQL 拒绝登录），后面才是日志尾部。
+            // 页面上这段默认折叠在「查看详情」里，所以这里可以放心留全。
+            detail: [summary, '', '后端日志末尾：', tailLines(output, 8)].filter(Boolean).join('\n'),
           });
           return;
         }
@@ -582,6 +585,27 @@ function selfCheckWithEnv(envFile, label) {
       });
     }
   });
+}
+
+/**
+ * 从组件状态里挑出**最该给用户看**的那一句，再附上日志尾部。
+ *
+ * ★ 为什么要挑：原来的 detail 是"日志里最后 14 行像错误的行"，
+ *   而用户填错口令时会连续刷出十几行 Traceback（SQLAlchemy 的
+ *   `1045 Access denied ... using password: YES`、Background on this error、
+ *   asyncio.CancelledError …）。结论被埋在中间，用户根本抓不到重点。
+ *   现在把后端**已经算好的结论**（`components.database.message`）提到最前面 ——
+ *   那本来就是它自己的判断，比我去猜日志可靠得多。
+ */
+function summarizeComponentError(components) {
+  const bad = Object.entries(components || {})
+    .filter(([, info]) => (info || {}).status !== 'ok');
+  if (!bad.length) return '';
+  const lines = bad.map(([name, info]) => {
+    const why = String((info || {}).message || '').split('\n')[0].trim();
+    return why ? `${name}：${why}` : `${name}：状态 ${(info || {}).status}`;
+  });
+  return lines.join('\n');
 }
 
 /** 取输出里最后几行"像错误"的内容（日志很长，直接全贴给用户没人看得完）。 */
@@ -1210,6 +1234,19 @@ function registerIpc() {
       return { ...result, errors: checked.errors };
     } catch (error) {
       return { ok: false, message: '测试时出错', detail: String(error && error.message) };
+    } finally {
+      // ★ 探测文件必须在**所有**路径上删掉。原来的清理写在成功的分支里，
+      //   于是"测试失败"或"抛异常"都会把它留在用户目录里 ——
+      //   用户的 `config\` 里就多出一个 `1.3KB 的 .env.probe`（实测看到过），
+      //   里面是**真实的数据库口令**。留着既是困惑也是多余的一份凭据。
+      try {
+        if (fs.existsSync(probeFile)) {
+          fs.unlinkSync(probeFile);
+          logLine('[info] 已清理测试用的临时配置文件 .env.probe');
+        }
+      } catch (error) {
+        logLine(`[warn] 清理 ${probeFile} 失败：${error.message}`);
+      }
     }
   });
 

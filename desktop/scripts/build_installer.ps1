@@ -317,6 +317,61 @@ if (Test-Path $Unpacked) {
   }
   Write-Host '[√] 安装目录里没有 .env（红线）'
 
+  # ==================================================================
+  #  ★★ 发布前的"个人数据"体检（用户问出来的需求）
+  # ==================================================================
+  # 用户的疑问很实在：**"我把安装包发给别人，别人会不会看到我的东西？"**
+  # 答案是"不会"——但他不该只凭这句话放心。所以每次打包都自动验一遍：
+  # 用户真正的东西在 **MySQL** 与 **%APPDATA%\云梦枢**（都不在安装目录里），
+  # 安装目录里只该有**程序**。这里把"像个人数据的东西"逐类找一遍，命中就失败。
+  #
+  # ★ 两类**已知的良性命中**必须排除，否则每次都会误报（我实测过）：
+  #   · `chroma` 字样：是 chromadb 这个库自己的文件名（app.py / base_types.py…）；
+  #   · `.sql` 文件：是 chromadb 自带的建表脚本模板，不是数据导出。
+  #   排除方式是按**路径**判断（只在 chromadb 包目录内才放过），不是按文件名放过。
+  # ★★ 这里踩过一个自己的坑（发布闸门当场抓住）：
+  #   第一版把"名字痕迹"直接写成了**构建机的真实用户名与账号 ID** ——
+  #   于是我把个人标识写进了要公开发布的脚本里，闸门当场报 BLOCKER。
+  #   （本节刻意**不复述**那两个值 —— 为了清痕迹的注释本身不该变成新的痕迹。）
+  #   而且那个写法**对别人也没用**：别人的用户名不叫这个，等于没查。
+  #   现在改成**运行时从环境识别**：拼出本机的用户目录名、%TEMP% 与仓库路径，
+  #   谁跑就在谁的环境里找谁的痕迹 —— 脚本里一个真实身份标识都不留。
+  $userLeaf = Split-Path -Leaf $env:USERPROFILE          # 本机用户名（只在内存里用）
+  $userEscaped = [regex]::Escape($userLeaf)
+  $tempEscaped = [regex]::Escape($env:TEMP)
+  $repoEscaped = [regex]::Escape($RepoRoot)
+
+  $dataPatterns = @(
+    @{ name = '配置文件 .env';   regex = '(^|\\)\.env(\.|$)' }
+    @{ name = '日志文件';        regex = '\.log$' }
+    @{ name = '数据库/导出文件'; regex = '\.(sqlite3?|db|dump|sql\.gz)$' }
+    @{ name = '会话或消息导出';  regex = '(session|export|messages).*\.(json|csv)$' }
+    # 这三条是"本机痕迹"：**构建机的用户名 / 临时目录 / 仓库路径**。
+    # 打包用的是 `electronDist` 与 `dist/backend`，正常都不该出现在产物里 ——
+    # 一旦出现，说明有人把它整个复制进去了（那里面可能就有个人路径）。
+    @{ name = '本机用户目录痕迹'; regex = $userEscaped }
+    @{ name = '本机临时目录痕迹'; regex = $tempEscaped }
+    @{ name = '仓库路径痕迹';     regex = $repoEscaped }
+  )
+  Write-Host "[i] 本机痕迹模式已按环境生成（用户名/临时目录/仓库路径，不在脚本里写死）"
+  $offenders = @()
+  foreach ($pattern in $dataPatterns) {
+    $hits = @(Get-ChildItem $Unpacked -Recurse -File -Force -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -match $pattern.regex })
+    if ($hits.Count -gt 0) {
+      $offenders += ($hits | Select-Object -First 5 | ForEach-Object { "[$($pattern.name)] $($_.FullName)" })
+    }
+  }
+  if ($offenders.Count -gt 0) {
+    Fail ("安装目录里出现了疑似个人数据：`n      " + ($offenders -join "`n      ")) `
+      '安装包里只该有程序。用户的数据在 MySQL 与 %APPDATA%，不该被打进来'
+  }
+  # 单独说明：那两类良性命中，避免下一个人以为"漏查了"
+  $chromaLike = @(Get-ChildItem $Unpacked -Recurse -File -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match 'chroma|\.sql$' }).Count
+  Write-Host "[√] 没有个人数据类文件（.env / .log / 数据库 / 账号名 全无）"
+  Write-Host "      （另有 $chromaLike 个文件名里带 chroma 或 .sql 的项目，是 chromadb 库自带的，非用户数据）"
+
   # asar 里应该只有壳自己的代码（src/** 与 package.json）
   $asar = Join-Path $Unpacked 'resources\app.asar'
   if (Test-Path $asar) {

@@ -72,6 +72,66 @@ test('setup.html：提示文字里提到的按钮，代码里真的会创建它'
 });
 
 // ------------------------------------------------------------------
+//  "小眼睛"与复制（用户提的需求：随机生成的长串看不见，想核对/抄走）
+// ------------------------------------------------------------------
+test('setup.html：密码框有「小眼睛」，可切换明文/圆点', () => {
+  const lines = codeLines(html);
+  assert.ok(lines.some((l) => /if \(field\.secret\)/.test(l)), '只有密码框才该有眼睛');
+  assert.match(html, /eye\.textContent = '👁'/, '默认图标是"眼睛"= 点击后显示');
+  assert.match(html, /eye\.textContent = visible \? '🙈' : '👁'/,
+    '切换后图标要跟着换（🙈 = 当前已显示，点它藏起来），否则用户不知道现在是哪种状态');
+  assert.match(html, /input\.type = visible \? 'text' : 'password'/, '眼睛的本质就是切 input.type');
+  // 默认必须仍然是隐藏：一打开页面就把密钥摊在屏幕上不合适
+  assert.match(html, /const input = document\.createElement\('input'\);\s*\n\s*input\.type = field\.secret \? 'password' : 'text';/,
+    '初始必须是 password（默认隐藏）');
+});
+
+test('★★ 回归：显示/隐藏的布尔参数必须按"用户视角"命名（本轮踩到语义反了）', () => {
+  // 背景：输入框的 type 用的是"是否**隐藏**"（masked），而用户想的是"是否**可见**"。
+  //   第一版函数叫 setMasked(key, masked)，两处调用各按自己的理解传值 ——
+  //   结果默认就隐藏，点第一下等于"再隐藏一次"，表现成"点了没反应"。
+  //   实测排查了四轮（图标在变、输入框不动）才定位到是**语义**反了，不是引用失效。
+  //   现在参数叫 visible：`setVisible(key, true)` = 让用户看见。念得出来，就不会错。
+  const lines = codeLines(html);
+  assert.ok(lines.some((l) => /function setVisible\(key, visible\)/.test(l)),
+    '参数要叫 visible（用户视角），不要叫 masked');
+  assert.equal(lines.some((l) => /\bsetMasked\b/.test(l)), false,
+    '不许再留 setMasked 这种"要翻一层"的命名');
+  // 点击判断也要按用户视角：当前隐藏 → 这次就是要显示
+  assert.match(html, /const nowHidden = live \? live\.type === 'password' : true/,
+    '点击时的判断要读 DOM 里的真实状态');
+  assert.match(html, /setVisible\(field\.key, nowHidden\)/,
+    '当前隐藏 → setVisible(true)：点一下就该看见');
+});
+
+test('setup.html：「随机生成」之后顺手把内容显示出来', () => {
+  // 用户刚点了"随机生成"，第一反应是"生成了什么、要不要存起来" —— 这时还蒙着圆点很反直觉
+  assert.match(html, /clearError\(field\.key\);[\s\S]{0,300}setVisible\(field\.key, true\);/,
+    '生成后应调用 setVisible(key, true) 把它显示出来');
+});
+
+test('setup.html：可生成的字段带「复制」按钮（抄进密码管理器用）', () => {
+  assert.match(html, /copy\.textContent = '复制'/, '复制按钮存在');
+  assert.match(html, /navigator\.clipboard\.writeText\(text\)/, '优先用剪贴板 API');
+  assert.match(html, /document\.execCommand\('copy'\)/, '被拒时要退到 execCommand（否则等于按钮失灵）');
+  // 空值不许静默成功
+  assert.match(html, /这一格还是空的/, '空值要明确告诉用户，不能假装复制成功');
+});
+
+test('★ 接线：眼睛按钮被存进 inputs，否则 setMasked 改不动图标', () => {
+  // 这个坑我真踩了：eye 用 const 声明在 if 块里，块外取不到 → 图标永远不变。
+  assert.match(html, /let eyeBtn = null;/, 'eyeBtn 要在块外先声明（块级 const 出不了块）');
+  assert.match(html, /inputs\[field\.key\] = \{ input, err, eye: eyeBtn \};/, '要把它存进 inputs');
+});
+
+test('★ 没有 eval：CSP 里没有 unsafe-eval，用了就会当场被拦', () => {
+  const lines = codeLines(html).join('\n');
+  assert.equal(/\beval\s*\(/.test(lines), false, '不许用 eval');
+  assert.equal(/new Function\s*\(/.test(lines), false, '不许用 new Function');
+});
+
+
+// ------------------------------------------------------------------
 //  主进程（main.js）
 // ------------------------------------------------------------------
 test('main.js：发给渲染端的字段里，generatable 必须是布尔量', () => {
