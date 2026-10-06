@@ -109,10 +109,15 @@ function emitLog(entry) {
  * @param {object} [opts.query]  查询参数（值为 undefined/null/'' 的会被忽略）
  * @param {object} [opts.body]   JSON 请求体
  * @param {FormData} [opts.form] 表单请求体（文件上传用，此时不能手动设 Content-Type）
+ * @param {string} [opts.token]  覆盖本次请求用的令牌。
+ *   ★ 为什么需要它：自动化验收要能**故意用一个坏令牌**，才能验证
+ *     「401 会被诊断收集器记下来」这类行为。没有它，验收就只能拿真令牌，
+ *     永远造不出 401（第一版就因此写了一条永远测不到东西的断言）。
+ *     常规调用方**不要**传它 —— 默认就用当前登录态。
  * @returns {Promise<{code:string,message:string,data:any}>} 后端完整响应壳
  */
 export async function request(method, path, opts = {}) {
-  const { query, body, form, timeoutMs } = opts;
+  const { query, body, form, timeoutMs, token } = opts;
 
   const url = new URL(API_PREFIX + path, window.location.origin);
   if (query) {
@@ -122,7 +127,8 @@ export async function request(method, path, opts = {}) {
   }
 
   const headers = {};
-  if (session.token) headers['Authorization'] = `Bearer ${session.token}`;
+  const bearer = token !== undefined ? token : session.token;
+  if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   const init = { method, headers };

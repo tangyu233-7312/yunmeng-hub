@@ -490,6 +490,38 @@ body.log-open .topbar {
 }
 .reqlog-head .muted { color: #7c8899; font-size: 12px; flex: 1; }
 .reqlog-list { overflow-y: auto; padding: 6px; font-family: var(--mono); font-size: 12px; }
+
+/* 请求日志的隐私提醒。
+   ★ 为什么必须显式写这块：展开的行里是**原始请求/响应体**，
+     含对话原文与角色卡内容。而"截图发给别人"是极自然的动作，
+     所以提醒要显眼但不刺眼（左侧一条竖线 + 小一号字）。 */
+.reqlog-note {
+  padding: 8px 10px; margin: 0 6px 6px;
+  border-left: 3px solid var(--warn, #e5b567);
+  background: rgba(229, 181, 103, .09);
+  color: #b9c3cf; font-size: 11.5px; line-height: 1.65;
+}
+.reqlog-note b { color: #e5b567; }
+
+/* ==================== 「关于」弹窗 ==================== */
+.about-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.about-brand img { border-radius: 8px; }
+.about-name { font-size: 15px; font-weight: 600; }
+.about-rows { display: flex; flex-direction: column; gap: 2px; }
+.about-row {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 7px 0; border-top: 1px solid var(--border, rgba(127, 127, 127, .18));
+}
+.about-row:first-child { border-top: none; }
+.about-k { flex: 0 0 92px; color: var(--text-dim); font-size: 13px; }
+.about-v { flex: 1; min-width: 0; font-size: 13px; word-break: break-all; }
+/* 路径用等宽字体 + 可点击复制：用户最常做的一件事就是"复制路径去打开目录" */
+.about-path {
+  font-family: var(--mono); font-size: 12px;
+  background: rgba(127, 127, 127, .14); border-radius: 4px; padding: 2px 6px;
+  cursor: pointer;
+}
+.about-path:hover { background: rgba(127, 127, 127, .24); }
 .rl {
   border-radius: var(--radius-sm); padding: 6px 8px; margin-bottom: 4px;
   background: #222b36; cursor: pointer;

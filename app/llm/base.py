@@ -115,11 +115,14 @@ class BaseLLMProvider(ABC):
         else:
             self.default_params = GenerationParams.from_dict(default_params)
 
-        # ★ 「思考强度是否真的生效」的探测结论（第十六轮）：由 `create_provider_from_config`
-        #   从 ProviderConfig 带过来。为什么它必须跟着适配器走：翻译中间件与剧情总结都要
-        #   拿它决定"能不能把思考降到最小"（探测结论为 None/False 时发这个参数会换来 400）。
-        #   默认 None = 尚未探测/结论已过期 ⇒ 调用侧一律保守处理。
-        self.reasoning_support: bool | None = None
+        # ★ 「本适配器是否参与思考强度适配」的**静态声明**（第二十七轮改）。
+        #   以前这里放的是"实测该模型是否支持思考强度"的探测结论，但那个探测已被删除
+        #   （用思考 token 数判定不可靠，且给过错误结论 —— 见 docs/dev-notes/handoff.md §27）。
+        #   现在改为：适配器自己在类上声明它能不能翻译这个参数（默认 True），
+        #   能不能被服务端接受则由**请求时的 400 自动退回**来兜底
+        #   （见 openai_compatible._post_with_effort_fallback）。
+        #   调用侧（翻译中间件 / 剧情总结）据此决定要不要请求降思考。
+        self.supports_reasoning_effort: bool = True
 
         # httpx.Client 内部维护连接池，复用连接能显著降低延迟。
         # 构造它不会发起任何网络请求，所以在这里创建是安全的。

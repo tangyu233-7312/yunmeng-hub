@@ -53,7 +53,7 @@ from typing import Any
 
 from loguru import logger
 from sqlalchemy import inspect, text
-from sqlalchemy.schema import CreateColumn, CreateIndex, CreateTable
+from sqlalchemy.schema import CreateColumn, CreateIndex
 
 from app.db.base import Base
 

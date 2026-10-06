@@ -3,11 +3,11 @@
 > **云梦枢（YunMeng Hub）**——一个"异构大模型交互式叙事引擎"。
 > 名字取意：**云**（云端 AI）+ **梦**（沉浸式叙事）+ **枢**（系统中枢，谐音"书"，指世界书与故事线）。
 >
-> 本科毕业设计项目。本地部署、单机可跑：FastAPI + MySQL + ChromaDB 后端，
+> 本科毕业设计项目。本地部署、单机可跑：FastAPI + **SQLite（默认）/ MySQL（可选）** + ChromaDB 后端，
 > 一个**零构建**的浏览器控制台（原生 ES Module，不装 npm、不用框架）。
 >
 > 本文是"给人看的总览"：它做了什么、有哪些功能、用了什么技术、怎么验证。
-> 逐轮的开发细节见 `docs/handoff.md`，论文素材见 `docs/paper-materials.md`。
+> 逐轮的开发细节见本机的 `docs/dev-notes/handoff.md`（不在仓库里），论文素材见 `docs/paper-materials.md`。
 
 ---
 
@@ -97,7 +97,7 @@ CSS 过白名单清洗（挡 `@import` / `expression()` / `javascript:` / `</sty
 | 语言/环境 | **Python 3.13.12**（Windows x64）、MySQL **8.0.28** | 依赖全部锁精确版本 |
 | Web 框架 | **FastAPI 0.141.1** + **uvicorn 0.53.0** | 全异步、自动 OpenAPI 文档（`/docs`） |
 | 数据校验/配置 | **pydantic 2 / pydantic-settings 2.15** | `.env` + 类型校验；统一响应壳 `{code,message,data}` |
-| 持久层 | **SQLAlchemy 2.0.54** + **PyMySQL 1.2.3** + **cryptography 50** | ORM + 连接池；8 张表；迁移走 `scripts/migrate_db.py`（只加不删） |
+| 持久层 | **SQLAlchemy 2.0.54**（SQLite 默认 / MySQL 可选）+ **PyMySQL 1.2.3** + **cryptography 50** | ORM + 连接池；8 张表；迁移走 `scripts/migrate_db.py`（只加不删） |
 | 向量库 | **ChromaDB 1.5.9**（PersistentClient） | 余弦距离；嵌入用 **ONNX 本地模型 all-MiniLM-L6-v2（384 维）**，也可切到 API 嵌入后端 |
 | LLM 调用 | **httpx 0.28.1**（自写重试/退避） | 两个协议适配器；SSE 流式；failover |
 | 认证 | **PyJWT 2.14** + **bcrypt 5.0** | 访问/刷新双令牌；密码哈希直接调用 bcrypt（不用已停维护的 passlib） |
@@ -107,7 +107,7 @@ CSS 过白名单清洗（挡 `@import` / `expression()` / `javascript:` / `</sty
 
 > ★ 依赖清单在 2026-10-03 做过一次**实证清理**：删掉 `tenacity` / `tiktoken` / `orjson` / `pytest-asyncio`
 > —— 用 AST 解析全仓库 import 证明它们**零引用**（重试是自己手写的；token 估算刻意不用 tiktoken）。
-> 细节见 `docs/handoff.md` §30.5。
+> 细节见本机的 `docs/dev-notes/handoff.md` §30.5。
 
 ### 4.1 目录结构（节选）
 ```
@@ -183,7 +183,7 @@ API 层（鉴权 → 校验 → 组装）
 | 没做 | 原因 |
 |---|---|
 | Electron 打包 | 用户明确"先别急"；图标素材已按打包需要准备好（`assets/icon/logo-1024.png`） |
-| "PNG 导入即自动当立绘" | 见 `docs/handoff.md` §29.2：PNG 里没有可靠的立绘语义，宁可不做也不假装 |
+| "PNG 导入即自动当立绘" | 见本机的 `docs/dev-notes/handoff.md` §29.2：PNG 里没有可靠的立绘语义，宁可不做也不假装 |
 | TTS / 生图 / 图片描述 / 快捷回复 | SillyTavern 的这些扩展**必须执行第三方 JS 或接外部服务**，与本项目"插件不执行代码"的红线冲突；界面上如实列出并说明 |
 | 群组聊天 | 已从计划中删除（定位是"与人设对话"，不是多人群聊） |
 | 云端部署 / 多租户 | 定位是本地单机毕设系统；但已做**用户隔离**（数据按 user_id 隔离） |
@@ -195,7 +195,8 @@ API 层（鉴权 → 校验 → 组装）
 ```bash
 # 1) 依赖
 python -m pip install -r requirements.txt
-# 2) 配置：复制 .env.example 为 .env，填 MySQL 连接
+# 2) 配置：复制 .env.example 为 .env（**默认 SQLite，什么都不用填**；
+#    想用 MySQL 就设 HNE_DB_BACKEND=mysql 并填 HNE_MYSQL_* ）
 # 3) 建表
 python scripts/init_db.py
 # 4) 起服务（代码改动用重启；只改前端刷新页面即可）
@@ -215,7 +216,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 |---|---|
 | `README.md` | 总览 + 每个接口与界面的**实现细节**（最详细的一份） |
 | **`docs/overview.md`（本文）** | 一页看懂：做了什么、有哪些功能、用了什么技术 |
-| `docs/handoff.md` | 逐轮开发日志：每轮改了什么、为什么、验证数字 |
-| `docs/handoff-quick.md` | 交接速查：当前状态、坑、命令 |
+| `docs/dev-notes/handoff.md`（本机，不公开） | 逐轮开发日志：每轮改了什么、为什么、验证数字 |
+| `docs/dev-notes/handoff-quick.md`（本机，不公开） | 交接速查：当前状态、坑、命令 |
 | `docs/paper-materials.md` | 论文素材：可引用的数据、踩坑→根因→修复、设计原则 |
 | `docs/pitfalls.md` | 踩坑全集（问题 / 根因 / 修复 / 为什么难发现） |

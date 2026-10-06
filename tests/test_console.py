@@ -197,6 +197,11 @@ def test_console_module_urls_are_versioned(client: TestClient) -> None:
         # 插件页（第五步新增）。★ 加前端模块时这里也要跟着加 ——
         # 这条断言是"importmap 与模块集合必须逐一对上"的守卫，不是可选项。
         "hne/plugins",
+        # 第二十七轮新增：诊断收集（「关于 → 复制诊断信息」用）与「关于」弹窗。
+        # ★ 加进来时这条断言果然先红了 —— 它拦住了"新增模块忘了登记 importmap"
+        #   （那会让页面白屏），说明这条守卫生效。
+        "hne/diagnostics",
+        "hne/about",
     }
     versions = set()
     for bare, url in imports.items():

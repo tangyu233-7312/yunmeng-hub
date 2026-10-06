@@ -130,10 +130,6 @@ def field_map(schema: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     return {str(f.get("name")): f for f in schema["fields"]}
 
 
-def get_field(schema: dict[str, Any] | None, name: str) -> dict[str, Any] | None:
-    return field_map(schema).get(name)
-
-
 # ==================================================================
 #  解析 / 校验
 # ==================================================================
@@ -464,28 +460,6 @@ _TYPE_HINT = {
     "tuples": "对象数组",
     "flags": "键值对象",
 }
-
-
-def example_json(schema: dict[str, Any]) -> dict[str, Any]:
-    """按 schema 造一份示例状态（提示词里的 ```` ```json ```` 那段 + 界面骨架）。"""
-    out: dict[str, Any] = {}
-    for field in schema.get("fields") or []:
-        name = field["name"]
-        ftype = field.get("type", "text")
-        if ftype == "meter":
-            out[name] = field.get("initial_current", field.get("initial", 100))
-            out[field.get("max_field") or "max"] = field.get("initial_max", 100)
-        elif ftype == "number":
-            out[name] = field.get("initial", 0)
-        elif ftype == "list":
-            out[name] = []
-        elif ftype == "tuples":
-            out[name] = []
-        elif ftype == "flags":
-            out[name] = {}
-        else:
-            out[name] = ""
-    return out
 
 
 def describe_fields(schema: dict[str, Any]) -> str:

@@ -313,10 +313,12 @@ def test_get_missing_provider(client: TestClient, user: dict) -> None:
 # ==================================================================
 #  四、响应里的派生信息
 # ==================================================================
-def test_response_includes_budget_warnings_and_probe_state(
-    client: TestClient, user: dict
-) -> None:
-    """前端拿到的应当是可以直接渲染的完整信息。"""
+def test_response_includes_budget_and_hints(client: TestClient, user: dict) -> None:
+    """前端拿到的应当是可以直接渲染的完整信息。
+
+    ★ 第二十七轮：`reasoning_effort_support`（探测结论）字段已随探测功能一起删除；
+      hints 的文案也从"尚未验证，建议去检测"改成了"会被翻译发送、不支持则自动退回"。
+    """
     data = create(client, user)
 
     budget = data["budget"]
@@ -324,14 +326,16 @@ def test_response_includes_budget_warnings_and_probe_state(
     assert budget["max_output_tokens"] == 4096
     assert "包含思考" in budget["note"]
 
-    # 思考强度设为 high 但从未探测过 -> 应该给灰色提示而不是黄色警告
+    # 思考强度设为 high -> 给灰色**提示**（说明适配器怎么处理），不是黄色警告
     assert data["hints"]
-    assert any("尚未验证" in hint for hint in data["hints"])
+    assert any("自动去掉" in hint for hint in data["hints"]), data["hints"]
+    assert not any("尚未验证" in hint for hint in data["hints"]), (
+        "不该再让用户去做那个已被删除的「检测」"
+    )
 
-    support = data["reasoning_effort_support"]
-    assert support["probed"] is False
-    assert support["supported"] is None
-    assert support["stale"] is False
+    # 探测结论字段必须已经不存在（删干净了，别留个空壳误导前端）
+    assert "reasoning_effort_support" not in data, data.keys()
+
 
 
 # ==================================================================

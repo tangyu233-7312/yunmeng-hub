@@ -154,7 +154,7 @@ function normalizeBaseUrl(raw) {
     rows.push(`<div><b>模型回复</b> ${esc(d.sample_reply)}</div>`);
   }
 
-  const fixHint = resolveFixHint(d);
+  const fixHint = resolveFixHint(d, res);
   return `
     <div class="alert ${res.ok ? 'ok' : 'danger'}">
       ${res.ok ? '✓ 连接正常' : '✗ 连接失败'}（${res.latency_ms} ms）
@@ -165,8 +165,19 @@ function normalizeBaseUrl(raw) {
 }
 
 /** 按错误类型给出"下一步该改什么"，而不是让用户对着英文报错发呆。 */
-function resolveFixHint(d) {
-  const status = Number(d.http_status || 0);
+function resolveFixHint(d, res) {
+  const failed = !(res && res.ok);
+  // ★★ 只有在**测试失败**时才给排查建议。
+  //
+  //   为什么必须显式判 `ok`（实测抓到的 bug）：这个函数原来只看 `http_status`，
+  //   而**成功的**测试结果里根本没有这个字段（它不是错误详情的一部分）。
+  //   于是 `Number(undefined || 0)` 得到 0，命中下面那条"网络层没通"分支 ——
+  //   界面就出现了自相矛盾的一幕：上面绿条写着「✓ 连接正常（1068 ms）」、
+  //   下面紧跟着一条红色警告「网络层没通」。
+  //   ★ 教训：**"字段缺失"和"字段等于默认值"是两件事**，别用 `||` 把它们揉成一个。
+  if (!failed) return '';
+
+  const status = Number(d.http_status ?? 0);
   const text = `${d.upstream_message || ''} ${d.raw_body_preview || ''}`;
   if (status === 404 || /not\s*found|不存在|unsupported\s*model/i.test(text)) {
     return `排查顺序：① 先点「模型」按钮拉一次可用模型列表 —— 拉不到说明 <b>Base URL</b> 不对；
@@ -179,7 +190,10 @@ function resolveFixHint(d) {
   if (status === 400) {
     return '上游认为请求参数不合法：最常见的是「上下文窗口」填得比模型实际支持的还大，或模型名不属于该端点。';
   }
-  if (status === 0 || /connect|dns|timeout/i.test(String(d.exception_type || '') + text)) {
+  // ★ 只有**确实没拿到 HTTP 状态**（网络层异常）才说"网络层没通"。
+  //   注意：这里不再用 `|| /connect|dns|timeout/` 去猜文本 ——
+  //   成功时的 message 也可能含这些词，靠文本猜是上一版误报的根源之一。
+  if (d.exception_type || status === 0) {
     return '网络层没通：检查 Base URL 域名是否写错、是否需要代理、本机能否访问该地址。';
   }
   return '';
@@ -201,7 +215,7 @@ function calcBudget(contextWindow, maxTokens) {
  * 本视图的监听器与刷新状态。
  *
  * ★ 为什么要 `refreshing` 这个闸门（真实事故：用户反馈"点一下弹出好几个一样的窗"）：
- *   本视图的操作（测试 / 探测 / 删除 / 保存）结束后都会刷新列表，
+ *   本视图的操作（测试 / 删除 / 保存）结束后都会刷新列表，
  *   而刷新会重画 `#view` 的内容、也就**重新绑一次委托监听器**。
  *   只要有两条路径先后触发刷新，监听器就会叠加成 2 个、4 个……
  *   点一次按钮就被分发 N 次 → 弹出 N 个一模一样的弹窗。
@@ -269,14 +283,6 @@ async function renderProviderList(root, signal) {
            ${p.api_key_decryptable ? '' : '<div class="small" style="color:var(--danger)">无法解密，请重填</div>'}`
         : '<span class="badge neutral">未配置</span>';
 
-      const probe = p.reasoning_effort_support || {};
-      let probeBadge = '<span class="badge neutral">思考强度未探测</span>';
-      if (probe.probed && probe.stale) probeBadge = '<span class="badge warn">探测结论已过期</span>';
-      else if (probe.probed && probe.supported === true)
-        probeBadge = '<span class="badge ok">支持思考强度</span>';
-      else if (probe.probed && probe.supported === false)
-        probeBadge = '<span class="badge danger">忽略思考强度</span>';
-
       const testCell =
         p.last_test_ok === true
           ? `<span class="badge ok">连通正常</span><div class="small faint">${esc(fmtRelative(p.last_tested_at))}</div>`
@@ -304,11 +310,10 @@ async function renderProviderList(root, signal) {
           <div>输出 ${esc(p.generation.max_tokens)} <span class="faint">(含思考)</span></div>
           <div>思考 ${esc(p.generation.reasoning_effort)}</div>
         </td>
-        <td class="small">${testCell}<div class="mt8">${probeBadge}</div></td>
+        <td class="small">${testCell}</td>
         <td class="nowrap">
           <button class="btn sm sec" data-act="test">测试</button>
           <button class="btn sm sec" data-act="models">模型</button>
-          <button class="btn sm sec" data-act="probe" title="会真实调用模型 2 次">探测</button>
           <button class="btn sm sec" data-act="edit">编辑</button>
           <button class="btn sm sec" data-act="del" style="color:var(--danger)">删除</button>
         </td>
@@ -393,21 +398,6 @@ function attachProviderListeners(root, signal) {
           if (isStale()) return;
           restore();
           openModelsDialog(res);
-        } else if (act === 'probe') {
-          restore();
-          const go = await confirmDialog({
-            title: '探测「思考强度」是否真的生效',
-            message:
-              '本操作会真实调用模型 2 次（尽量关闭思考 / 深度思考各一次），会产生少量费用。\n\n' +
-              '为什么需要它：有些模型（实测 deepseek-flash 就是）会"接受但忽略"这个参数 —— ' +
-              '不报错、不提示，思考量照旧随机波动。只有对比实验才能发现。',
-            confirmText: '开始探测',
-          });
-          if (!go || isStale()) return;
-          const res = await api.post(`/providers/${id}/probe-reasoning`);
-          if (isStale()) return;
-          openJsonDialog('思考强度探测结果', res);
-          await refreshProviderList(root);
         } else if (act === 'edit') {
           const detail = await api.get(`/providers/${id}`);
           if (isStale()) return;
@@ -521,7 +511,8 @@ function openForm(root, existing) {
             'reasoning_effort',
             REASONING_OPTIONS,
             g.reasoning_effort,
-            'auto 表示不发送该字段，最安全。设了非 auto 后建议做一次探测确认是否真生效。',
+            'auto 表示不发送该字段（最安全）。设了具体档位后，适配器会把它翻译成厂商字段；'
+              + '若该模型不认识这个参数，服务端会拒绝，本应用会自动去掉它重试一次并在回复里说明。',
           )}
           ${textField('上下文窗口', 'context_window', existing?.context_window ?? 65536, {
             type: 'number',
@@ -549,7 +540,7 @@ function openForm(root, existing) {
           ★ 有些模型或中转**不支持流式**：关掉后后端改成「整段一次性返回」，界面不再逐字出现，
           但内容与结果完全一样（不是出错）。<br />
           反过来，如果你确认模型支持流式、却一直看不到逐字效果，那多半是**中转把流式转成了非流式** ——
-          这时开关的显示效果相同，属于上游行为，不是本控制台的问题（这里不做探测，也没法替上游保证）。
+          这时开关的显示效果相同，属于上游行为，不是本控制台的问题（我们没法替上游保证）。
         </div>
         <div class="mt8">
           <label class="field" style="display:block">
@@ -771,7 +762,7 @@ function openTestDialog(res) {
   });
 }
 
-/** 把任意 JSON 结果丢进弹窗展示（探测结果、调试数据都用它） */
+/** 把任意 JSON 结果丢进弹窗展示（健康检查详情、调试数据都用它） */
 function openJsonDialog(title, data) {
   modal({
     title,

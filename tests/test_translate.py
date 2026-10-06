@@ -626,15 +626,15 @@ def test_will_call_model_matches_the_real_skip_rules() -> None:
 class _EffortStub:
     """记录"这次调用带了多大思考强度"的适配器替身。
 
-    ★ 只暴露**真实适配器上真的存在**的那个属性：探测结论由 `create_provider_from_config`
-      从 ProviderConfig 带到 `adapter.reasoning_support`。
-      （上一版这里伪造的是 `default_params.effective_reasoning_support()` —— 那个 API
-      在 `GenerationParams` 上**根本不存在**，于是测试绿着、功能静默失效，见 §29.13。）
+    ★ 第二十七轮改了它反映的契约：判据从"探测结论"（`reasoning_support`，
+      靠比思考 token 数猜出来的、不可靠）换成适配器的**静态声明**
+      `supports_reasoning_effort`（默认 True）。真实适配器上就是这个属性
+      （`BaseLLMAdapter.__init__` 里声明，failover / whole_reply 会透传）。
     """
 
-    def __init__(self, support: bool | None) -> None:
+    def __init__(self, supports: bool = True) -> None:
         self.seen: list[object] = []
-        self.reasoning_support = support
+        self.supports_reasoning_effort = supports
 
     def chat(self, request):  # noqa: ANN001
         self.seen.append(request.reasoning_effort)
@@ -646,27 +646,31 @@ class _EffortStub:
         )
 
 
-def test_thinking_is_lowered_for_translation_only_when_supported() -> None:
+def test_thinking_is_lowered_for_translation() -> None:
     """★ 翻译是机械任务，思考纯烧钱（实测：1618 字符的英文译一次烧 5291 token）。
 
-    但 `reasoning_effort` 是较新的参数，**不少网关不认识它、发了直接 400** ——
-    翻译失败等于用户白等一场，所以只在"探测确认该模型接受"时才发（统一层默认 auto = 不发）。
+    ==================== 第二十七轮的行为变更 ====================
+    旧契约：只在"探测确认该模型接受思考强度"时才发这个参数。
+    后果：DeepSeek 被那次不可靠的探测误判为"不支持" ⇒ 翻译**从来没降过思考**。
+    新契约：**直接请求 OFF**；模型不认这个参数时由适配器自动去掉并重试一次
+    （见 `openai_compatible._post_with_effort_fallback`），翻译不会因此失败。
     """
     settings = translate_mod.normalize_settings(
         {"enabled": True, "mode": "middleware", "target_lang": "简体中文"}
     )
-    supported = _EffortStub(True)
+    # ① 默认（适配器参与思考强度适配）⇒ 必须请求降到最小
+    normal = _EffortStub()
     translate_mod.run(
-        EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=supported
+        EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=normal
     )
-    assert supported.seen == [ReasoningEffort.OFF], "支持思考强度的模型：翻译要降到最小"
+    assert normal.seen == [ReasoningEffort.OFF], "翻译要一律降到最小思考"
 
-    for support in (False, None):
-        unsure = _EffortStub(support)
-        translate_mod.run(
-            EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=unsure
-        )
-        assert unsure.seen == [None], f"结论是 {support!r} 时不能发这个参数（会 400）"
+    # ② 适配器显式声明"我不参与"⇒ 不覆盖，交给 provider 自己的设置
+    opted_out = _EffortStub(supports=False)
+    translate_mod.run(
+        EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=opted_out
+    )
+    assert opted_out.seen == [None], "适配器声明不支持时不该发这个参数"
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:

@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -2291,9 +2292,11 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
     cdp.wait_for("!!document.querySelector('#view .cc')", 20)
     probe.check(
         "12.插件",
-        "★ 插件页能打开，并列出两个默认空壳插件",
+        "★ 插件页能打开，并列出三个默认插件（2 个空壳 + 默认主题）",
         opened
-        and (cdp.eval("document.querySelectorAll('#view .cc:not(.catalog-item)').length") or 0) == 2,
+        # ★ 第二十三轮：默认插件从 2 个变成 3 个（多了新账号默认启用的「星云暗涌」主题）。
+        #   这是**意图变更**，不是把断言改松 —— 数量仍然被钉住。
+        and (cdp.eval("document.querySelectorAll('#view .cc:not(.catalog-item)').length") or 0) == 3,
         cdp.eval("document.querySelectorAll('#view .cc:not(.catalog-item) .cc-name').length"),
     )
     probe.check(
@@ -2658,15 +2661,26 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
             (PROJECT_ROOT / "docs" / doc_name).write_bytes(raw)
 
     with httpx.Client(timeout=30) as c:
-        neb = c.post(f"{api}/plugins/catalog/yunmeng_nebula", headers=auth_headers)
-        neb_id = (neb.json().get("data") or {}).get("id") if neb.status_code == 201 else None
+        # ★★ 第二十三轮起「星云暗涌」是**新账号的默认主题**（`plugin_service.ensure_defaults`
+        #   会在账号第一次被初始化时装上并 enabled=True）。所以这里**不能再"从目录添加"** ——
+        #   那会返回 400「已经是最新版」，于是 neb_id 为 None，本节后续的视觉断言全部失败
+        #   （实测：三条 12.插件 检查报红，其中一条就是这个）。
+        #   正确做法：先去插件列表里找**已经存在的**那一个，记下它原本的 enabled 状态，
+        #   本节临时打开、末尾恢复原状 —— 探针不该改变被探对象的最终状态。
+        listed = c.get(f"{api}/plugins", headers=auth_headers).json()["data"]
+        existing = next(
+            (item for item in listed["items"] if item["kind"] == "css" and "星云暗涌" in item["name"]),
+            None,
+        )
+        neb_id = existing["id"] if existing else None
+        neb_was_enabled = bool(existing and existing.get("enabled"))
         if neb_id:
             c.patch(f"{api}/plugins/{neb_id}", headers=auth_headers, json={"enabled": True})
     probe.check(
         "12.插件",
-        "★ 内置目录里有「云梦枢 · 星云暗涌」（云梦枢默认视觉方案，一键可开关）",
+        "★ 新账号默认自带「云梦枢 · 星云暗涌」（云梦枢默认视觉方案，一键可开关）",
         neb_id is not None,
-        neb_id,
+        {"插件id": neb_id, "原启用状态": neb_was_enabled},
     )
 
     cdp.send("Page.navigate", url=f"{base}/console/")
@@ -2854,15 +2868,25 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
     _save_shot("ui_nebula_plugins.png", "nebula-plugins-screenshot.png")
 
     # 收回：后面几节还在浅色主题下跑
+    # ★ 恢复**原状**而不是一律禁用：这个账号的默认主题本来就是启用的，
+    #   一律禁用会让"探针跑完之后用户界面变了"（虽然只影响测试账号，但那是坏习惯）。
     with httpx.Client(timeout=30) as c:
         if neb_id:
-            c.patch(f"{api}/plugins/{neb_id}", headers=auth_headers, json={"enabled": False})
-            c.delete(f"{api}/plugins/{neb_id}", headers=auth_headers)
+            c.patch(f"{api}/plugins/{neb_id}", headers=auth_headers,
+                    json={"enabled": neb_was_enabled})
+            if not neb_was_enabled:
+                c.delete(f"{api}/plugins/{neb_id}", headers=auth_headers)
     cdp.send("Page.navigate", url=f"{base}/console/")
     cdp.wait_for("!!document.querySelector('#view h1')", 25)
 
 
     with httpx.Client(timeout=30) as c:
+        # ★ 这一次的判据从"硬编码总数 == 6"改成**比较拒绝前后的数量**。
+        #   为什么：硬编码的数字随"默认插件有几个"变化（第二十三轮加了默认主题，
+        #   这里就从 6 变成 7，于是报红）。而这条检查真正要守的是
+        #   **"被拒绝的安装不能留下任何残留"** —— 用前后对比表达这个意图，
+        #   既不依赖默认数量，也比原来更严格（原来只查最终值）。
+        total_before = c.get(f"{api}/plugins", headers=auth_headers).json()["data"]["total"]
         rejected = c.post(
             f"{api}/plugins/install",
             headers=auth_headers,
@@ -2872,8 +2896,10 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
     probe.check(
         "12.插件",
         "★ 安装来源只允许 GitHub（其它域名被明确拒绝且不留残留）",
-        rejected.status_code == 400 and "只允许从 GitHub" in rejected.text and total_after == 6,
-        {"状态": rejected.status_code, "插件数": total_after},
+        rejected.status_code == 400
+        and "只允许从 GitHub" in rejected.text
+        and total_after == total_before,
+        {"状态": rejected.status_code, "拒绝前": total_before, "拒绝后": total_after},
     )
 
     # 停用正则插件 → 预览里立刻恢复原样（"停用即失效"）
@@ -3618,6 +3644,167 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
         " return 'ok'; })()"
     )
     time.sleep(0.5)
+
+    # ==================================================================
+    #  13. ★「关于」弹窗 + 复制诊断信息（第二十七轮新增）
+    # ==================================================================
+    #  判据分两类，第二类更要紧：
+    #    ① 弹窗内容确实来自后端（版本 / 存储方式 / 真实路径），不是写死的；
+    #    ② ★★ 诊断文本里**绝不能**出现对话内容或密钥 ——
+    #       它的用途是"贴给别人排查"，一旦带出对话原文就是隐私事故。
+    #       所以这里真的造一次错误、生成诊断文本，再逐项检查。
+    cdp.eval("document.getElementById('btn-about').click(); 'ok'")
+    about_open = cdp.wait_for(
+        "(document.querySelector('.modal-head h2')?.textContent || '').includes('关于')", 15
+    )
+    # 弹窗先渲染、环境快照后到，所以要等路径行出现
+    cdp.wait_for("!!document.querySelector('.about-path')", 20)
+    raw_about = cdp.eval(
+        """(() => {
+          const out = {};
+          for (const r of document.querySelectorAll('.about-row')) {
+            out[(r.querySelector('.about-k')?.textContent || '').trim()]
+              = (r.querySelector('.about-v')?.textContent || '').trim();
+          }
+          return JSON.stringify({
+            rows: out,
+            hasPath: document.querySelectorAll('.about-path').length,
+            hasRepo: !!document.querySelector('.about-rows a[href*="github.com"]'),
+            hasCopyBtn: !!document.getElementById('about-copy'),
+          });
+        })()"""
+    )
+    about = json.loads(raw_about) if isinstance(raw_about, str) else {}
+    rows = about.get("rows") or {}
+    probe.check(
+        "13.关于",
+        "★「关于」按钮能打开弹窗并显示版本号",
+        bool(about_open) and bool(rows.get("版本")),
+        {"打开": about_open, "版本": rows.get("版本")},
+    )
+    probe.check(
+        "13.关于",
+        "★「当前存储」写明了用的是哪个库（来自后端，不是写死的）",
+        any(k in str(rows.get("当前存储", "")) for k in ("SQLite", "MySQL")),
+        rows.get("当前存储"),
+    )
+    probe.check(
+        "13.关于",
+        "★ 数据/日志目录来自后端且**未被打码**（用户要照着它去打开目录）",
+        about.get("hasPath") == 2
+        and os.path.sep in str(rows.get("数据目录", ""))
+        and "*" not in str(rows.get("数据目录", "")),
+        {"路径行数": about.get("hasPath"), "数据目录": rows.get("数据目录")},
+    )
+    probe.check(
+        "13.关于",
+        "★ 开源地址可点击 + 有「复制诊断信息」按钮",
+        bool(about.get("hasRepo")) and bool(about.get("hasCopyBtn")),
+        {"repo": about.get("hasRepo"), "copy": about.get("hasCopyBtn")},
+    )
+
+    # ---- 造两种错误，验证收集器的**取舍**：该收的收、不该收的不收 ----
+    #
+    # ★★ 两个坑（都是第一版踩的，记在这里免得下次再踩）：
+    #   ① 必须走**应用自己的 api 层**（`hne/api` 的 request），不能用裸 `fetch` ——
+    #      错误收集器挂在 api 层的请求广播上，裸 fetch 会绕过它，
+    #      于是表现为"收集器没工作"。这类"验收脚本走了假路径"的错法最能骗人：
+    #      失败指向被测功能，真正错的却是脚本。
+    #   ② 用来制造"正常业务失败"的那条 404 **不能打会话路径** ——
+    #      收尾总检专门防"被删的会话又被请求"，脚本自己打一条会把自己判红。
+    #      换一个同样属于"预期内失败"的非会话路径（不存在的角色卡）。
+    cdp.eval(
+        """(async () => {
+          const { request } = await import('hne/api');
+          // ① 401（鉴权失败）—— 值得报出去的故障，应被收集
+          //    ★ 必须**显式用一个坏令牌**：默认会用当前登录态，那样拿到的是 200，
+          //      这条断言就会永远测不到东西（第一版正是如此）。
+          try { await request('GET', '/auth/me', { token: 'definitely-not-a-real-token' }); } catch { /* 预期失败 */ }
+          // ② 404（资源不存在）—— 正常业务流程，**不该**被收集
+          try { await request('GET', '/character-cards/99999999', {}); } catch { /* 预期失败 */ }
+          return 'ok';
+        })()"""
+    )
+    time.sleep(1.2)
+
+    diag_text = cdp.eval(
+        """(async () => {
+          const d = await import('hne/diagnostics');
+          const tk = localStorage.getItem('hne_access_token') || '';
+          let env = null;
+          try {
+            const r = await fetch('/api/v1/system/diagnostics',
+              { headers: { Authorization: 'Bearer ' + tk } });
+            env = (await r.json()).data;
+          } catch {}
+          return d.buildDiagnosticText(env, null);
+        })()"""
+    )
+    diag_text = str(diag_text or "")
+    probe.check(
+        "13.关于",
+        "★ 诊断文本含环境事实（版本 / 存储 / 数据目录 / 日志目录）",
+        all(k in diag_text for k in ("版本", "存储", "数据目录", "日志目录")),
+        diag_text[:140].replace("\n", " | "),
+    )
+    # ★★ 最关键的一条
+    forbidden = ("bearer ", "password", "api_key", "hne_secret", "fernet",
+                 "sk-", "reasoning_effort", "first_mes")
+    leaked = [w for w in forbidden if w in diag_text.lower()]
+    probe.check(
+        "13.关于",
+        "★★ 诊断文本不含密钥/口令/对话正文（可安全贴给别人）",
+        not leaked,
+        {"命中": leaked, "长度": len(diag_text)},
+    )
+    probe.check(
+        "13.关于",
+        "★ 401 这类故障被收集、404 这类正常业务失败被排除",
+        "401" in diag_text and "99999999" not in diag_text,
+        [ln for ln in diag_text.splitlines() if "最近错误" in ln or "401" in ln][:2],
+    )
+
+    # ---- ★★ 真的点一次「复制诊断信息」，再**读剪贴板**核对内容 ----
+    #  为什么值得做：前面的断言只证明"文本生成对了"，
+    #  而用户真正的动作是"点按钮 → 粘贴到某处"。中间可能坏在：
+    #  剪贴板 API 在 http:// 下不可用、或者复制的是别的东西。
+    #  （项目里 Electron 走 file://，那条路还要单独验 —— 见桌面版验收脚本。）
+    cdp.send("Browser.grantPermissions", permissions=["clipboardReadWrite", "clipboardSanitizedWrite"])
+    cdp.eval(
+        """(async () => {
+          // 先清空剪贴板，避免"读到上次的旧内容"造成假通过
+          try { await navigator.clipboard.writeText('__EMPTY__'); } catch {}
+          document.getElementById('about-copy').click();
+          return 'ok';
+        })()"""
+    )
+    time.sleep(1.5)
+    clip = cdp.eval("(async () => { try { return await navigator.clipboard.readText(); }"
+                    " catch (e) { return '__ERR__' + e; } })()")
+    clip = str(clip or "")
+    probe.check(
+        "13.关于",
+        "★★ 点「复制诊断信息」后，剪贴板里确实是诊断文本（不是旧内容/空）",
+        clip.startswith("【云梦枢诊断信息】")
+        and "版本" in clip
+        and "数据目录" in clip
+        and "__EMPTY__" not in clip,
+        clip[:120].replace("\n", " | "),
+    )
+    clip_leak = [w for w in forbidden if w in clip.lower()]
+    probe.check(
+        "13.关于",
+        "★★ 剪贴板里那份文本同样不含密钥/口令/对话正文",
+        not clip_leak,
+        {"命中": clip_leak, "长度": len(clip)},
+    )
+
+    # 关掉弹窗，别影响后面的收尾总检
+    cdp.eval(
+        "(() => { const b = document.querySelector('.modal-mask [data-close]');"
+        " if (b) b.click(); return 'ok'; })()"
+    )
+    time.sleep(0.3)
 
     # ---------- ★ 收尾总检：整轮跑下来，控制台不许有"会话 404" ----------
     #

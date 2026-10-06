@@ -364,48 +364,52 @@ def test_manual_run_summarizes_whatever_is_pending(client: TestClient, user: dic
     assert detail["summary_coverage"] == {"from_round": 1, "to_round": 5}
 
 
-def test_summary_call_lowers_thinking_only_when_the_model_supports_it(
+def test_summary_call_always_lowers_thinking(
     client: TestClient, user: dict, fake_llm, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """★ 第十六轮：剧情总结也是**机械任务**（把对话压成摘要），思考纯烧钱。
+    """★ 剧情总结是**机械任务**（把对话压成摘要），思考纯烧钱 ⇒ 一律降到最小。
 
-    与翻译中间件共用同一条闸门（`app.llm.params.cheap_reasoning_effort`）：
-    **只在真机探测确认该模型接受思考强度时**才发这个参数 —— 统一层默认 `auto`（完全不发），
-    因为不少网关不认识 `reasoning_effort`、发了直接 400（总结会因此退回本地压缩）。
+    ==================== 第二十七轮的行为变更 ====================
+    旧契约：只在"真机探测确认该模型支持思考强度"时才发这个参数。后果是
+    DeepSeek 被那次不可靠的探测误判为"不支持"，于是总结**从来没降过思考** ——
+    省钱机制被一个错误结论堵死了几轮。
+    现在：**直接请求 OFF**；若服务端不认这个参数，适配器会自动去掉并重试一次
+    （见 `openai_compatible._post_with_effort_fallback`），不会让总结失败。
     """
-    # ① 探测结论：该模型接受思考强度 ⇒ 总结请求必须带 OFF（OpenAI 兼容会映射成 minimal）
-    def _build_with(support: bool | None):
-        def _build(row=None, **_):
-            adapter = FakeAdapter(row)
-            # ★ 探测结论在真实适配器上就是这个属性（由 create_provider_from_config 带过来）
-            adapter.reasoning_support = support
-            return adapter
-
-        return _build
-
-    monkeypatch.setattr(engine, "build_adapter", _build_with(True))
     session_id, _ = _make_session(client, user, 5, settings={"auto": False, "rounds": 8})
     response = client.post(f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"])
     assert response.status_code == 200, response.text
     calls = [r for r in fake_llm.script.get("requests", []) if FakeAdapter._is_summary(r)]
     assert calls, "应该发生过一次总结调用"
     assert all(r.reasoning_effort is ReasoningEffort.OFF for r in calls), (
-        "支持思考强度的模型：总结要降到最小；实际 = "
+        "总结一律降到最小思考；实际 = " + repr([r.reasoning_effort for r in calls])
+    )
+
+
+def test_summary_does_not_lower_thinking_when_adapter_opts_out(
+    client: TestClient, user: dict, fake_llm, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """适配器显式声明"我不参与思考强度适配"时，才不发这个参数。
+
+    ★ 这条替代了旧的"探测结论为 False ⇒ 不发"：判据从**猜测**（比 token 数）
+      换成了**声明**（适配器自己说它支不支持翻译这个字段）。
+    """
+    def _build(row=None, **_):
+        adapter = FakeAdapter(row)
+        adapter.supports_reasoning_effort = False
+        return adapter
+
+    monkeypatch.setattr(engine, "build_adapter", _build)
+    session_id, _ = _make_session(client, user, 5, settings={"auto": False, "rounds": 8})
+    response = client.post(f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"])
+    assert response.status_code == 200, response.text
+    calls = [r for r in fake_llm.script.get("requests", []) if FakeAdapter._is_summary(r)]
+    assert calls, "应该发生过一次总结调用"
+    assert all(r.reasoning_effort is None for r in calls), (
+        "适配器声明不支持时，不该覆盖成 OFF；实际 = "
         + repr([r.reasoning_effort for r in calls])
     )
 
-    # ② 探测结论是"不接受 / 不知道" ⇒ 一个字都不许多发（否则会换来 400，总结白跑）
-    monkeypatch.setattr(engine, "build_adapter", _build_with(None))
-    fake_llm.script["requests"] = []
-    other, _ = _make_session(client, user, 5, settings={"auto": False, "rounds": 8})
-    assert (
-        client.post(f"{BASE}/{other}/memory-summary/run", headers=user["headers"]).status_code
-        == 200
-    )
-    calls2 = [r for r in fake_llm.script.get("requests", []) if FakeAdapter._is_summary(r)]
-    assert calls2 and all(r.reasoning_effort is None for r in calls2), (
-        "结论未知/不支持时不能发这个参数"
-    )
 
 
 def test_copy_mode_costs_nothing(client: TestClient, user: dict, fake_llm) -> None:

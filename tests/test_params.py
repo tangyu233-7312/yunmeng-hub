@@ -30,7 +30,6 @@ from app.llm import (
     create_provider,
     create_provider_from_config,
     describe_token_split,
-    probe_reasoning_effort,
 )
 
 OK_BODY: dict[str, Any] = {
@@ -473,98 +472,6 @@ def _probe_body(reasoning_tokens: int) -> dict[str, Any]:
     }
 
 
-def test_probe_detects_ignored_parameter() -> None:
-    """★ 复现 deepseek-flash 的真实行为：接受参数但完全不理它。
-
-    无论传 minimal 还是 high，思考 token 都一模一样。
-    """
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_probe_body(140))
-
-    provider = make_probe_provider(handler)
-    result = probe_reasoning_effort(provider)
-
-    assert result["supported"] is False
-    assert "未生效" in result["verdict"]
-    # 结论里要给出可行的替代方案
-    assert "auto" in result["verdict"]
-    assert len(result["samples"]) == 2
-    provider.close()
-
-
-def test_probe_detects_working_parameter() -> None:
-    """参数真的生效时，两次采样的思考 token 应有明显差异。"""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content)
-        # high 时思考多，minimal（off 映射而来）时思考少
-        reasoning = 180 if payload.get("reasoning_effort") == "high" else 20
-        return httpx.Response(200, json=_probe_body(reasoning))
-
-    provider = make_probe_provider(handler)
-    result = probe_reasoning_effort(provider)
-
-    assert result["supported"] is True
-    assert "已生效" in result["verdict"]
-    assert result["samples"][0]["reasoning_tokens"] == 20
-    assert result["samples"][1]["reasoning_tokens"] == 180
-    provider.close()
-
-
-def test_probe_treats_small_difference_as_noise() -> None:
-    """★ 关键用例：真实的 deepseek-flash 数据（off=97 / high=122）。
-
-    差异 20% 看起来「有点效果」，但推理模型本身的波动就有 ±15%。
-    如果阈值定得太低，就会把噪声误判成「参数已生效」—— 第一次实现时正是这么错的。
-    正确结论应当是「似乎未生效」。
-    """
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content)
-        reasoning = 122 if payload.get("reasoning_effort") == "high" else 97
-        return httpx.Response(200, json=_probe_body(reasoning))
-
-    provider = make_probe_provider(handler)
-    result = probe_reasoning_effort(provider)
-
-    assert result["supported"] is False
-    assert "似乎未生效" in result["verdict"]
-    # 结论里要解释「为什么这点差异不算数」
-    assert "波动" in result["verdict"]
-    provider.close()
-
-
-def test_probe_reports_failure_without_raising() -> None:
-    """探测失败要如实返回结论，而不是把异常抛给上层。"""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            400, json={"error": {"message": "Unrecognized request argument: reasoning_effort"}}
-        )
-
-    provider = make_probe_provider(handler)
-    result = probe_reasoning_effort(provider)
-
-    assert result["supported"] is False
-    assert "调用失败" in result["verdict"]
-    provider.close()
-
-
-def test_probe_uses_zero_temperature_for_fair_comparison() -> None:
-    """两次采样必须用同样的温度，否则随机性会污染结论。"""
-    seen: list[float] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(json.loads(request.content).get("temperature"))
-        return httpx.Response(200, json=_probe_body(100))
-
-    provider = make_probe_provider(handler)
-    probe_reasoning_effort(provider)
-    assert seen == [0, 0]
-    provider.close()
-
-
 def test_describe_token_split_states_the_rule() -> None:
     """界面预览用的摘要里必须写明「最大输出包含思考」。"""
 
@@ -595,185 +502,101 @@ def _config_with_effort(effort: str, **overrides: Any) -> ProviderConfig:
     return ProviderConfig(**base)
 
 
-def test_probe_conclusion_travels_from_config_to_adapter() -> None:
-    """★ 第十六轮的真 bug 守门人：**探测结论必须跟着适配器走**。
-
-    背景：`reasoning_effort_supported` 挂在 `ProviderConfig` 上，而适配器只带走
-    `default_params`（那是 `GenerationParams`，**没有**这个字段）。翻译中间件与剧情总结
-    想读结论时属性根本不存在，上一版又用 `try/except` 把它吞了 ⇒
-    "把翻译的思考降到最小"**静默失效了整整一轮**，而单测还绿着 ——
-    因为那个测试伪造了一个真实代码里不存在的 API（`default_params.effective_reasoning_support()`）。
-    这条断言钉住"结论确实在适配器上"，并且未知/不支持时必须是 None（不许瞎降）。
-    """
-    model = "probe-model"
-    unknown = create_provider_from_config(_config_with_effort("auto", model_name=model))
-    assert unknown.reasoning_support is None, "没探测过 ⇒ 不知道 ⇒ 不许发这个参数"
-
-    unsupported = create_provider_from_config(
-        _config_with_effort(
-            "auto",
-            model_name=model,
-            reasoning_effort_supported=False,
-            reasoning_effort_probed_model=model,
-        )
-    )
-    assert unsupported.reasoning_support is False, "实测不接受 ⇒ 不许发"
-
-    supported = create_provider_from_config(
-        _config_with_effort(
-            "auto",
-            model_name=model,
-            reasoning_effort_supported=True,
-            reasoning_effort_probed_model=model,
-        )
-    )
-    assert supported.reasoning_support is True, "实测有效 ⇒ 机械任务才可以降思考"
-
-    # 结论过期（模型名换过）也算"不知道"
-    stale = create_provider_from_config(
-        _config_with_effort(
-            "auto",
-            model_name="another-model",
-            reasoning_effort_supported=True,
-            reasoning_effort_probed_model=model,
-        )
-    )
-    assert stale.reasoning_support is None, "换了模型 ⇒ 旧结论作废"
-
-
-def test_unprobed_effort_produces_hint_not_warning() -> None:
-    """★ 设了思考强度但没验证过 —— 给建议，而不是报错误。
-
-    不能一上来就吓唬用户说"你这个设置可能没用"，因为多数模型确实是支持的。
-    """
-    config = _config_with_effort("high")
-    assert config.warnings() == [] or not any("忽略" in w for w in config.warnings())
-    hints = config.hints()
-    assert any("尚未验证" in h for h in hints)
-    # 提示里要说明检测的成本，让用户有心理预期
-    assert any("2 次" in h for h in hints)
-
-
 def test_auto_effort_produces_no_hint() -> None:
     """auto 不干预厂商默认行为，不存在「设了没用」的问题，永远不提醒。"""
     assert _config_with_effort("auto").hints() == []
 
+def test_effort_set_produces_hint_about_auto_fallback() -> None:
+    """★ 设了思考强度就给一条**说明性提示**，而不是要求用户去"验证"。
 
-def test_probed_unsupported_effort_produces_warning() -> None:
-    """★ 已知该模型忽略思考强度，用户还设了非 auto —— 必须给黄色警告。"""
-    config = _config_with_effort(
-        "high",
-        reasoning_effort_supported=False,
-        reasoning_effort_probed_model="reasoner-model",
-    )
-    warnings = config.warnings()
-    assert any("忽略" in w and "auto" in w for w in warnings)
-    # 已经探测过了，就不该再提示"去检测一下"
-    assert not any("尚未验证" in h for h in config.hints())
+    第二十七轮改了这条提示：原来的"尚未验证，建议点检测"已被删除
+    （那个检测不可靠，且给过错误结论）。现在如实说明适配器的行为：
+    参数会被翻译发送，若模型不认识则**自动去掉重试一次**。
+    """
+    config = _config_with_effort("high")
+    assert not any("忽略" in w for w in config.warnings()), "不该再声称模型会忽略它"
+    hints = config.hints()
+    assert any("自动去掉" in h for h in hints), f"提示要说明自动退回，实际 {hints}"
+    assert not any("检测" in h for h in hints), "不该再让用户去做已删除的检测"
 
-
-def test_probed_unsupported_is_fine_when_effort_is_auto() -> None:
-    """模型虽然忽略该参数，但用户用的是 auto —— 没有任何问题，不该报警。"""
-    config = _config_with_effort(
-        "auto",
-        reasoning_effort_supported=False,
-        reasoning_effort_probed_model="reasoner-model",
-    )
-    assert not any("忽略" in w for w in config.warnings())
-
-
-def test_probed_supported_produces_no_warning() -> None:
-    """实测支持 —— 设置照常生效，不该有任何提醒。"""
-    config = _config_with_effort(
-        "high",
-        reasoning_effort_supported=True,
-        reasoning_effort_probed_model="reasoner-model",
-    )
-    assert not any("忽略" in w for w in config.warnings())
-    assert config.hints() == []
-
-
-def test_probe_result_becomes_stale_after_model_change() -> None:
-    """★ 换了模型，旧结论就不再适用 —— 不能拿过期结论误导用户。"""
-    config = _config_with_effort(
-        "high",
-        model_name="another-model",
-        reasoning_effort_supported=False,
-        reasoning_effort_probed_model="reasoner-model",  # 探测的是另一个模型
-    )
-
-    assert config.reasoning_probe_is_stale is True
-    assert config.effective_reasoning_support() is None
-    # 不应该拿旧模型的结论去警告
-    assert not any("忽略" in w for w in config.warnings())
-    # 而应该提示重新检测
-    assert any("失效" in h and "another-model" in h for h in config.hints())
-
-
-def test_probe_result_not_stale_when_model_unchanged() -> None:
-    config = _config_with_effort(
-        "high",
-        reasoning_effort_supported=False,
-        reasoning_effort_probed_model="reasoner-model",
-    )
-    assert config.reasoning_probe_is_stale is False
-    assert config.effective_reasoning_support() is False
-
-
-def test_to_dict_exposes_support_state_and_both_message_lists() -> None:
-    """接口返回里要能看出「探测状态」，且 warnings / hints 分开给。"""
-    config = _config_with_effort(
-        "high",
-        reasoning_effort_supported=False,
-        reasoning_effort_probed_model="reasoner-model",
-        reasoning_effort_probed_at=datetime(2026, 9, 19, 12, 0, 0),
-    )
+def test_to_dict_exposes_both_message_lists() -> None:
+    """接口返回里 warnings / hints 要分开给（探测字段已在第二十七轮删除）。"""
+    config = _config_with_effort("high")
     data = config.to_dict()
-
-    support = data["reasoning_effort_support"]
-    assert support["probed"] is True
-    assert support["supported"] is False
-    assert support["probed_model"] == "reasoner-model"
-    assert support["probed_at"].startswith("2026-09-19")
-    assert support["stale"] is False
-
+    assert "reasoning_effort_support" not in data, "探测字段应当已经不存在"
     assert isinstance(data["warnings"], list)
     assert isinstance(data["hints"], list)
 
 
-def test_probe_result_carries_persistable_fields() -> None:
-    """★ 探测结果要能直接写库，否则结论只能"看一眼就没了"。"""
-    from app.llm.diagnostics import probe_reasoning_effort
+# ==================================================================
+#  ★ 第二十七轮新增：思考强度「不被支持」时的自动退回
+# ==================================================================
+#: 一个**模拟拒绝 reasoning_effort** 的请求记录器。
+def _reject_effort_transport(monkeypatch, calls: list[dict]) -> None:
+    """让适配器第一次收到 400「不认识的参数」，去掉该参数后返回 200。"""
+    import httpx
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_probe_body(140))
+    def fake_post_with_retry(client, url, *, headers, payload, max_retries, provider_label):
+        calls.append(dict(payload))
+        request = httpx.Request("POST", url)
+        if "reasoning_effort" in payload:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "Unrecognized parameter: reasoning_effort"}},
+                request=request,
+            )
+        return httpx.Response(200, json=OK_BODY, request=request)
 
-    provider = make_probe_provider(handler)
-    result = probe_reasoning_effort(provider)
-
-    persist = result["persist"]
-    assert persist["reasoning_effort_supported"] is False
-    assert persist["reasoning_effort_probed_model"] == "mock-model"
-    assert isinstance(persist["reasoning_effort_probed_at"], datetime)
-
-    # 写回配置后，界面应该能据此给出警告
-    config = _config_with_effort("high", model_name="mock-model", **persist)
-    assert any("忽略" in w for w in config.warnings())
-    provider.close()
+    monkeypatch.setattr("app.llm.openai_compatible.post_with_retry", fake_post_with_retry)
 
 
-def test_persisted_probe_result_is_stale_for_different_model() -> None:
-    """写库的结论带着模型名，换成别的模型后会自动失效。"""
-    from app.llm.diagnostics import probe_reasoning_effort
+def test_rejected_effort_is_dropped_and_retried(monkeypatch) -> None:
+    """★ 服务端拒绝 reasoning_effort 时：**去掉它重试一次**，并且不打断对话。
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_probe_body(140))
+    这是删掉「探测」之后替代方案的核心保证 —— 上一版靠"我们自己去比思考 token 数"
+    猜模型支不支持（不可靠，且给过错误结论）；现在只认**服务端明确回 400**这个事实。
+    """
+    calls: list[dict] = []
+    _reject_effort_transport(monkeypatch, calls)
+    provider = create_provider(
+        provider_type="openai_compatible",
+        base_url="https://api.example.com",
+        api_key="sk-x",
+        model_name="rejecting-model",
+        context_window=8192,
+        extra_params={"max_tokens": 1024, "reasoning_effort": "high"},
+    )
+    # 清掉进程内缓存，保证这条用例独立
+    provider._EFFORT_UNSUPPORTED_MODELS.discard("rejecting-model")
 
-    provider = make_probe_provider(handler)
-    persist = probe_reasoning_effort(provider)["persist"]
+    result = provider.chat(ChatRequest(messages=[ChatMessage.user("你好")]))
 
-    # 把结论挂到一个**不同模型**的配置上
-    config = _config_with_effort("high", model_name="totally-different", **persist)
-    assert config.reasoning_probe_is_stale is True
-    assert not any("忽略" in w for w in config.warnings())
-    provider.close()
+    assert result.content, "去掉参数重试后应当拿到正常回复"
+    assert len(calls) == 2, f"应当只重试一次（实际 {len(calls)} 次）：{[list(c) for c in calls]}"
+    assert "reasoning_effort" in calls[0], "第一次必须带上该参数（否则测不到退回逻辑）"
+    assert "reasoning_effort" not in calls[1], "第二次必须去掉该参数"
+    assert any("不支持" in n and "思考强度" in n for n in result.notes), (
+        f"必须如实告知这次做过退回，实际 notes={result.notes}"
+    )
+
+
+def test_unsupported_effort_is_remembered_across_calls(monkeypatch) -> None:
+    """★ 同一个模型被拒过一次之后，后续请求**不再白试**（否则每次多一次 400 往返）。"""
+    calls: list[dict] = []
+    _reject_effort_transport(monkeypatch, calls)
+    provider = create_provider(
+        provider_type="openai_compatible",
+        base_url="https://api.example.com",
+        api_key="sk-x",
+        model_name="rejecting-model-2",
+        context_window=8192,
+        extra_params={"max_tokens": 1024, "reasoning_effort": "high"},
+    )
+    provider._EFFORT_UNSUPPORTED_MODELS.discard("rejecting-model-2")
+
+    provider.chat(ChatRequest(messages=[ChatMessage.user("第一次")]))
+    assert len(calls) == 2, "第一次：带参数被拒 → 去掉重试"
+
+    provider.chat(ChatRequest(messages=[ChatMessage.user("第二次")]))
+    assert len(calls) == 3, "第二次：应当直接不带参数（只发一次请求）"
+    assert "reasoning_effort" not in calls[-1]

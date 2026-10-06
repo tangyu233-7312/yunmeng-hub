@@ -11,6 +11,9 @@
 //   并且带版本号。原因见 index.html 顶部与 js/boot.js 的说明。
 import { api, auth, onRequestLogged, session } from 'hne/api';
 import { $, $$, esc, mount, safeJson, toastErr, toastOk } from 'hne/ui';
+// ★ 诊断收集要在**最早的时机**挂上：它监听所有请求，晚一步就漏掉启动期的失败。
+import { initDiagnostics } from 'hne/diagnostics';
+import { showAbout } from 'hne/about';
 import { renderAuth } from 'hne/auth';
 import { renderCards } from 'hne/cards';
 import { renderBooks } from 'hne/books';
@@ -138,6 +141,8 @@ function initRequestLog() {
 
   $('#btn-reqlog').addEventListener('click', () => setOpen(panel.hidden));
   $('#reqlog-close').addEventListener('click', () => setOpen(false));
+  // ★ 「关于」：版本 / 存储方式 / 目录 / 开源地址 / 复制诊断信息（见 js/about.js）
+  $('#btn-about').addEventListener('click', showAbout);
   $('#reqlog-clear').addEventListener('click', () => {
     logEntries.length = 0;
     renderLog();
@@ -263,5 +268,8 @@ window.addEventListener('unhandledrejection', (e) => {
   }
 });
 
+// ★ 先让诊断收集器开始监听，再启动界面 —— 否则启动期的失败（例如后端还没起来）
+//   不会被记进「复制诊断信息」里，而那恰恰是最需要报出去的一类。
+initDiagnostics();
 initRequestLog();
 start();

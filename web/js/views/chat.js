@@ -2933,7 +2933,8 @@ async function openTranslateDialog(root, signal) {
           <label class="small muted">用哪个模型翻译</label>
           <select id="tr-provider">${providerOptions}</select>
           <div class="hint">可以指定一个更便宜的模型专门做翻译（与"总结用哪个模型"同一套）。
-            ★ 翻译是机械任务：本项目会把它的思考强度降到最小（仅当该模型被探测为支持时），
+            ★ 翻译是机械任务：本项目会把它的思考强度降到最小
+            （若该模型不认这个参数，适配器会自动去掉并重试，不会让翻译失败），
             但预估只按原文字数粗算、<b>不含思考 token</b> —— 实测有模型译一次就烧掉几千 token。</div>
         </div>
       </div>

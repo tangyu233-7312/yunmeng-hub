@@ -320,11 +320,6 @@ _ROUND_HEADER_RE = re.compile(r"^（第\s*(\d+)\s*[~～-]\s*(\d+)\s*轮）\s*$",
 # ==================================================================
 #  轮数计算
 # ==================================================================
-def round_of(message: Any) -> int:
-    """这条消息属于第几轮（轮 = 一问一答，以用户消息计数）。"""
-    return int(getattr(message, "round_no", 0) or 0)
-
-
 def count_rounds(messages: list[Any]) -> int:
     """**完整**的轮数：一问一答都齐了才算一轮。
 
@@ -344,11 +339,6 @@ def count_rounds(messages: list[Any]) -> int:
             rounds += 1
             pending_user = False
     return rounds
-
-
-def count_user_turns(messages: list[Any]) -> int:
-    """用户发言的条数（轮次编号用；与 `count_rounds` 的差别见上）。"""
-    return sum(1 for m in messages if str(getattr(m, "role", "")) == "user")
 
 
 def round_index_map(messages: list[Any]) -> dict[int, int]:

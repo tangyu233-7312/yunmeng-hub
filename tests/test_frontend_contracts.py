@@ -85,3 +85,69 @@ def test_no_leftover_debug_artifacts_in_frontend() -> None:
             if "console.log(" in stripped:
                 offenders.append(f"{path.relative_to(REPO)}:{idx}")
     assert not offenders, f"前端有 console.log 残留：{offenders}"
+
+
+# ==================================================================
+#  ★★ 诊断信息（「关于 → 复制诊断信息」）的隐私红线
+# ==================================================================
+DIAGNOSTICS_JS = REPO / "web" / "js" / "diagnostics.js"
+ABOUT_JS = REPO / "web" / "js" / "about.js"
+
+
+def test_diagnostics_text_never_carries_bodies() -> None:
+    """★★ 诊断文本是**设计成可以贴给别人**的，所以绝不能带请求/响应体。
+
+    ==================== 这条守着一个真实的隐私事故 ====================
+    「请求日志」面板故意摊开**原始请求/响应体**（含对话原文、角色卡内容），
+    那是给本机用户自己排查用的。而「复制诊断信息」的用途恰恰相反 ——
+    用户会把它贴到群里、issue 里。两者一旦混用，用户一句"帮我看看"
+    就会把整段私密对话发出去。
+
+    所以这里做**静态断言**：诊断模块只能从请求日志条目里取
+    「方法 / 路径 / 状态码 / request_id / 后端那一句话」这几个白名单字段，
+    不许出现 `requestBody` / `responseBody`。
+
+    （浏览器侧还有一条动态断言，见 `scripts/ui_probe.py` 的「13.关于」一节。）
+    """
+    src = _read(DIAGNOSTICS_JS)
+    # ★ 允许**唯一**一处对响应体的读取：`.message`（后端写死的短句），且必须截断。
+    #   除此之外不许碰请求体或响应体的其它部分。
+    assert "requestBody" not in src, "诊断模块不该读请求体（含对话原文）"
+    body_reads = [
+        line.strip() for line in src.splitlines()
+        if "responseBody" in line
+    ]
+    assert body_reads, "诊断模块应当从响应体里取 message（否则错误摘要没内容）"
+    for line in body_reads:
+        assert "responseBody?.message" in line, (
+            f"只允许读 responseBody.message（后端保证是写死短句），实际：{line}"
+        )
+        assert ".slice(" in line, f"从响应体取的内容必须截断：{line}"
+    for required in ("entry.method", "entry.url", "entry.status", "entry.requestId"):
+        assert required in src, f"诊断模块应当取 {required}（白名单字段）"
+
+
+def test_diagnostics_collector_excludes_normal_business_failures() -> None:
+    """★ 404/409 这类"正常业务失败"不该进诊断文本，否则看的人会以为系统到处在坏。"""
+    src = _read(DIAGNOSTICS_JS)
+    assert "isReportableFailure" in src, "应当有一个明确的取舍函数"
+    assert "[400, 401, 403, 422, 429]" in src, "应当显式列出值得报的状态码"
+
+
+def test_about_dialog_honors_the_agreed_scope() -> None:
+    """「关于」弹窗的内容是用户逐条定过的 —— 这里钉住"放什么、不放什么"。
+
+    放：版本 / 技术栈 / 当前存储 / 数据目录+日志目录 / GitHub 地址 / 复制诊断
+    不放：向量库信息、已知限制（"未签名"那条改放在**首次设置向导页**）
+    """
+    src = _read(ABOUT_JS)
+    for required in ("版本", "技术栈", "当前存储", "数据目录", "日志目录", "开源地址"):
+        assert required in src, f"「关于」里应当有「{required}」"
+    assert "github.com" in src, "应当有开源地址"
+    # ★ 判据要锚定在**渲染出来的那一行**上，而不是"文件里出现过这几个字" ——
+    #   因为注释里会解释"为什么不要它"，那种出现是正常的（第一版就误报了）。
+    assert "row('已知限制'" not in src, "「已知限制」是用户划掉的（放关于页没用）"
+    assert "row('向量库" not in src, "「向量库信息」是用户划掉的（普通用户看不懂）"
+    # 未签名说明按用户决定放在向导页（用户看到 SmartScreen 警告的当下才需要它）
+    setup = _read(REPO / "desktop" / "src" / "setup.html")
+    assert "代码签名" in setup, "「未签名」说明应当放在首次设置向导页"

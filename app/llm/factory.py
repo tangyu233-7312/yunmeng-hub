@@ -178,8 +178,9 @@ def create_provider_from_config(
         extra_params=config.generation,
         settings=settings,
     )
-    # ★ 把"思考强度是否真的生效"的探测结论**跟着适配器走**（第十六轮）：
-    #   结论本来只挂在 ProviderConfig 上，而适配器只带走 `default_params` ⇒
-    #   翻译/总结那两条链路在调用侧根本问不到它（上一版因此**静默失效**，见 §29.13）。
-    adapter.reasoning_support = config.effective_reasoning_support()
+    # ★ 第二十七轮：这里原来把"思考强度探测结论"从 ProviderConfig 复制到适配器上。
+    #   探测功能已删除（不可靠、且给过错误结论），改为：
+    #     · 适配器用 `supports_reasoning_effort` **静态声明**自己能不能翻译这个参数；
+    #     · 服务端到底接不接受，由请求时的 400 自动退回兜底。
+    #   所以这里不再需要搬运任何结论。
     return adapter

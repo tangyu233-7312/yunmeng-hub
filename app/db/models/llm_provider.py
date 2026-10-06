@@ -156,26 +156,6 @@ class LLMProvider(Base, TimestampMixin):
         comment="思考强度：auto / off / low / medium / high",
     )
 
-    # ---------------- 思考强度「生效性」探测结果 ----------------
-    # 部分模型会**接受但不理会** reasoning_effort（实测 DeepSeek 的 deepseek-flash 即如此，
-    # 无论设成 off 还是 high，思考量都在同一区间随机波动）。
-    # 这三个字段保存「检测支持情况」按钮的实测结论，让界面下次能给出**基于事实**的提醒，
-    # 而不是让用户对着一堆看不出区别的下拉框猜。
-    reasoning_effort_supported: Mapped[bool | None] = mapped_column(
-        Boolean,
-        nullable=True,
-        comment="实测该模型是否支持思考强度。NULL = 尚未探测",
-    )
-    reasoning_effort_probed_model: Mapped[str | None] = mapped_column(
-        String(128),
-        nullable=True,
-        comment="探测时使用的模型名 —— 换模型后旧结论即失效，用于判断过期",
-    )
-    reasoning_effort_probed_at: Mapped[datetime | None] = mapped_column(
-        DateTime,
-        nullable=True,
-        comment="思考强度支持情况的探测时间",
-    )
 
     # ---------------- 生成参数 ----------------
     # MutableDict.as_mutable(JSON) 的作用：

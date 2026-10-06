@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import copy
-import json
 from datetime import datetime
 from typing import Any
 
@@ -70,17 +69,6 @@ MAX_PNG_BYTES = 10 * 1024 * 1024
 def _now() -> datetime:
     """与数据库 server_default=func.now() 保持一致的本地朴素时间。"""
     return datetime.now()
-
-
-def _escape_like(term: str) -> str:
-    """转义 LIKE 通配符。
-
-    ★ 这是一个容易被忽略的小坑：如果用户搜索 "50%"，而我们直接拼
-      `LIKE '%50%%'`，那个半角百分号会被当成通配符，搜出所有含 "50" 的记录。
-      同理下划线 `_` 在 LIKE 里代表「任意单个字符」。
-      所以必须先把 `\\` `%` `_` 转义掉（反斜杠要最先处理，否则会二次转义）。
-    """
-    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _resolve_world_book(

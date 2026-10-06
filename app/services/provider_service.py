@@ -36,7 +36,6 @@ from app.llm import (
     create_provider_from_config,
 )
 from app.llm.base import BaseLLMProvider, HealthCheckResult
-from app.llm.diagnostics import probe_reasoning_effort
 
 # 说明：本项目的 MySQL 时间字段使用 server_default=func.now()，
 # 取的是**数据库所在机器的本地时间**。为了让手工写入的时间戳与之一致，
@@ -207,9 +206,6 @@ def update_provider(db: Session, user_id: int, provider_id: int, payload) -> LLM
     if payload.base_url is not None:
         row.base_url = payload.base_url
     if payload.model_name is not None:
-        # ★ 模型名一旦变化，之前的「思考强度支持情况」探测结论就不再适用。
-        #   这里**不删除**该结论，而是靠 reasoning_effort_probed_model 自动判定过期 ——
-        #   这样用户改回原模型时，旧结论还能重新生效，比直接删掉更友好。
         row.model_name = payload.model_name
     if payload.context_window is not None:
         row.context_window = payload.context_window
@@ -302,9 +298,6 @@ def to_config(row: LLMProvider, *, api_key: str | None = None) -> ProviderConfig
             reasoning_effort=row.reasoning_effort,
             extra=dict(row.extra_params or {}),
         ),
-        reasoning_effort_supported=row.reasoning_effort_supported,
-        reasoning_effort_probed_model=row.reasoning_effort_probed_model,
-        reasoning_effort_probed_at=row.reasoning_effort_probed_at,
     )
 
 
@@ -360,17 +353,6 @@ def serialize_provider(row: LLMProvider) -> dict:
         "last_tested_at": row.last_tested_at,
         "last_test_ok": row.last_test_ok,
         "last_test_message": row.last_test_message,
-        "reasoning_effort_support": {
-            "probed": row.reasoning_effort_supported is not None,
-            "supported": config.effective_reasoning_support(),
-            "probed_model": row.reasoning_effort_probed_model,
-            "probed_at": (
-                row.reasoning_effort_probed_at.isoformat()
-                if row.reasoning_effort_probed_at
-                else None
-            ),
-            "stale": config.reasoning_probe_is_stale,
-        },
         "budget": config.budget.to_dict(),
         "warnings": warnings,
         "hints": hints,
@@ -396,29 +378,6 @@ def test_connection(db: Session, row: LLMProvider) -> HealthCheckResult:
     row.last_test_message = None if result.ok else (result.message or "")[:512]
     db.commit()
     db.refresh(row)
-    return result
-
-
-def probe_reasoning(db: Session, row: LLMProvider) -> dict:
-    """探测该模型是否真的支持「思考强度」，并把结论写回数据库。
-
-    ★ 这个动作**会真实调用模型 2 次**，因此只能由用户主动触发，
-      不能在保存配置时自动执行。
-    """
-    provider = build_adapter(row)
-    try:
-        result = probe_reasoning_effort(provider)
-    finally:
-        provider.close()
-
-    persist = result.get("persist") or {}
-    if persist:
-        row.reasoning_effort_supported = persist.get("reasoning_effort_supported")
-        row.reasoning_effort_probed_model = persist.get("reasoning_effort_probed_model")
-        row.reasoning_effort_probed_at = persist.get("reasoning_effort_probed_at")
-        db.commit()
-        db.refresh(row)
-
     return result
 
 

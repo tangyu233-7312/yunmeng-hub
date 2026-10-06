@@ -245,7 +245,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
         # ★ 特别提示：reasoning_effort 是较新的参数，不少模型与网关还不认识它，
         #   会直接返回 400「不支持的参数」。与其让用户对着一句英文报错发呆，
-        #   不如直接给出唯一的解法。
+        #   不如直接给出唯一的解法（正常情况下走不到这里 —— `_post_with_effort_fallback`
+        #   已经会自动去掉该参数重试一次并把结果如实回报）。
         if status_code == 400 and "reasoning_effort" in payload:
             detail = dict(error.detail or {})
             detail["hint"] = (
@@ -256,6 +257,88 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             error.detail = detail
 
         raise error
+
+    # ==================== 思考强度不被支持时的自动退回 ====================
+    #
+    #: 已确认「不接受 reasoning_effort」的模型集合（进程内缓存）。
+    #:
+    #: ★ 为什么需要这个缓存：删掉「思考强度探测」功能之后（见 docs/dev-notes/handoff.md
+    #   第二十七轮），我们改为**直接发送、失败自动退回**。但如果不记下来，
+    #   那么一个不支持的模型会**每次调用都白试一次**（多一次 400 往返）——
+    #   对长会话是明显的浪费。所以第一次确认不支持后，后续请求直接跳过该参数。
+    _EFFORT_UNSUPPORTED_MODELS: set[str] = set()
+
+    def _effort_rejected(self, status_code: int, body: Any) -> bool:
+        """判断这次 400 是不是「不认识 reasoning_effort」造成的。"""
+        if status_code != 400:
+            return False
+        text = str(body).lower()
+        if "reasoning_effort" not in text:
+            return False
+        markers = (
+            "unsupported", "not supported", "unknown", "unrecognized", "unexpected",
+            "invalid", "extra", "不支持", "未知", "无法识别",
+        )
+        return any(marker in text for marker in markers)
+
+    def _post_with_effort_fallback(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        *,
+        notes: list[str],
+        stream: bool,
+    ):
+        """发请求；若因 `reasoning_effort` 被拒，则**去掉它重试一次**并如实记录。
+
+        ★ 设计取舍（写在代码里，免得以后有人"顺手"改回去）：
+          · 上一版靠"探测模型是否支持思考强度"来决定发不发这个参数 —— 但实测发现
+            **用思考 token 数根本无法可靠判定**（DeepSeek 各档差异全在自然波动范围内，
+            见第二十七轮的实验记录）。于是那套探测既不可靠、又会给出错误结论。
+          · 现在改成"先发、被拒就退回"：这是**基于事实**的判定 —— 厂商明确回 400
+            才说明它不认识这个参数，比自己拿 token 数猜可靠得多。
+          · 代价是第一次会多一次失败请求；用 `_EFFORT_UNSUPPORTED_MODELS` 记住结论后
+            就不再重复尝试。
+        """
+        model = payload.get("model") or self.model_name
+        if "reasoning_effort" in payload and model in self._EFFORT_UNSUPPORTED_MODELS:
+            payload.pop("reasoning_effort", None)
+            notes.append(
+                "该模型此前已确认不支持「思考强度」，本次未发送 reasoning_effort"
+            )
+
+        response = post_with_retry(
+            self._client,
+            url,
+            headers=self._headers(),
+            payload=payload,
+            max_retries=self.max_retries,
+            provider_label=self.label,
+        )
+
+        if response.status_code != 200 and "reasoning_effort" in payload:
+            body = self._safe_json(response)
+            if self._effort_rejected(response.status_code, body):
+                self._EFFORT_UNSUPPORTED_MODELS.add(model)
+                logger.info(
+                    "{} 不支持 reasoning_effort（{}），已去掉该参数重试一次 | model={}",
+                    self.label, response.status_code, model,
+                )
+                retry_payload = {k: v for k, v in payload.items() if k != "reasoning_effort"}
+                response = post_with_retry(
+                    self._client,
+                    url,
+                    headers=self._headers(),
+                    payload=retry_payload,
+                    max_retries=self.max_retries,
+                    provider_label=self.label,
+                )
+                if response.status_code == 200:
+                    notes.append(
+                        "该模型不支持「思考强度」（服务器拒绝 reasoning_effort），"
+                        "本次已自动去掉该参数并成功 —— 想彻底不再尝试，请把思考强度改成 auto"
+                    )
+        return response
 
     def _extract_content(self, message: dict[str, Any]) -> str:
         """从 message 字段中取出正文。
@@ -341,13 +424,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
         started = time.perf_counter()
         try:
-            response = post_with_retry(
-                self._client,
-                url,
-                headers=self._headers(),
-                payload=payload,
-                max_retries=self.max_retries,
-                provider_label=self.label,
+            response = self._post_with_effort_fallback(
+                url, payload, notes=notes, stream=False
             )
         except BaseException as exc:  # noqa: BLE001 - 统一转换后再抛
             raise self._normalize_exception(exc, endpoint=url) from exc
@@ -464,6 +542,15 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
         emitted = False   # 是否已经产出过内容
         attempt = 0       # 已尝试次数
+        effort_retried = False   # 是否已为「思考强度被拒」重试过（只做一次）
+
+        # ★ 与 `chat()` 同款处理：该模型此前已确认不接受 reasoning_effort → 直接不发
+        model = payload.get("model") or self.model_name
+        if "reasoning_effort" in payload and model in self._EFFORT_UNSUPPORTED_MODELS:
+            payload.pop("reasoning_effort", None)
+            yield StreamChunk(notes=[
+                "该模型此前已确认不支持「思考强度」，本次未发送 reasoning_effort"
+            ])
 
         while True:
             attempt += 1
@@ -474,8 +561,32 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                     # 非 200：读取错误体后抛出（此时还没产出内容，属于可重试范畴）
                     if response.status_code != 200:
                         raw = response.read().decode("utf-8", errors="replace")
+                        body = self._loads(raw)
+                        # ★ 首次遇到「不认识 reasoning_effort」→ 去掉它重试一次。
+                        #   放在这里而不是抛错，是为了让"用户设了思考强度、模型却不支持"
+                        #   这件事**不打断对话**（实测这类拒绝只发生在首字之前，可安全重试）。
+                        if (
+                            not effort_retried
+                            and not emitted
+                            and "reasoning_effort" in payload
+                            and self._effort_rejected(response.status_code, body)
+                        ):
+                            effort_retried = True
+                            self._EFFORT_UNSUPPORTED_MODELS.add(model)
+                            payload = {
+                                k: v for k, v in payload.items() if k != "reasoning_effort"
+                            }
+                            logger.info(
+                                "{} 流式请求被拒（不支持 reasoning_effort），"
+                                "已去掉该参数重试 | model={}", self.label, model,
+                            )
+                            yield StreamChunk(notes=[
+                                "该模型不支持「思考强度」（服务器拒绝 reasoning_effort），"
+                                "已自动去掉该参数重试 —— 想彻底不再尝试，请把思考强度改成 auto"
+                            ])
+                            continue
                         self._raise_for_status(
-                            response.status_code, self._loads(raw), url=url, payload=payload
+                            response.status_code, body, url=url, payload=payload
                         )
 
                     for chunk in self._iter_stream(response):

@@ -29,7 +29,6 @@
 """
 
 from app.llm.base import BaseLLMProvider, HealthCheckResult
-from app.llm.diagnostics import describe_token_split, probe_reasoning_effort
 from app.llm.factory import PROVIDER_TYPES, create_provider, create_provider_from_config
 from app.llm.params import (
     REASONING_EFFORT_HINTS,
@@ -38,6 +37,9 @@ from app.llm.params import (
     ProviderConfig,
     ReasoningEffort,
     compute_context_budget,
+    # ★ 第二十七轮：从已删除的 `diagnostics.py` 搬过来（它讲的是 token 预算规则，
+    #   与"探测厂商是否听话"无关，不该和那个一起消失）。
+    describe_token_split,
 )
 from app.llm.schema import (
     ChatMessage,
@@ -70,7 +72,6 @@ __all__ = [
     "PROVIDER_TYPES",
     "create_provider",
     "create_provider_from_config",
-    # 参数生效性诊断
-    "probe_reasoning_effort",
+    # token 预算说明（纯计算，不调用模型）
     "describe_token_split",
 ]

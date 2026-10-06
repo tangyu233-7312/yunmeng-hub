@@ -194,15 +194,6 @@ class MemoryFactCreate(BaseModel):
         return text
 
 
-class WorldBookScanInfo(BaseModel):
-    """关键词触发的统计（界面上解释"为什么这次没注入设定"）。"""
-
-    matched: int = 0
-    injected: int = 0
-    dropped: int = 0
-    scanned_messages: int = 0
-
-
 class SessionDetail(BaseModel):
     """会话详情（含消息历史）。"""
 
@@ -481,15 +472,3 @@ class SendResult(BaseModel):
     latency_ms: int = 0
 
 
-class SseError(BaseModel):
-    """SSE 的错误事件负载。
-
-    ★ 流式过程中出错**必须**发一个事件告诉前端，不能静默断开：
-      否则前端只会看到"连接莫名其妙断了"，用户完全不知道发生了什么。
-    """
-
-    code: str
-    message: str
-    status: int = 502
-    detail: Any = None
-    request_id: str = "-"

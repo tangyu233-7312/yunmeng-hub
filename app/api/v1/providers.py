@@ -7,7 +7,6 @@
     PATCH  /providers/{id}                修改配置（只传要改的字段）
     DELETE /providers/{id}                删除配置
     POST   /providers/{id}/test           连通性测试（结果写回数据库）
-    POST   /providers/{id}/probe-reasoning 思考强度生效性探测（会真实调用模型 2 次）
     GET    /providers/{id}/models         拉取该服务商的可用模型列表
     POST   /providers/test-draft          **未保存**的配置试连（界面「先测再存」）
 
@@ -74,7 +73,6 @@ def get_provider(
     返回体里除了配置本身，还有三类**前端可以直接渲染**的派生字段：
 
         budget                   上下文预算拆解（输入预算 = 窗口 − 最大输出 − 安全余量）
-        reasoning_effort_support 思考强度的实测结论（是否探测过 / 是否支持 / 结论是否已过期）
         warnings / hints         黄色警告与灰色提示，分开返回
 
     这些不落库、每次按当前配置实时算 —— 用户改了最大输出，预算立刻就变。
@@ -150,29 +148,6 @@ def test_provider(
         ),
         message="连通性测试完成" if result.ok else "连通性测试未通过",
     )
-
-
-@router.post(
-    "/{provider_id}/probe-reasoning",
-    summary="探测模型是否真的支持「思考强度」",
-    response_model=ApiResponse[dict],
-)
-def probe_reasoning(
-    provider_id: int, db: DbSession, current_user: CurrentUser
-) -> ApiResponse[dict]:
-    """对比实验：以「尽量关闭思考」和「深度思考」各调用一次，看思考量是否真有差异。
-
-    ★ **本接口会真实调用模型 2 次**，请做成用户主动点击的按钮。
-
-    为什么需要它？实测 deepseek-flash 会**接受但不理会** reasoning_effort：
-    无论设成 off 还是 high，思考量都在同一区间随机波动。
-    这种「静默无操作」不报错、不给提示，只能靠对比实验发现。
-
-    结论会写回数据库，之后界面上就能针对该配置给出基于实测的提醒。
-    """
-    row = provider_service.get_owned_provider(db, current_user.id, provider_id)
-    result = provider_service.probe_reasoning(db, row)
-    return ApiResponse.ok(result, message="思考强度支持情况探测完成")
 
 
 @router.get(

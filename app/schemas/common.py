@@ -68,21 +68,6 @@ class Page(BaseModel, Generic[T]):
         return self.offset + len(self.items) < self.total
 
 
-class ErrorResponse(BaseModel):
-    """统一错误响应。
-
-    注意：这个类只用于在 Swagger 文档里展示错误长什么样，
-    实际响应体是 app/core/exceptions.py 里的异常处理器动态生成的。
-    """
-
-    code: str = Field(..., examples=["NOT_FOUND"], description="业务错误码")
-    message: str = Field(..., examples=["请求的资源不存在"], description="错误说明")
-    detail: Any = Field(default=None, description="附加信息，如字段级校验错误列表")
-    request_id: str = Field(
-        default="-", examples=["3f9a1c2b8d4e5f60"], description="请求ID，用于对照服务端日志"
-    )
-
-
 class ComponentStatus(BaseModel):
     """单个外部依赖（MySQL / 向量库 等）的健康状态。"""
 

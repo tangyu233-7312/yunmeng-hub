@@ -238,20 +238,6 @@ class WorldBookUpdate(BaseModel):
         return self
 
 
-class WorldBookRef(BaseModel):
-    """世界书的精简引用，嵌在角色卡详情里返回。
-
-    只给「够用」的信息：前端要显示「已关联世界书：《克苏鲁世界》（42 条）」，
-    但这些信息在列表页不该把整本书都拖出来。
-    """
-
-    id: int
-    name: str | None = None
-    display_name: str = ""
-    entry_count: int = 0
-    enabled_entry_count: int = 0
-
-
 class WorldBookBrief(BaseModel):
     """世界书（列表项）。
 

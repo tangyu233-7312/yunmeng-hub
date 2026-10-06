@@ -35,6 +35,8 @@
         "hne/app": "/console/js/app.js?v=__WEB_VERSION__",
         "hne/api": "/console/js/api.js?v=__WEB_VERSION__",
         "hne/ui": "/console/js/ui.js?v=__WEB_VERSION__",
+        "hne/diagnostics": "/console/js/diagnostics.js?v=__WEB_VERSION__",
+        "hne/about": "/console/js/about.js?v=__WEB_VERSION__",
         "hne/auth": "/console/js/views/auth.js?v=__WEB_VERSION__",
         "hne/cards": "/console/js/views/cards.js?v=__WEB_VERSION__",
         "hne/books": "/console/js/views/books.js?v=__WEB_VERSION__",
@@ -89,6 +91,7 @@
 
     <div class="topbar-right">
       <button class="ghost-btn" id="btn-reqlog" title="查看每一次 API 调用">请求日志</button>
+      <button class="ghost-btn" id="btn-about" title="版本 / 存储方式 / 目录 / 开源地址">关于</button>
       <span class="user-chip" id="user-chip"></span>
       <button class="ghost-btn" id="btn-logout">退出</button>
     </div>
@@ -103,6 +106,14 @@
       <span class="muted" id="reqlog-count"></span>
       <button class="ghost-btn small" id="reqlog-clear">清空</button>
       <button class="ghost-btn small" id="reqlog-close">关闭</button>
+    </div>
+    <!-- ★ 隐私提醒（用户确认要加）：展开的行里含**原始请求/响应体**，
+         也就是提示词、角色卡内容与对话原文。它是给自己排查用的，
+         但截图发人就会把这些一起发出去 —— 必须在此处说清，
+         而不是等用户自己意识到。 -->
+    <div class="reqlog-note">
+      ⚠ 展开后可见<b>原始请求/响应体</b>，其中可能包含你的<b>对话原文与角色卡内容</b>
+      —— 请勿直接公开截图。想贴给别人排查，请用「关于 → 复制诊断信息」。
     </div>
     <div class="reqlog-list" id="reqlog-list"></div>
   </aside>

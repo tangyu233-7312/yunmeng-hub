@@ -21,8 +21,8 @@ class WholeReplyAdapter:
     def __init__(self, inner: Any) -> None:
         self._inner = inner
         self.default_params = getattr(inner, "default_params", None)
-        # ★ 探测结论也要透传（同上：包一层之后不能丢）
-        self.reasoning_support = getattr(inner, "reasoning_support", None)
+        # ★ 是否参与思考强度适配也要透传（包一层之后不能丢）
+        self.supports_reasoning_effort = getattr(inner, "supports_reasoning_effort", True)
 
     @property
     def budget(self):

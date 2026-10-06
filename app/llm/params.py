@@ -327,23 +327,6 @@ class ProviderConfig(BaseModel):
     # ---------------- 生成参数 ----------------
     generation: GenerationParams = Field(default_factory=GenerationParams)
 
-    # ---------------- 思考强度「生效性」探测结果 ----------------
-    # 这三个字段由「检测支持情况」按钮写入，用于在界面上给出**基于实测**的提醒。
-    # 背景：部分模型会接受 reasoning_effort 但完全不理会它（实测 deepseek-flash 即如此），
-    # 因此「用户选了什么」和「厂商是否照做」是两件事，必须分开记录。
-    reasoning_effort_supported: bool | None = Field(
-        default=None,
-        description="实测该模型是否支持思考强度。None = 尚未探测",
-    )
-    reasoning_effort_probed_model: str | None = Field(
-        default=None,
-        description="探测时使用的模型名。用于判断旧结论是否已经过期",
-    )
-    reasoning_effort_probed_at: datetime | None = Field(
-        default=None,
-        description="探测时间",
-    )
-
     @model_validator(mode="after")
     def _check_output_fits_window(self) -> "ProviderConfig":
         """输出预留不能吃掉整个上下文窗口，否则一点输入都放不下。"""
@@ -360,29 +343,6 @@ class ProviderConfig(BaseModel):
         """当前的上下文预算拆解。"""
         return compute_context_budget(self.context_window, self.generation.max_tokens)
 
-    # -------------------- 思考强度探测结论 --------------------
-    @property
-    def reasoning_probe_is_stale(self) -> bool:
-        """探测结论是否已经过期。
-
-        ★ 为什么需要这个判断？
-          探测结论是**针对特定模型**的。用户如果把模型名从 deepseek-flash 改成
-          deepseek-v4-pro，旧的「该模型忽略思考强度」结论就不再适用 ——
-          如果不做这个判断，界面会一直拿着过期的结论误导用户。
-        """
-        if self.reasoning_effort_supported is None:
-            return False
-        return self.reasoning_effort_probed_model != self.model_name
-
-    def effective_reasoning_support(self) -> bool | None:
-        """考虑过期之后的「有效探测结论」。
-
-        None = 未探测或结论已过期（等同于不知道）
-        """
-        if self.reasoning_probe_is_stale:
-            return None
-        return self.reasoning_effort_supported
-
     def warnings(self) -> list[str]:
         """返回**会影响效果的问题**（界面用黄色警告展示，不阻断保存）。
 
@@ -393,14 +353,6 @@ class ProviderConfig(BaseModel):
         generation = self.generation
         budget = self.budget
         effort = generation.reasoning_effort
-
-        # ★ 已知该模型会忽略思考强度，而用户偏偏设了一个非 auto 的值
-        if effort is not ReasoningEffort.AUTO and self.effective_reasoning_support() is False:
-            messages.append(
-                f"实测该模型会忽略「思考强度」：设置为 {effort.value} 后，"
-                f"思考量并没有明显变化。这个设置不会报错，但也不会有任何效果。"
-                f"建议改回 auto，改用「最大输出 Token」来控制正文长度。"
-            )
 
         # 推理模型 + 输出配额偏小 = 正文被思考挤没
         if (
@@ -443,20 +395,17 @@ class ProviderConfig(BaseModel):
             # auto 永远不需要提醒：它不干预厂商默认行为，不存在「设了没用」的问题
             return messages
 
-        support = self.effective_reasoning_support()
-
-        if support is None and self.reasoning_probe_is_stale:
-            messages.append(
-                f"模型名已从「{self.reasoning_effort_probed_model}」改为"
-                f"「{self.model_name}」，之前的思考强度检测结论已失效，建议重新检测。"
-            )
-        elif support is None:
-            messages.append(
-                "尚未验证该模型是否支持「思考强度」。部分模型会接受这个参数但完全不理会它"
-                "（实测 DeepSeek 的 deepseek-flash 即是如此），"
-                "建议先点「检测支持情况」确认（会调用模型 2 次）。"
-            )
-
+        # ★ 第二十七轮：这里原来会提醒"尚未验证该模型是否支持思考强度，建议点检测"。
+        #   那个"检测"功能已被**删除** —— 实测证明用思考 token 数根本无法可靠判定
+        #   （DeepSeek 各档的差异全在自然波动范围内），它给过错误结论。
+        #   现在改为"直接发送、被拒自动退回"（见 openai_compatible._post_with_effort_fallback），
+        #   所以这里只需要说明**当前有这个设置**，不再要求用户去验证什么。
+        messages.append(
+            f"已设置思考强度「{effort.value}」：适配器会把它翻译成厂商字段"
+            "（OpenAI 兼容 → reasoning_effort；Anthropic → thinking.budget_tokens）。"
+            "若某个模型不认识该参数，服务端会拒绝，届时本应用会**自动去掉它重试一次**"
+            "并在回复的「适配说明」里如实告知，不会打断对话。"
+        )
         return messages
 
     def to_dict(self) -> dict[str, Any]:
@@ -469,37 +418,59 @@ class ProviderConfig(BaseModel):
             "context_window": self.context_window,
             "generation": self.generation.model_dump(mode="json"),
             "budget": self.budget.to_dict(),
-            # 思考强度的生效性结论（界面据此决定是否给提醒）
-            "reasoning_effort_support": {
-                "probed": self.reasoning_effort_supported is not None,
-                "supported": self.effective_reasoning_support(),
-                "probed_model": self.reasoning_effort_probed_model,
-                "probed_at": (
-                    self.reasoning_effort_probed_at.isoformat()
-                    if self.reasoning_effort_probed_at
-                    else None
-                ),
-                "stale": self.reasoning_probe_is_stale,
-            },
             # 两类提示分开返回，前端可以分别用黄色警告条与灰色信息条展示
             "warnings": self.warnings(),
             "hints": self.hints(),
         }
 
 
-def cheap_reasoning_effort(adapter: Any) -> "ReasoningEffort | None":
-    """**机械任务**（翻译中间件 / 剧情总结）该用多大思考强度：能省就省，但**不冒险**。
+def describe_token_split(provider: Any) -> dict[str, Any]:
+    """描述「思考 vs 正文」的 token 分配规则与当前预算。
 
-    ★ 读的是**适配器上的** `reasoning_support`（由 `create_provider_from_config` 从
-      `ProviderConfig.effective_reasoning_support()` 带过来，failover / whole_reply 会透传）。
-      为什么不让这里自己去问 `default_params`：探测结论**根本不在** `GenerationParams` 上 ——
-      上一版就是这么写的，属性访问失败又被 `try/except` 吞掉，于是"降思考"**静默失效了整个一轮**
-      （见 `docs/handoff.md` §29.13）。
-    ★ 只用 `getattr(..., default)`，**不再包 try/except**：接口变了就该炸出来，不许再变成 no-op。
-    ★ 返回值 None = "不要覆盖"（用 provider 自己的设置）：结论为 None（未探测/已过期）或
-      False（实测不接受）时一律不发这个参数 —— 不少网关不认识它会直接 400，而这两条链路的
-      失败形态是"用户白等一场"（翻译没了 / 总结退回本地压缩），不值得为省一点钱冒险。
+    纯计算，不调用模型 —— 可用于界面实时预览。
+
+    ★ 它原先住在 `app/llm/diagnostics.py`（那个模块还放着"思考强度生效性探测"）。
+      第二十七轮删掉探测功能时差点把它一起删掉 —— 幸好有测试引用它（`test_params.py`）
+      把这次误删拦了下来。现在它独立放在这里：它讲的是 **token 预算规则**，
+      与"厂商听不听话"无关，本来也不该和探测绑在一起。
     """
-    if getattr(adapter, "reasoning_support", None) is not True:
+    budget = provider.budget
+    return {
+        "provider": provider.label,
+        "model": provider.model_name,
+        "reasoning_effort": provider.default_params.reasoning_effort.value,
+        "budget": budget.to_dict(),
+        "rule": (
+            "最大输出 Token（max_tokens）包含思考过程 Token。"
+            "推理模型会先把配额用在思考上，剩下的才留给正文。"
+        ),
+    }
+
+
+def cheap_reasoning_effort(adapter: Any) -> "ReasoningEffort | None":
+    """**机械任务**（翻译中间件 / 剧情总结）该用多大思考强度：能省就省。
+
+    ==================== 第二十七轮的重要修正 ====================
+    这个函数原来会先看"该模型是否被**实测**支持思考强度"（`adapter.reasoning_support`，
+    来自已删除的探测功能），只在结论为 True 时才降思考。后果是：
+
+      · DeepSeek 被那次**不可靠的探测**误判为"不支持"（见 §27 的实验记录：
+        各档思考 token 全在自然波动范围内，根本不足以判定），
+      · 于是翻译与剧情总结这两条**本来最该省钱**的链路，
+        **从来没能真正降过思考强度** —— 省钱机制被一个错误结论堵死了整整几轮。
+
+    现在改成：**直接请求 OFF，不再预判**。风险由适配器兜住 ——
+    若厂商拒绝 `reasoning_effort`，`_post_with_effort_fallback` 会自动去掉它并重试一次，
+    对话不会中断，调用方也会在 `notes` 里看到如实说明。
+    换句话说：**我们自己试一次，比拿 token 数猜一次更可靠**。
+
+    ★ 返回值 None = "不要覆盖"（沿用 provider 自己的设置）：仅在适配器明确表示
+      "不参与思考强度适配"时返回（例如某些协议没有对应字段）。这里用
+      `getattr(..., default=False)` 取一个**显式声明**的开关，取不到就按"支持"处理 ——
+      因为现在的默认策略是"敢试"，而不是"不敢试"。
+    ★ 只用 `getattr(..., default)`，**不包 try/except**：接口变了就该炸出来，
+      不许再变成静默的 no-op（上一轮就是这么埋掉整个功能的）。
+    """
+    if getattr(adapter, "supports_reasoning_effort", True) is False:
         return None
     return ReasoningEffort.OFF

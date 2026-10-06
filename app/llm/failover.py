@@ -24,7 +24,6 @@ from app.llm.errors import (
     LLMBadRequestError,
     LLMModelNotFoundError,
     LLMProviderError,
-    LLMQuotaError,
 )
 from app.llm.schema import ChatRequest, ChatResult, StreamChunk
 
@@ -63,8 +62,8 @@ class FailoverAdapter:
         #: 本次是否真的用了备用模型（engine 用它决定消息上记哪个模型名）
         self.used_fallback = False
         self.default_params = getattr(primary, "default_params", None)
-        # ★ 探测结论也要透传（否则包一层 failover 之后"能不能降思考"就丢了）
-        self.reasoning_support = getattr(primary, "reasoning_support", None)
+        # ★ 是否参与思考强度适配也要透传（否则包一层 failover 之后"能不能降思考"就丢了）
+        self.supports_reasoning_effort = getattr(primary, "supports_reasoning_effort", True)
 
     # ---------------- 与普通适配器一致的对外接口 ----------------
     @property

@@ -12,16 +12,17 @@
 
 from __future__ import annotations
 
+import platform
 from typing import Any
 
 from fastapi import APIRouter
 
-from app.core.config import get_settings
+from app.api.deps import CurrentUser
+from app.core.config import data_root, get_settings
 from app.core.exceptions import ConfigurationError
 from app.db.chroma import check_vector_store, run_selftest
 from app.db.mysql import check_connection
 from app.llm import PROVIDER_TYPES, create_provider
-from app.llm.diagnostics import probe_reasoning_effort
 from app.schemas.common import ApiResponse
 
 router = APIRouter()
@@ -89,6 +90,48 @@ def provider_types() -> ApiResponse[dict[str, str]]:
 
 
 # ==================================================================
+#  运行环境快照（「关于」弹窗与「复制诊断信息」用）
+# ==================================================================
+@router.get("/diagnostics", summary="运行环境快照（供关于页与复制诊断信息）")
+def diagnostics(current_user: CurrentUser) -> ApiResponse[dict[str, Any]]:
+    """返回一份**不含任何密钥或对话内容**的运行环境快照。
+
+    ==================== 为什么需要它 ====================
+    网页版控制台**拿不到真实的文件系统路径**（浏览器没有这个能力），
+    而"数据/日志目录在哪"恰恰是排查问题时最需要的东西之一 ——
+    用户要能自己打开目录、把日志文件发给别人看。
+    所以由后端把自己知道的路径如实报出来。
+
+    ==================== 安全边界（重要）====================
+    · 只返回**路径与版本**这类环境事实，**不含** API Key、密钥、口令、会话内容；
+    · **需要登录**（`CurrentUser`）—— 虽然这几种信息本身不敏感，
+      但没有理由让未登录状态也能读到本机的目录结构；
+    · 路径里会包含本机用户名（例如 `C:\\Users\\某人\\AppData\\...`）。
+      这是**刻意**的：用户要复制去打开目录，路径不能被打码。
+    """
+    settings = get_settings()
+    return ApiResponse.ok(
+        {
+            "app": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            "env": settings.APP_ENV,
+            "backend": settings.DB_BACKEND,
+            # 形如 "sqlite:…/app.sqlite3" 或 "mysql:127.0.0.1:3306/narrative_engine"
+            "database": settings.database_label,
+            # ★ `data_root()` 是**模块级函数**（不是 Settings 的属性），
+            #   而 log_dir / chroma_dir 是 @property —— 第一版把三者当同一种用，
+            #   于是拿到 `AttributeError: 'Settings' object has no attribute 'data_root'`。
+            "data_dir": str(data_root()),
+            "log_dir": str(settings.log_dir),
+            "chroma_dir": str(settings.chroma_dir),
+            "python": platform.python_version(),
+            "platform": f"{platform.system()} {platform.release()}",
+        },
+        message="运行环境快照",
+    )
+
+
+# ==================================================================
 #  向量库自检
 # ==================================================================
 @router.post("/vector-store/selftest", summary="向量库自检（写入 → 语义检索）")
@@ -103,28 +146,3 @@ def vector_store_selftest() -> ApiResponse[dict[str, Any]]:
     return ApiResponse.ok(run_selftest(), message="向量库自检完成")
 
 
-# ==================================================================
-#  模型参数生效性探测
-# ==================================================================
-@router.post(
-    "/probe-reasoning-effort",
-    summary="检测模型是否真的支持「思考强度」",
-)
-def probe_reasoning() -> ApiResponse[dict[str, Any]]:
-    """对比实验：以「尽量关闭思考」和「深度思考」各调用一次，看思考 token 是否真有差异。
-
-    ⚠️ **本接口会真实调用模型两次**，因此界面上应做成用户主动点击的按钮，
-    不要在保存配置时自动触发。
-
-    为什么需要它？实测 deepseek-flash 会**接受但不理会** reasoning_effort：
-    无论设成 off 还是 high，思考 token 都稳定占总输出的约 70%。
-    这种「静默无操作」不报错、不给提示，只能靠对比实验发现。
-    """
-    provider = _default_provider()
-    try:
-        return ApiResponse.ok(
-            probe_reasoning_effort(provider),
-            message="思考强度支持情况探测完成",
-        )
-    finally:
-        provider.close()

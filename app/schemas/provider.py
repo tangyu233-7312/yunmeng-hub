@@ -163,10 +163,8 @@ class ProviderOut(BaseModel):
     last_test_message: str | None = None
 
     # ---------------- 思考强度生效性探测结果 ----------------
-    reasoning_effort_support: dict[str, Any] = Field(
-        default_factory=dict,
-        description="思考强度的实测支持情况（probed / supported / probed_model / stale）",
-    )
+    # ★ 第二十七轮已删除：该探测不可靠（详见 docs/dev-notes/handoff.md §27 的实验记录），
+    #   改为"直接发送、被服务端拒绝就自动退回"。
 
     # ---------------- 派生信息 ----------------
     budget: dict[str, Any] = Field(default_factory=dict, description="上下文预算拆解")
