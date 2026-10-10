@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   给云梦枢桌面版打 Windows 安装包（NSIS）。
