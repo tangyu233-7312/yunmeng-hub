@@ -140,6 +140,32 @@ function shell() {
       <div id="session-list" class="session-list">
         <div class="empty" style="padding:20px"><div class="big">⏳</div><div>加载中…</div></div>
       </div>
+
+      <!-- ★ 显示选项：立绘舞台的**默认开关**。
+           为什么放在侧边栏：以前只有顶栏那个「🎭 舞台」按钮，看着像个临时开关，
+           想"以后都别给我显示立绘"的人找不到入口。这里的语义是：
+             这个会话单独设过 → 用你设的；没设过 → 用这里的默认值。
+           只影响看的方式（不落库、不发请求）。整块在"这张卡没有 VN 舞台"时隐藏。 -->
+      <div class="side-util" id="side-vn" hidden>
+        <div class="side-util-label">显示选项</div>
+        <div class="side-util-row">
+          <span>🎭 立绘舞台</span>
+          <label class="switch" title="默认是否显示立绘/背景舞台；单个会话里用顶栏的 🎭 舞台 按钮临时覆盖">
+            <input type="checkbox" id="vn-stage-default" checked />
+            <span class="track"></span>
+            <span class="thumb"></span>
+          </label>
+        </div>
+        <div class="side-util-row">
+          <span>🖼 沉浸模式</span>
+          <label class="switch" title="把舞台铺满整个对话区、暂时藏起消息列表（历史消息用顶栏的「沉浸中」按钮切回来）">
+            <input type="checkbox" id="vn-immersive" />
+            <span class="track"></span>
+            <span class="thumb"></span>
+          </label>
+        </div>
+        <div class="side-util-hint" id="side-vn-hint">默认显示立绘与背景。</div>
+      </div>
     </aside>
 
     <section class="chat-main panel" id="chat-main">
@@ -173,6 +199,32 @@ function bindStatic(root, signal) {
 
   /* ---------------- 拖动调节对话区大小 ---------------- */
   initChatResize(root, signal);
+
+  /* ---------------- 侧边栏：立绘舞台的默认开关 ----------------
+     ★ 改的是**全局默认**，当前会话如果单独设过就仍然以它为准 ——
+       所以这里只需要重画一次主要区域让舞台跟着变，不必动 localStorage 里
+       那个按会话存的键。 */
+  $('#vn-stage-default', root)?.addEventListener(
+    'change',
+    (e) => {
+      setVnStageDefault(Boolean(e.target.checked));
+      const detail = state.detail;
+      if (detail) renderChatPanel(root, detail);
+    },
+    { signal },
+  );
+
+  // 沉浸模式是**按会话**的（不像上面那个是全局默认），直接写这个会话的键
+  $('#vn-immersive', root)?.addEventListener(
+    'change',
+    (e) => {
+      const detail = state.detail;
+      if (!detail?.vn) return;
+      setVnImmersive(detail, Boolean(e.target.checked));
+      renderChatPanel(root, detail);
+    },
+    { signal },
+  );
 
   $('#chat-status', root).addEventListener(
     'click',
@@ -251,6 +303,14 @@ function bindStatic(root, signal) {
         renderChatPanel(root, detail);
         return;
       }
+      // ★ VN 沉浸模式：把舞台铺满对话区、藏掉消息列表（纯 CSS 切换）
+      if (act === 'vn-immersive') {
+        const detail = state.detail;
+        if (!detail?.vn) return;
+        setVnImmersive(detail, !vnImmersive(detail));
+        renderChatPanel(root, detail);
+        return;
+      }
       if (act === 'settings') return openSettingsDialog(root, signal);
       if (act === 'regen') return regenerateMessage(root, signal, msgOf(btn));
       if (act === 'edit-state') return openStateEditor(root);
@@ -323,23 +383,53 @@ const CHAT_SIZE_KEY = 'hne_chat_size';
 //: 会话列表宽度的可调范围。下限保证会话标题还能看，上限避免把对话区挤没
 const SIDE_W_MIN = 220;
 const SIDE_W_MAX = 560;
-//: 对话区高度的可调范围（相对"对话区顶部到窗口底部"的可用高度做留白）
+//: 对话区高度的可调范围
 const SIDE_H_MIN = 320;
-const SIDE_H_GAP = 150;
+//: 拖到窗口底部时留的一点余量（看着不顶死）；真正的高度上限按**实测**算，
+//: 不再用固定的 innerHeight - 150（那样在小窗口里拖到底也还是拖不动）
+const SIDE_H_BOTTOM_GAP = 28;
+//: 默认高度占"实测可用高度"的比例。
+//  ★ 为什么不直接给满：给满的话"往下拖"永远没有空间 —— 用户会以为拖不动。
+//    留一点余量，往下拖立刻有反应，往上拖也能缩。
+const SIDE_H_DEFAULT_RATIO = 0.9;
+
+/**
+ * 对话区顶部到窗口底部的**实测**可用高度。
+ *
+ * ★ 为什么必须实测：布局上方的顶栏 + 页头高度会随主题、缩放、窄屏换行而变，
+ *   以前写死 `calc(100vh - 220px)` 只是一个估计值 —— 估多了会留白，
+ *   估少了输入框被挤出屏幕，而拖动手柄的上限又是另一套算法（innerHeight - 150），
+ *   两者对不上时用户就会觉得"往下拖没反应"。
+ */
+function chatAvailableHeight(layout) {
+  const top = layout.getBoundingClientRect().top;
+  return Math.max(SIDE_H_MIN, Math.round(window.innerHeight - top - SIDE_H_BOTTOM_GAP));
+}
+
+/** 默认高度：实测可用高度的 90%（留出"往下拖"的余量，见 SIDE_H_DEFAULT_RATIO），
+ *  且永远不超过可用高度、不低于 SIDE_H_MIN 与可用高度中较小者。
+ *  （小窗口里可用高度可能还不到 320px，这时不能死守 320 —— 那会硬逼出滚动条。） */
+function chatDefaultHeight(layout) {
+  const avail = chatAvailableHeight(layout);
+  return Math.max(Math.min(SIDE_H_MIN, avail), Math.round(avail * SIDE_H_DEFAULT_RATIO));
+}
 
 /** 把两侧尺寸写到 CSS 变量上（布局全靠 CSS，JS 只负责给值） */
 function applyChatSize(root, w, h) {
   const layout = $('#chat-layout', root);
   if (!layout) return;
   layout.style.setProperty('--chat-side-w', `${w}px`);
-  if (h === null) {
-    // 没调过高度 → 交回 CSS 的 calc(100vh - 220px)
-    layout.style.removeProperty('--chat-h');
-    delete layout.dataset.height;
-  } else {
-    layout.style.setProperty('--chat-h', String(Math.round(h)));
-    layout.dataset.height = '1';
-  }
+  // h === null 表示"没调过高度" → 用实测默认高度。
+  // ★ 两种情况都写同一个变量、都带 px 单位（不再用 data-height 另开一条 CSS 规则：
+  //   那条规则里的 calc(var(--chat-h) * 1px) 会被浏览器判为无效值整条丢掉，
+  //   于是布局被内容撑到 1500px+、手柄被顶出视口 —— 用户就说"拖不动"）。
+  const height = h === null ? chatDefaultHeight(layout) : Math.round(h);
+  layout.style.setProperty('--chat-h', `${height}px`);
+  if (h === null) delete layout.dataset.height;
+  else layout.dataset.height = '1';
+  // 高度变了会影响"消息区还能滚多少"和舞台的可用空间，广播一次让视图自己重算。
+  // （以前只在拖动结束时发一次，导致拖动过程中舞台/滚动位置不跟着更新）
+  window.dispatchEvent(new CustomEvent('hne:chat-resized', { detail: { width: w, height } }));
 }
 
 function initChatResize(root, signal) {
@@ -347,8 +437,45 @@ function initChatResize(root, signal) {
   const handle = $('#chat-resize', root);
   if (!layout || !handle) return;
 
+  // ★ 手柄是 position:fixed（窄屏/页面很长时 absolute 会被顶到视口外，抓不到），
+  //   但要**贴住对话区的右下角**，而不是死钉在视口右下角：
+  //   布局变小之后，钉在视口底部的手柄会离布局很远，用户根本不知道自己在拖什么，
+  //   而且拖动时手柄自己会"缩"，手感完全错乱。
+  //   所以：算出布局右下角，再夹进视口内（保证任何时候都够得着）。
+  const positionChatResize = () => {
+    const r = layout.getBoundingClientRect();
+    const size = handle.offsetWidth || 26;
+    const margin = 8;
+    const right = Math.max(margin, Math.min(window.innerWidth - r.right + margin, window.innerWidth - size - margin));
+    // 布局底边在视口内 → 贴布局；超出视口 → 夹到视口底部上方
+    const bottom = r.bottom <= window.innerHeight
+      ? Math.max(margin, window.innerHeight - r.bottom + margin)
+      : margin + 6;
+    handle.style.right = `${Math.round(right)}px`;
+    handle.style.bottom = `${Math.round(bottom)}px`;
+  };
+  positionChatResize();
+  window.addEventListener('scroll', positionChatResize, { passive: true, signal });
+  window.addEventListener('resize', positionChatResize, { signal });
+  // applyChatSize 每次改尺寸都会广播这个事件（拖动过程中也会）
+  window.addEventListener('hne:chat-resized', positionChatResize, { signal });
+
   const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
-  const maxHeight = () => Math.max(SIDE_H_MIN, window.innerHeight - SIDE_H_GAP);
+  // 拖动上限 = 实测可用高度（= 窗口底部再留 28px），不是写死的 innerHeight - 150
+  const maxHeight = () => chatAvailableHeight(layout);
+  // 拖动下限 = min(320, 可用高度)：小窗口里 320 会比可用空间还大，
+  // 用它当下限会硬逼出滚动条；取小值之后"能拖到的范围"永远在视口之内。
+  const minHeight = () => Math.min(SIDE_H_MIN, maxHeight());
+
+  // ★ 拖动计算抽成纯函数并导出（见文件末尾的 window.__hneChatResize）：
+  //   "往后拖不动"这类问题靠肉眼看代码很难判定，有了它就能在浏览器控制台/探针里
+  //   直接喂一组 (起点, 位移) 断言结果 —— 不用真的去抓右下角那个小三角。
+  function chatSizeOnDrag(start, ev) {
+    return {
+      w: clamp(Math.round(start.w + (ev.clientX - start.x)), SIDE_W_MIN, SIDE_W_MAX),
+      h: clamp(Math.round(start.h + (ev.clientY - start.y)), minHeight(), maxHeight()),
+    };
+  }
 
   // 恢复上次调好的尺寸（存 localStorage，刷新后仍然是你调的样子）
   let saved = null;
@@ -358,7 +485,9 @@ function initChatResize(root, signal) {
     saved = null;
   }
   if (saved && Number.isFinite(saved.w)) {
-    applyChatSize(root, clamp(saved.w, SIDE_W_MIN, SIDE_W_MAX), Number.isFinite(saved.h) ? saved.h : null);
+    // 存过的高度也要夹进**当前**视口的可选范围（换台显示器/改缩放之后旧值可能不合适）
+    const restored = Number.isFinite(saved.h) ? clamp(saved.h, minHeight(), maxHeight()) : null;
+    applyChatSize(root, clamp(saved.w, SIDE_W_MIN, SIDE_W_MAX), restored);
   }
 
   const save = (w, h) => {
@@ -369,35 +498,42 @@ function initChatResize(root, signal) {
     }
   };
 
-  // 用 pointer 事件 + setPointerCapture：
-  // 指针跑出那个小三角之后仍然能收到移动事件，不会"拖到一半断掉"
+  // ★ 拖动状态必须记在函数外：指针移出窗口时 `pointerup` 可能永远收不到
+  //   （在 iframe 上方松开、切到别的窗口、浏览器吞掉释放事件），
+  //   旧的写法会把"正在拖动"这件事卡住 —— 用户看到的就是"拖着拖着就拖不动了"。
+  let dragging = false;
+
+  // 拖动：pointerdown 之后把监听器挂到 window 上（见下面的说明），
+  // 这样指针跑到哪儿都还在算，不依赖 setPointerCapture 是否成功。
   handle.addEventListener(
     'pointerdown',
     (e) => {
       e.preventDefault();
+      if (dragging) return;
+      dragging = true;
       const startW = layout.querySelector('.chat-side')?.getBoundingClientRect().width ?? 300;
       const startH = layout.getBoundingClientRect().height;
-      const startX = e.clientX;
-      const startY = e.clientY;
-      try {
-        // 捕获指针：拖出那个小三角之后仍然能收到移动事件，不会"拖到一半断掉"。
-        // 用 try 包起来是因为合成事件（自动化测试里）没有真实 pointerId，
-        // 这里失败也不该让整个拖动逻辑崩掉 —— 退化成"必须一直按在手柄上"。
-        handle.setPointerCapture(e.pointerId);
-      } catch {
-        /* 忽略：没有真实指针时不需要捕获 */
-      }
+      const start = { w: startW, h: startH, x: e.clientX, y: e.clientY };
       layout.dataset.resizing = '1';
 
+      // ★ 监听器挂在 **window** 上，不是手柄自己身上。
+      //   以前挂手柄 + setPointerCapture 兜底：捕获一旦失败（合成事件、
+      //   某些浏览器/输入设备组合），鼠标一移出那个 26px 的小方块就再也收不到
+      //   pointermove —— 表现就是"拖一点点就停住，像是只能左右动"。
+      //   挂 window 之后，指针移到哪儿都还在算（拖到空白处也算），不依赖捕获是否成功。
       const onMove = (ev) => {
-        const w = clamp(Math.round(startW + (ev.clientX - startX)), SIDE_W_MIN, SIDE_W_MAX);
-        const h = clamp(Math.round(startH + (ev.clientY - startY)), SIDE_H_MIN, maxHeight());
+        if (!dragging) return;
+        ev.preventDefault();
+        const { w, h } = chatSizeOnDrag(start, ev);
         applyChatSize(root, w, h);
       };
       const onUp = () => {
-        handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', onUp);
-        handle.removeEventListener('pointercancel', onUp);
+        if (!dragging) return;
+        dragging = false;
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        window.removeEventListener('blur', onUp);
         delete layout.dataset.resizing;
         const rect = layout.getBoundingClientRect();
         const w = layout.querySelector('.chat-side')?.getBoundingClientRect().width ?? 300;
@@ -405,9 +541,11 @@ function initChatResize(root, signal) {
         // 高度变了会影响"消息区还能滚多少"，让视图里的滚动逻辑重新判断一次
         window.dispatchEvent(new Event('resize'));
       };
-      handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', onUp);
-      handle.addEventListener('pointercancel', onUp);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+      // 窗口失焦（alt+tab / 切到别的应用）也算结束，否则会一直卡在"拖动中"
+      window.addEventListener('blur', onUp);
     },
     { signal },
   );
@@ -429,18 +567,46 @@ function initChatResize(root, signal) {
     { signal },
   );
 
-  // 窗口尺寸变化时，别让用户调过的高度超出新的可视范围
+  // 窗口尺寸变化时：用户调过的夹回可视范围；没调过的（跟随默认高）重新实测铺满。
   window.addEventListener(
     'resize',
     () => {
-      if (!layout.dataset.height) return;
       const side = layout.querySelector('.chat-side');
       const w = side ? side.getBoundingClientRect().width : SIDE_W_MIN;
-      const h = clamp(Number(layout.style.getPropertyValue('--chat-h')) || 0, SIDE_H_MIN, maxHeight());
+      if (!layout.dataset.height) {
+        // 默认高度必须跟着窗口走，否则拉大窗口后底下会空一大条
+        applyChatSize(root, w, null);
+        return;
+      }
+      // ★ 这里必须用 minHeight()，不能再用 SIDE_H_MIN：
+      //   onUp 会派发一个 resize 事件来刷新消息区，如果这条夹取还按 320 算，
+      //   用户刚拖好的高度会被**立刻夹回 320** —— 表现就是"一松手就弹回原来的样子"。
+      // ★ 这里必须用 parseFloat，不能用 Number()：
+      //   CSS 变量读出来是带单位的字符串 "447px"，而 `Number("447px")` 是 **NaN**，
+      //   再 `|| 0` 就变成 0，夹一下就成了 320 —— 表现就是"一松手立刻弹回最小高度"。
+      //   （实测踩过：rawH 明明是 387px，最终却写回 320px。）
+      const raw = parseFloat(layout.style.getPropertyValue('--chat-h'));
+      const h = clamp(Number.isFinite(raw) && raw > 0 ? raw : chatDefaultHeight(layout), minHeight(), maxHeight());
       applyChatSize(root, clamp(Math.round(w), SIDE_W_MIN, SIDE_W_MAX), h);
     },
     { signal },
   );
+
+  // ★ 测试钩子：把"拖动怎么算"暴露出来，供浏览器探针/控制台直接断言。
+  //   为什么需要它：手柄的命中区域、指针捕获这些在无头浏览器里很难稳定复现，
+  //   而"往后拖不动"这类 bug 恰恰出在**算式**上（上限算错就等于拖不动）。
+  //   只读、不做任何副作用，所以留在生产代码里也无害。
+  window.__hneChatResize = {
+    available: () => chatAvailableHeight(layout),
+    defaultHeight: () => chatDefaultHeight(layout),
+    max: () => maxHeight(),
+    limits: { wMin: SIDE_W_MIN, wMax: SIDE_W_MAX, hMin: SIDE_H_MIN, bottomGap: SIDE_H_BOTTOM_GAP },
+    compute: (start, ev) => chatSizeOnDrag(start, ev),
+    handleRect: () => {
+      const r = handle.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height, bottom: r.bottom };
+    },
+  };
 }
 
 /* ==================================================================
@@ -1142,6 +1308,10 @@ function renderChatPanel(root, detail) {
         p.stream_enabled === false ? '<b>非流式</b>' : '流式'
       }${p.fallback_provider_id ? ' · 已设备用模型' : ''}`
     : '未配置模型';
+  // ★ 沉浸模式：整个对话区多一个属性，CSS 据此把舞台铺满、藏掉消息列表
+  const immersive = vnImmersive(detail);
+  if (immersive) main.dataset.immersive = '1';
+  else delete main.dataset.immersive;
   main.innerHTML = `
     <div class="chat-head">
       <div class="chat-head-main">
@@ -1162,6 +1332,14 @@ function renderChatPanel(root, detail) {
         <button class="btn sec sm${detail.translate?.settings?.enabled ? ' on' : ''}" data-act="translate" id="btn-translate" title="跨语言对话：原文 / 译文可切换（默认关闭，开会多花钱）">🌐 翻译${detail.translate?.settings?.enabled ? '开' : ''}</button>
         <button class="btn sec sm" data-act="prompt" title="看看这一轮到底给模型发了什么">查看提示词</button>
         ${detail.vn ? `<button class="btn sec sm${vnStageOn(detail) ? ' on' : ''}" data-act="vn-stage" id="btn-vn-stage" title="立绘舞台：背景 + 立绘 + 台词框（表情跟着状态栏变）">🎭 舞台${vnStageOn(detail) ? '开' : '关'}</button>` : ''}
+        ${
+          detail.vn && vnStageOn(detail)
+            ? `<button class="btn sec sm${immersive ? ' on' : ''}" data-act="vn-immersive" id="btn-vn-immersive"
+                 title="沉浸模式：舞台铺满整个对话区、暂时藏起消息列表（历史消息点一下就能回来）">${
+                   immersive ? '沉浸中' : '沉浸'
+                 }</button>`
+            : ''
+        }
         <button class="btn sec sm" data-act="settings">设置</button>
         <button class="btn sec sm" data-act="refresh">刷新</button>
       </div>
@@ -1198,6 +1376,8 @@ function renderChatPanel(root, detail) {
 
   const box = $('#messages', root);
   if (box) box.scrollTop = box.scrollHeight;
+  // 侧边栏的"显示选项"跟着这次渲染同步（没有 VN 舞台时整块藏起来）
+  refreshSideVn(root, detail);
 }
 
 function alertsHTML(list) {
@@ -1213,6 +1393,27 @@ function alertsHTML(list) {
      所以不落库、也不该占一次 PATCH。
    ================================================================== */
 const VN_STAGE_KEY = 'hne_vn_stage';
+//: 全局默认：没有为某个会话单独设过时，用这个值决定要不要显示立绘舞台。
+//  ★ 为什么不做成后端设置：它跟 `hne_chat_size` 一样只是"看的方式"，
+//    与数据/计费/模型行为都无关，落库反而多一次请求和一张表。
+const VN_STAGE_DEFAULT_KEY = 'hne_vn_stage_default';
+
+/** 全局默认开不开（默认开：卡既然声明了 VN，就先让用户看到效果）。 */
+function vnStageDefault() {
+  try {
+    return window.localStorage.getItem(VN_STAGE_DEFAULT_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function setVnStageDefault(on) {
+  try {
+    window.localStorage.setItem(VN_STAGE_DEFAULT_KEY, on ? '1' : '0');
+  } catch {
+    /* 隐私模式下记不住，本次仍然生效 */
+  }
+}
 
 function vnStageOn(detail) {
   if (!detail?.vn) return false;
@@ -1222,8 +1423,46 @@ function vnStageOn(detail) {
   } catch {
     stored = null;
   }
-  if (stored === null) return true; // 卡既然开了 VN，默认就把舞台打开
-  return stored === '1';
+  // 这个会话单独设过 → 以它为准（用户的显式选择永远最大）
+  if (stored !== null) return stored === '1';
+  // 没设过 → 用侧边栏那个默认开关
+  return vnStageDefault();
+}
+
+/** 把侧边栏那块"显示选项"同步成当前会话的状态（没有 VN 就整块藏起来）。 */
+function refreshSideVn(root, detail) {
+  const box = root.querySelector('#side-vn');
+  if (!box) return;
+  if (!detail?.vn) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const input = box.querySelector('#vn-stage-default');
+  const on = vnStageOn(detail);
+  if (input) input.checked = on;
+  // 沉浸模式只在"舞台开着"时有意义：舞台关了就把这一行禁掉，避免出现
+  // "沉浸模式开着但什么都没有"的迷惑状态。
+  const immersiveInput = box.querySelector('#vn-immersive');
+  if (immersiveInput) {
+    immersiveInput.checked = vnImmersive(detail);
+    immersiveInput.disabled = !on;
+    immersiveInput.closest('.side-util-row')?.classList.toggle('disabled', !on);
+  }
+  const hint = box.querySelector('#side-vn-hint');
+  if (hint) {
+    let perSession = false;
+    try {
+      perSession = window.localStorage.getItem(`${VN_STAGE_KEY}:${detail.id}`) !== null;
+    } catch {
+      perSession = false;
+    }
+    hint.textContent = perSession
+      ? '这个会话你单独调过，以你调的为准（再用顶栏「🎭 舞台」点一下即可跟回默认）。'
+      : on
+        ? '默认显示立绘与背景；单个会话可用顶栏「🎭 舞台」临时关掉。'
+        : '已默认隐藏立绘舞台 —— 角色照常对话，只是不显示画面。';
+  }
 }
 
 function setVnStage(detail, on) {
@@ -1231,6 +1470,28 @@ function setVnStage(detail, on) {
     window.localStorage.setItem(`${VN_STAGE_KEY}:${detail.id}`, on ? '1' : '0');
   } catch {
     /* 隐私模式下 localStorage 可能不可用：舞台照常显示，只是记不住开关 */
+  }
+}
+
+//: VN 沉浸模式（把舞台铺满整个对话区、藏掉消息列表），按会话记忆，默认关。
+//  ★ 为什么默认关而不是"开了舞台就沉浸"：沉浸模式下看不到历史消息，
+//    对第一次用的人太激进；但用户点一下就能进，且进过之后会记住。
+const VN_IMMERSIVE_KEY = 'hne_vn_immersive';
+
+function vnImmersive(detail) {
+  if (!detail?.vn || !vnStageOn(detail)) return false;
+  try {
+    return window.localStorage.getItem(`${VN_IMMERSIVE_KEY}:${detail.id}`) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setVnImmersive(detail, on) {
+  try {
+    window.localStorage.setItem(`${VN_IMMERSIVE_KEY}:${detail.id}`, on ? '1' : '0');
+  } catch {
+    /* 同上 */
   }
 }
 
@@ -1266,7 +1527,12 @@ function vnStageHTML(detail) {
       }
       ${sprite}
       ${vn.show_name ? `<div class="vn-nameplate">${esc(vn.name || '')}${mood}</div>` : ''}
-      <div class="vn-line">${esc(dialogue.slice(0, 400))}</div>
+      ${
+        vnImmersive(detail)
+          ? '<button class="vn-exit" data-act="vn-immersive" title="退出沉浸模式（恢复消息列表）">✕ 退出沉浸</button>'
+          : ''
+      }
+      <div class="vn-line">${esc(dialogue.slice(0, 1200))}${line.length > 1200 ? '…' : ''}</div>
       ${warn}
     </div>`;
 }

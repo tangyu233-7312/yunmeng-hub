@@ -109,7 +109,7 @@ class Settings(BaseSettings):
 
     # ==================== 应用基础 ====================
     APP_NAME: str = "HeteroNarrativeEngine"
-    APP_VERSION: str = "0.1.0"
+    APP_VERSION: str = "0.2.0"
     APP_ENV: Literal["development", "testing", "production"] = "development"
     DEBUG: bool = True
     HOST: str = "127.0.0.1"

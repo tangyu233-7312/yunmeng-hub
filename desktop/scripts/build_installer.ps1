@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
   给云梦枢桌面版打 Windows 安装包（NSIS）。
@@ -10,7 +10,7 @@
   到底哪一步出了问题。缺 sidecar 就直接停下并告诉你该先跑什么。
 
   产物（都在仓库根的 release/，已被 .gitignore 忽略）：
-    · 云梦枢 Setup 0.1.0.exe   ← 双击可装的安装包
+    · 云梦枢 Setup 0.2.0.exe   ← 双击可装的安装包
     · win-unpacked/            ← 安装包解出来的样子（用来核对内容，不必真装）
 
 .NOTES

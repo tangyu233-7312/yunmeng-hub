@@ -616,29 +616,52 @@ body.log-open .topbar {
      变量没设过时用 300px 兜底，所以"不拖"和"以前"完全一样。 */
   grid-template-columns: var(--chat-side-w, 300px) minmax(0, 1fr);
   gap: 14px;
-  /* 减去顶栏与页头的高度，让对话窗刚好占满一屏，输入框不用滚动才能看到 */
-  height: calc(100vh - 220px);
+  /* 减去顶栏与页头的高度，让对话窗刚好占满一屏，输入框不用滚动才能看到。
+     ★ `--chat-h` 由 chat.js 按**实测的可用高度**写入（带 px 单位），
+       不再写死 220px：那个估算在小窗口里会留下一条空白，而拖动手柄又拖不过去。
+       ★ 这里**不要**用 `[data-height] { height: calc(var(--chat-h) * 1px) }` 那种写法：
+       实测在 Edge 里 `calc(var(--chat-h, auto) * 1px)` 会被判为无效值整条丢掉，
+       于是 height 声明失效、布局被内容撑到 1500px+，手柄被顶出视口
+       （表现就是"完全拖不动"）。直接写 var() 最简单也最可靠。 */
+  height: var(--chat-h, calc(100vh - 220px));
   min-height: 320px;
   position: relative;   /* 拖动手柄要绝对定位在右下角 */
 }
-/* 用户拖动过高度之后，改用显式像素值（覆盖上面的 calc） */
-.chat-layout[data-height] { height: calc(var(--chat-h, auto) * 1px); }
 /* 拖动过程中：禁掉选中，并把光标固定成斜向缩放，避免鼠标移出手柄后光标乱跳 */
 .chat-layout[data-resizing] { user-select: none; }
 .chat-layout[data-resizing] * { cursor: nwse-resize !important; }
 @media (max-width: 900px) {
-  .chat-layout { grid-template-columns: 1fr; height: auto; }
-  /* 窄屏是上下堆叠，横向拖动没有意义，直接把手柄藏掉 */
-  .chat-resize { display: none; }
+  /* ★ 这里**不能**写 height: auto。
+     写了它，布局就被内容撑开（左栏 785px + 对话区 724px ≈ 1537px），
+     在浏览器缩放/窄窗口下页面会变得很长，右下角的拖动手柄被顶到视口外面
+     —— 实测 getBoundingClientRect() 全是 0，用户"完全拖不动"。
+     改成 height: auto 之外的做法：保留 --chat-h 的高度，超出部分内部滚动。 */
+  .chat-layout {
+    grid-template-columns: 1fr;
+    /* 上下堆叠时左栏不该继续抢高度，给它一个上限 + 内部滚动 */
+    grid-template-rows: minmax(0, 240px) minmax(0, 1fr);
+  }
+  /* ★ 也不能把 ·handle· 藏掉：窄屏是上下堆叠，上下拖依然有意义
+     （改的是整个对话区的高度）。以前这里 display:none，于是窄屏用户
+     既看不到手柄、也没法调大小 —— 这正是"手柄完全不能动"的根因之一。 */
 }
 
 /* ---------------- 拖动手柄（右下角那个小三角） ---------------- */
 .chat-resize {
-  position: absolute; right: 0; bottom: 0;
-  width: 22px; height: 22px;
+  /* ★ 为什么是 fixed 而不是 absolute/sticky：
+     · absolute：布局比视口高时（窄屏下布局会纵向堆叠，左栏把对话区挤到下面）
+       手柄会跑到视口外面 —— 用户既看不见也抓不到（实测 getBoundingClientRect() 全是 0）。
+     · sticky：在 grid 容器里它会跟着容器走，同样会被推到下面。
+     · fixed：永远贴在**视口**右下角，无论怎么滚、怎么拖、窗口多窄都在手指下。
+     右边缘的位置由 JS 定位（对齐对话区右侧），见 positionChatResize()。 */
+  position: fixed;
+  right: 18px; bottom: 14px;   /* JS 没跑时的兜底位置 */
+  width: 26px; height: 26px;
   cursor: nwse-resize;
-  z-index: 3;
-  opacity: .5;
+  /* ★ z-index 必须高过两栏面板（.chat-side / .chat-main 都是 panel 背景），
+     否则手柄虽然画在右下角，指针事件却被面板接走 —— 表现就是"拖动没反应"。 */
+  z-index: 40;
+  opacity: .55;
   transition: opacity .12s;
   /* 两条斜线的经典"可缩放"符号：用渐变画，省掉一个图标文件 */
   background:
@@ -646,10 +669,62 @@ body.log-open .topbar {
     linear-gradient(135deg, transparent 0 65%, var(--border-strong) 65% 75%, transparent 75%);
   border-bottom-right-radius: var(--radius);
 }
+/* ★ 放大**命中区域**而不改视觉大小：26px 的小方块本来就不好抓，
+   尤其触摸屏/高 DPI。伪元素把可点范围扩到 40×40，视觉仍是那个小三角。 */
+.chat-resize::after {
+  content: ''; position: absolute; right: 0; bottom: 0;
+  width: 40px; height: 40px;
+}
 .chat-resize:hover, .chat-layout[data-resizing] .chat-resize { opacity: 1; }
 
 .chat-side { display: flex; flex-direction: column; padding: 12px; gap: 10px; min-height: 0; }
 .chat-side .segmented button { flex: 1; }
+
+/* ---------------- 侧边栏：显示选项（立绘舞台开关） ----------------
+   ★ 为什么要放到侧边栏：以前只有顶栏一个「🎭 舞台」按钮，位置像个临时开关，
+     用户找不到"永久关掉立绘"的入口。现在这里是一个明确的**默认开关**：
+       开的会话 → 用你为这个会话单独设过的选择；
+       没设过   → 用这里的默认值。
+     只影响"看的方式"，不落库、不发请求。 */
+.side-util {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 9px 10px; margin-top: 2px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2, rgba(255,255,255,.03));
+}
+.side-util-label {
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-dim, #8b93a7);
+}
+.side-util-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.side-util-row > span:first-child { font-size: 13px; }
+.side-util-row.disabled { opacity: .45; }
+.side-util-hint { font-size: 11.5px; line-height: 1.5; color: var(--text-dim, #8b93a7); }
+
+/* 拨动开关：用原生 checkbox 撑一个轨道 + 滑块（不引入图标文件） */
+.switch { position: relative; display: inline-flex; align-items: center; flex: none; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch .track {
+  width: 38px; height: 21px; border-radius: 999px;
+  background: var(--border-strong); transition: background .15s;
+}
+.switch .thumb {
+  position: absolute; top: 3px; left: 3px;
+  width: 15px; height: 15px; border-radius: 50%;
+  /* ★ 用 --text 而不是写死 #fff：深色主题里 --text 是浅色，
+     滑块照样看得见；写死白色会被 test_console 那条
+     "background 里不许有写死的浅色" 抓到（深色下变一块白）。 */
+  background: var(--text, #1f2933); box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  transition: transform .15s; pointer-events: none;
+}
+.switch input:checked ~ .track { background: var(--brand, #7c5cff); }
+.switch input:checked ~ .thumb { transform: translateX(17px); }
+.switch input:focus-visible ~ .track { outline: 2px solid var(--brand, #7c5cff); outline-offset: 2px; }
+/* ★ 这条不能少：.side-util 自己带 display:flex，会盖掉浏览器默认的
+   `[hidden] { display: none }` —— 不写这句，"藏起来"的那块依然会显示出来。
+   （这个坑本项目踩过一次：作者样式覆盖 [hidden]，见 docs/pitfalls.md）
+   用属性选择器而不是 .hidden 类，就不会跟别处的同名类互相干扰。 */
+.side-util[hidden] { display: none; }
 .session-list { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 
 .session-item {
@@ -761,7 +836,12 @@ body.log-open .topbar {
      地址写坏了也只显示一块提示 + 原因，不会白屏。 */
 .vn-stage {
   position: relative; margin: 10px 16px 0; border-radius: 12px; overflow: hidden;
-  height: 260px; background: #202633; border: 1px solid var(--border-strong);
+  /* ★ 立绘舞台自己撑满剩余高度（用户："开了舞台就让它占满整个对话框"）。
+     以前固定 260px：舞台上方一大块空白、立绘小得看不清，观感很怪。
+     现在 flex 自动伸缩，并按 3:1 抢剩余空间 —— 舞台明显更大，
+     消息区仍然留着（能看历史、能复制），要完全沉浸再用沉浸模式。 */
+  flex: 3 1 auto; min-height: 240px; height: auto;
+  background: #202633; border: 1px solid var(--border-strong);
 }
 .vn-bg {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
@@ -775,7 +855,13 @@ body.log-open .topbar {
 }
 .vn-sprite {
   position: absolute; bottom: 0; left: 50%; transform: translateX(-50%) scale(var(--vn-scale, 1));
-  transform-origin: bottom center; max-height: 100%; max-width: 60%; object-fit: contain;
+  transform-origin: bottom center;
+  /* ★ 高度必须给台词框留位置：以前是 max-height:100%（= 整个舞台），
+     立绘于是压在台词框上，看起来就像"台词被立绘遮住了"。
+     现在按比例让位：普通模式让 44%（台词框最多也就一半高），
+     沉浸模式让 36%（台词框更大，但立绘也更高）。 */
+  max-height: calc(100% - var(--vn-line-gap, 44%) - var(--vn-line-h, 0px));
+  max-width: 60%; object-fit: contain;
   filter: drop-shadow(0 6px 18px rgba(0,0,0,.45));
 }
 .vn-stage.pos-left .vn-sprite { left: 22%; }
@@ -795,7 +881,14 @@ body.log-open .topbar {
   border-left: 1px solid rgba(255,255,255,.3); padding-left: 8px;
 }
 .vn-line {
-  position: absolute; left: 12px; right: 12px; bottom: 10px; max-height: 88px; overflow: hidden;
+  position: absolute; left: 12px; right: 12px; bottom: 10px;
+  /* ★ 以前是 max-height:88px + overflow:hidden：长台词被拦腰截断，而且
+     鼠标滚轮在这里没反应（事件冒泡到外层消息区去了）—— 用户根本看不到后半句。
+     现在：可以滚、滚到底不把外层一起带着滚、并且按舞台高度自适应。 */
+  max-height: clamp(88px, 50%, 220px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   background: rgba(12,16,22,.78); color: #f2f5fa; border: 1px solid rgba(255,255,255,.14);
   border-radius: 10px; padding: 9px 12px; font-size: 13.5px; line-height: 1.6;
   white-space: pre-wrap;
@@ -805,8 +898,41 @@ body.log-open .topbar {
   background: rgba(58,31,28,.86); color: #ffd7cf; border-radius: 8px;
   padding: 4px 9px; font-size: 11.5px;
 }
-/* 舞台开着时消息区矮一点，让舞台与对话都看得见 */
+/* 舞台开着时消息区矮一点，让舞台与对话都看得见。
+   ★ 这里不要用 `flex`（会覆盖 .messages 自己的 flex:1，把滚动区搞坏），
+     用 max-height 限高即可 —— 舞台那边用 flex-grow 按比例抢空间。 */
 .vn-stage ~ .messages { max-height: 42vh; }
+
+/* ---------------- 沉浸模式（VN 专属） ----------------
+   ★ 用户要求："开启舞台后把舞台占满整个对话框，沉浸式体验"。
+     260px 的舞台放在一整块空白里确实很怪，所以给一个开关：
+       开 → 藏掉消息列表（历史仍可用下面的消息区看回来），舞台铺满剩下的高度；
+            台词框放大、头像名牌放大，整块像一块真正的视觉小说画面。
+       关 → 回到原来的"舞台 + 消息 + 输入框"三明治。
+     用 [data-immersive] 做纯 CSS 切换，避免多一套渲染分支。 */
+.chat-main[data-immersive='1'] .messages { display: none; }
+.chat-main[data-immersive='1'] .vn-stage {
+  margin: 10px 16px 10px;
+  /* 沉浸模式台词框更大，立绘就让得少一点（但仍不重叠） */
+  --vn-line-gap: 36%;
+}
+.chat-main[data-immersive='1'] .vn-sprite { max-width: 46%; }
+.chat-main[data-immersive='1'] .vn-line {
+  max-height: 46%; font-size: 15px; line-height: 1.75; padding: 12px 16px;
+}
+.chat-main[data-immersive='1'] .vn-nameplate { font-size: 15px; padding: 5px 16px; }
+.chat-main[data-immersive='1'] .vn-mood { font-size: 13px; }
+/* 沉浸模式下输入框压暗一点，别抢画面 */
+.chat-main[data-immersive='1'] .composer { border-top-color: transparent; }
+
+/* 舞台右上角的出口提示：全屏之后要有"怎么回去"的线索，否则用户会以为卡住了 */
+.vn-exit {
+  position: absolute; top: 10px; right: 12px; z-index: 2;
+  padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  background: rgba(16,20,28,.72); color: #fff; border: 1px solid rgba(255,255,255,.18);
+  font-size: 12px;
+}
+.vn-exit:hover { background: rgba(16,20,28,.92); }
 
 /* ---------------- 消息操作（复制 / 编辑 / 撤回 / 重新生成） ----------------
    ★ 为什么是"淡显"而不是"完全隐藏、悬停才出现"？
