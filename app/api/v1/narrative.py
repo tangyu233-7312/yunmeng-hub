@@ -55,7 +55,7 @@ from app.core.exceptions import (
     ConflictError,
     MemoryStoreError,
 )
-from app.db.models import Message, NarrativeSession
+from app.db.models import LLMProvider, Message, NarrativeSession
 from app.db.mysql import session_scope
 from app.schemas.common import ApiResponse, Page
 from app.schemas.narrative import (
@@ -894,18 +894,29 @@ def _persist_interrupted_reply(
                 model_name=_model_name_of(db, session),
             )
     except BaseException as exc:  # noqa: BLE001
-        logger.warning(
-            "保存中断的部分回复失败（不影响连接收尾） | session_id={} | {}", session_id, exc
+        # ★ 用 error 而不是 warning：这是个**兜底**路径，它的异常不会冒到界面上，
+        #   用户那边只会看到"回复没了、刷新也没用"。级别压低就等于让它永远查不出来
+        #   （第一版就是 ImportError 被吞成 warning，害得这条路径每次都静默失败）。
+        logger.error(
+            "保存中断的部分回复失败（不影响连接收尾） | session_id={} | {}: {}",
+            session_id,
+            type(exc).__name__,
+            exc,
         )
 
 
 def _model_name_of(db: Session, session: NarrativeSession) -> str | None:
-    """这条会话当前用的模型名（只用于给那条中断回复留个痕）。"""
+    """这条会话当前用的模型名（只用于给那条中断回复留个痕）。
+
+    ★ 别在这里写局部 import：`_persist_interrupted_reply` 是个"兜底"路径，
+      它的异常只记 warning、不会冒到界面上 —— 我第一版就是在这里
+      `from app.db.models import LlmProvider`（真名是 **LLMProvider**，全大写），
+      ImportError 被吞成一条 warning，于是**每次中断都落不了库**，
+      用户看到的现象是"回复没了、连刷新都没用"。改成用模块顶部的导入。
+    """
     if session.llm_provider_id is None:
         return None
-    from app.db.models import LlmProvider
-
-    row = db.get(LlmProvider, session.llm_provider_id)
+    row = db.get(LLMProvider, session.llm_provider_id)
     return getattr(row, "model_name", None)
 
 

@@ -1173,6 +1173,42 @@ def test_frontend_exposes_the_reasoning_panel() -> None:
     assert "var(--" in block, "折叠开关的样式要走主题变量"
 
 
+def test_api_interrupt_helper_saves_through_the_api_layer(
+    client: TestClient, user: dict
+) -> None:
+    """★ 走**接口层**那条兜底路径存中断回复（不能只测 engine 里那个函数）。
+
+    这条是为一个真实的低级 bug 立的（2026-10-13）：
+      `_persist_interrupted_reply` 里我写了
+      `from app.db.models import LlmProvider`，而类的真名是 **LLMProvider**（全大写）。
+      那条兜底路径的异常只记日志、不会冒到界面上 ⇒ **每次中断都静默落不了库**，
+      用户看到的是"回复没了、连刷新都没用"。
+    ★ 为什么之前的测试没抓到：它们直接调 `engine.keep_interrupted_reply`，
+      把接口层这段接线整个绕过去了。所以这里必须从接口层进。
+    """
+    from app.api.v1.narrative import _persist_interrupted_reply
+    from app.db.models import NarrativeSession as _S
+
+    card = make_card(client, user)
+    provider = make_provider(client, user)
+    session = make_session(client, user, card["id"], provider["id"])
+    with session_scope() as db:
+        engine.save_user_message(db, db.get(_S, session["id"]), "难题")
+
+    # 正文一个字都没有、只有思考 —— 正是用户报的那个场景
+    _persist_interrupted_reply(
+        user_id=user["id"], session_id=session["id"], text="", reasoning_text="我想了很久…"
+    )
+
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    last = detail["messages"][-1]
+    assert last["role"] == "assistant", (
+        "接口层的兜底路径必须真的把中断内容存下来（否则用户看到的是孤零零一句话）"
+    )
+    assert "只来得及思考" in last["content"]
+    assert "我想了很久…" in (last["reasoning"] or "")
+
+
 def test_interrupt_with_only_reasoning_still_saves_something(
     client: TestClient, user: dict
 ) -> None:
