@@ -3334,6 +3334,81 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
         hidden and shown_again,
         {"关掉后消失": hidden, "再点回来": shown_again},
     )
+
+    # ---------- ★★ 侧边栏「显示选项」里的开关也必须真的点得动 ----------
+    #
+    #   2026-10-13 用户反馈："图中按钮失效了，点不了"（截图圈的就是这个开关）。
+    #   真实原因是一处**接线**错误：侧边栏这个开关写的是**全局默认**
+    #   （`hne_vn_stage_default`），而生效值优先读**按会话**存的键
+    #   （`hne_vn_stage:<id>`，由顶栏 🎭 舞台写入）——
+    #   所以只要这个会话被顶栏点过一次，再点侧边栏开关就只改了一个不生效的值：
+    #   开关立刻弹回原位、舞台纹丝不动。
+    #
+    #   为什么已有的检查没抓到：上面那条测的是**顶栏**按钮；侧边栏开关此前
+    #   **一条断言都没有**（静态契约测试也只钉了顶栏）。而这类 bug 恰恰是
+    #   "DOM 在、能点、不报错，但结果是错的" —— 只能靠真实鼠标事件发现。
+    #   静态那一侧由 tests/test_frontend_contracts.py 的
+    #   `test_sidebar_stage_switch_actually_takes_effect` 守着。
+    side_ready = cdp.wait_for(
+        "(() => { const b = document.querySelector('#side-vn');"
+        " return !!b && !b.hidden && !!b.querySelector('#vn-stage-default'); })()",
+        20,
+    )
+    probe.check(
+        "14.VN立绘",
+        "侧边栏「显示选项」出现了（卡开了 VN 才有这一块）",
+        side_ready,
+        cdp.eval("document.querySelector('#side-vn-hint')?.textContent || ''"),
+    )
+    if side_ready:
+        # 先造出"这个会话单独调过"这个前提（等价于用户点过顶栏 🎭 舞台）——
+        # 少了这一步就永远复现不出这个 bug（那正是它一直没被发现的原因）。
+        cdp.eval(
+            f"localStorage.setItem('hne_vn_stage:{vn_sid}', '1'); 'ok'"
+        )
+        cdp.eval("document.querySelector('#chat-main button[data-act=\"refresh\"]')?.click(); 'ok'")
+        cdp.wait_for("!!document.querySelector('#vn-stage')", 20)
+        switch_box = cdp.eval(
+            "(() => { const i = document.querySelector('#vn-stage-default');"
+            " if (!i) return null; const r = i.getBoundingClientRect();"
+            " return {x: Math.round(r.left + r.width / 2),"
+            "         y: Math.round(r.top + r.height / 2)}; })()"
+        )
+        clicked = isinstance(switch_box, dict)
+        if clicked:
+            # ★ 真实鼠标事件（不是合成 dispatchEvent）：`<input type=checkbox>` 的
+            #   勾选状态由浏览器的默认行为处理，合成事件碰不到它。
+            for kind in ("mousePressed", "mouseReleased"):
+                cdp.send(
+                    "Input.dispatchMouseEvent",
+                    type=kind,
+                    x=switch_box["x"],
+                    y=switch_box["y"],
+                    button="left",
+                    clickCount=1,
+                )
+                time.sleep(0.05)
+        stage_off = cdp.wait_for("!document.querySelector('#vn-stage')", 10)
+        after = cdp.eval(
+            f"(() => ({{"
+            f"  checked: document.querySelector('#vn-stage-default')?.checked,"
+            f"  perSession: localStorage.getItem('hne_vn_stage:{vn_sid}'),"
+            f"  global: localStorage.getItem('hne_vn_stage_default')"
+            f" }}))()"
+        )
+        probe.check(
+            "14.VN立绘",
+            "★ 侧边栏「🎭 立绘舞台」开关真的改得动画面（点一下 → 舞台消失、本会话覆盖被清掉）",
+            bool(clicked and stage_off and isinstance(after, dict)
+                 and after.get("checked") is False
+                 and after.get("perSession") is None
+                 and after.get("global") == "0"),
+            {"点击命中": clicked, "舞台消失": stage_off, "点后": after},
+        )
+        # 复原：把这一格恢复成"默认开"，免得影响后面的检查（表情换图那节要舞台在场）。
+        cdp.eval("localStorage.setItem('hne_vn_stage_default', '1'); 'ok'")
+        cdp.eval("document.querySelector('#chat-main button[data-act=\"refresh\"]')?.click(); 'ok'")
+        cdp.wait_for("!!document.querySelector('#vn-stage')", 20)
     # ★ 改状态里的表情 → 立绘换图（"表情 → 立绘"由后端算）
     with httpx.Client(timeout=30) as c:
         patched = c.patch(

@@ -201,15 +201,27 @@ function bindStatic(root, signal) {
   initChatResize(root, signal);
 
   /* ---------------- 侧边栏：立绘舞台的默认开关 ----------------
-     ★ 改的是**全局默认**，当前会话如果单独设过就仍然以它为准 ——
-       所以这里只需要重画一次主要区域让舞台跟着变，不必动 localStorage 里
-       那个按会话存的键。 */
+     ★ 这个开关写的是**全局默认**（以后新开的会话用它），但生效值另有优先级：
+       当前会话单独设过（顶栏「🎭 舞台」点过）就以那个为准。
+       2026-10-13 用户反馈"图中按钮失效了，点不了" —— 真因就是**只写了默认值**：
+       点这一下时渲染读到的还是那个按会话存的键，于是开关立刻弹回原位、
+       舞台纹丝不动（真实浏览器 + 真实鼠标事件复现，见 handoff-quick.md §26.19）。
+     ★ 修法：点这个开关时**顺带清掉本会话的单独设置**（正是提示里承诺的
+       "跟回默认"），所以这一次点击一定看得见效果；"默认"本身的作用一点没少。
+       刻意选"清掉"而不是"同时写两份"：后者会让"这个会话我单独调过"这个状态
+       在用户以为自己在改默认时被悄悄改掉，下次就说不清到底哪个在生效。
+     ★ 反方向（顶栏 🎭 舞台）**只写本会话**：它是临时覆盖，与全局默认互不干扰。 */
   $('#vn-stage-default', root)?.addEventListener(
     'change',
     (e) => {
       setVnStageDefault(Boolean(e.target.checked));
       const detail = state.detail;
-      if (detail) renderChatPanel(root, detail);
+      if (detail) {
+        // ★ 见下方 clearVnStage 的注释：不清掉本会话的单独设置，
+        //   这一下点下去会立刻弹回原位（用户看到的就是"按钮失效"）。
+        clearVnStage(detail);
+        renderChatPanel(root, detail);
+      }
     },
     { signal },
   );
@@ -1904,7 +1916,7 @@ function refreshSideVn(root, detail) {
       perSession = false;
     }
     hint.textContent = perSession
-      ? '这个会话你单独调过，以你调的为准（再用顶栏「🎭 舞台」点一下即可跟回默认）。'
+      ? '这个会话你单独调过，以你调的为准（点这里的开关、或用顶栏「🎭 舞台」，都能跟回默认）。'
       : on
         ? '默认显示立绘与背景；单个会话可用顶栏「🎭 舞台」临时关掉。'
         : '已默认隐藏立绘舞台 —— 角色照常对话，只是不显示画面。';
@@ -1916,6 +1928,37 @@ function setVnStage(detail, on) {
     window.localStorage.setItem(`${VN_STAGE_KEY}:${detail.id}`, on ? '1' : '0');
   } catch {
     /* 隐私模式下 localStorage 可能不可用：舞台照常显示，只是记不住开关 */
+  }
+}
+
+/**
+ * 清掉「这个会话单独设过」的立绘舞台选择，让它重新听**全局默认**的。
+ *
+ * ★ 为什么必须存在（2026-10-13 的真实反馈："图中按钮失效了，点不了"）：
+ *   侧边栏那个开关写的是全局默认，而生效值优先读按会话存的键 ——
+ *   对有单独设置的会话，点侧边栏开关只改了一个**不生效**的值，
+ *   界面于是立刻弹回原位（真实浏览器 + 真实鼠标事件复现）。
+ *   清掉这一项之后，那次点击才真的落到画面上；提示文案里承诺的
+ *   "跟回默认"也正是这个动作。
+ *
+ * ★ 与 `setVnStage` 的分工：顶栏 🎭 舞台 = 为**这个会话**临时覆盖（写）；
+ *   侧边栏开关 = 改**全局默认**并让本会话跟回它（清）。两者语义不重叠。
+ */
+function clearVnStage(detail) {
+  if (!detail?.id) return;
+  try {
+    window.localStorage.removeItem(`${VN_STAGE_KEY}:${detail.id}`);
+  } catch {
+    /* 隐私模式下 localStorage 不可用：本次仍然按刚写的默认值渲染 */
+  }
+  // 沉浸模式是"舞台的从属状态"（舞台都关了还沉浸着，会剩一个空对话框）：
+  // 跟回默认时一并清掉。★ 不清会有个很突然的后果：用户把默认关着、这次点开，
+  // 而本会话存着 immersive=1 → 一点开关就直接被丢进沉浸模式（消息列表全没了）。
+  // 清掉之后，语义是"这个会话的画面选项全部回到默认"，不会再翻出隐藏的旧偏好。
+  try {
+    window.localStorage.removeItem(`${VN_IMMERSIVE_KEY}:${detail.id}`);
+  } catch {
+    /* 同上 */
   }
 }
 

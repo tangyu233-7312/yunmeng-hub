@@ -17,6 +17,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 AUTH_JS = REPO / "web" / "js" / "views" / "auth.js"
+CHAT_JS = REPO / "web" / "js" / "views" / "chat.js"
 STYLES = REPO / "web" / "css" / "styles.css"
 
 
@@ -151,3 +152,60 @@ def test_about_dialog_honors_the_agreed_scope() -> None:
     # 未签名说明按用户决定放在向导页（用户看到 SmartScreen 警告的当下才需要它）
     setup = _read(REPO / "desktop" / "src" / "setup.html")
     assert "代码签名" in setup, "「未签名」说明应当放在首次设置向导页"
+
+
+# ==================================================================
+#  ★★ 侧边栏「显示选项」的接线（2026-10-13 用户反馈："按钮失效了，点不了"）
+# ==================================================================
+def _handler_block(src: str, anchor: str) -> str:
+    """从 `anchor` 处的监听器切片到它的 `{ signal },` 收尾（含函数体）。"""
+    start = src.index(anchor)
+    end = src.index("{ signal },", start)
+    return src[start:end]
+
+
+def test_sidebar_stage_switch_actually_takes_effect() -> None:
+    """★★ 侧边栏「🎭 立绘舞台」开关必须真的改得动画面。
+
+    ==================== 这条守着一个真实故障 ====================
+    用户反馈"图中按钮失效了，点不了"。真实浏览器 + 真实鼠标事件的复现结论：
+    侧边栏这个开关写的是**全局默认**，而生效值优先读**按会话**存的键 ——
+    只要那个会话被顶栏「🎭 舞台」点过一次（`hne_vn_stage:<id>` 存在），
+    再点侧边栏开关就只改了一个**不生效**的值：开关立刻弹回原位、舞台纹丝不动。
+    （旧提示文案还写着"再用顶栏点一下即可跟回默认"，等于让用户自己绕路。）
+
+    ⇒ 所以硬性要求：这个处理函数必须**清掉本会话的单独设置**，
+       否则那一次点击的结果一定会被下一次渲染覆盖掉。
+    """
+    src = _read(CHAT_JS)
+    block = _handler_block(src, "$('#vn-stage-default', root)?.addEventListener(")
+    assert "setVnStageDefault(" in block, "侧边栏开关要写全局默认值"
+    assert "clearVnStage(" in block, (
+        "侧边栏开关必须同时清掉本会话的单独设置 —— 只写默认值会出现"
+        "「点了立刻弹回、舞台不动」的假死开关（真实故障）"
+    )
+    assert "renderChatPanel(" in block, "改完要重画面板，否则要刷新才看得出变化"
+
+    # 清函数本身要存在，且删的是**按会话**那个键（不是全局默认那个键）
+    helper = src[src.index("function clearVnStage(") :]
+    helper = helper[: helper.index("\n}\n")]
+    assert "removeItem(" in helper, "跟回默认 = 删掉按会话存的键"
+    assert "${VN_STAGE_KEY}:${detail.id}" in helper, "删的必须是这个会话的那一项"
+    assert "VN_STAGE_DEFAULT_KEY" not in helper, (
+        "不能顺手把全局默认也删掉 —— 用户刚刚明确设过它"
+    )
+
+
+def test_stage_override_and_default_stay_two_directions() -> None:
+    """★ 两个入口的语义不许混：顶栏 = 本会话临时覆盖；侧边栏 = 全局默认。
+
+    顶栏按钮若改成也写全局默认，就变成"点一次临时开关，把所有会话的默认都改了" ——
+    这正是本项目 2026-10-13 收敛分支开关时否掉的那类"多出来的隐藏状态"。
+    """
+    src = _read(CHAT_JS)
+    block = _handler_block(src, "if (act === 'vn-stage') {")
+    assert "setVnStage(" in block, "顶栏 🎭 舞台写的是本会话的覆盖值"
+    assert "setVnStageDefault(" not in block and "clearVnStage(" not in block, (
+        "顶栏按钮不该改全局默认，也不该清掉覆盖本身（它就是来设覆盖的）"
+    )
+
