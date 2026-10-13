@@ -735,8 +735,10 @@ async function openSession(root, id, signal) {
   $$('.session-item', root).forEach((el) =>
     el.classList.toggle('active', Number(el.dataset.id) === id),
   );
-  // 正在后台写：轮询到它落库为止（写完自动渲染出来，不用用户手动刷新）
-  if (detail.generating) scheduleGeneratingPoll(root, id);
+  // 正在后台写、或者最后一句还是用户消息（刚发出去就切走了）：都要接上，
+  // 否则用户回来看到的是"自己那句话孤零零摆着"，还得手动刷新才看到结果。
+  const lastMsg = detail.messages?.[detail.messages.length - 1];
+  if (detail.generating || lastMsg?.role === 'user') scheduleGeneratingPoll(root, id);
 }
 
 /**
@@ -757,9 +759,24 @@ function generatingHTML(detail) {
   </div>`;
 }
 
-/** 会话正在生成时，轮询到它落库为止。 */
+/**
+ * 轮询到"这一轮的回复真的出现在会话里"为止（然后重渲染）。
+ *
+ * ==================== ★ 为什么不能只看到 generating=false 就收手 ====================
+ * 用户 2026-10-13 反馈："用户输入后立即切换，再立马点回来依然会剩下用户孤零零的一段，
+ * 需要刷新一下才能看到结果。"
+ *
+ * 原因就是这个收手条件太急：切回来那一刻，服务端**可能刚好收尾**
+ * （`generating` 已经是 false），但那一轮的落库/可见还有一步之遥 ——
+ * 于是轮询看到 false 就停了，界面停在"用户孤零零一句话"，
+ * 只有手动刷新（重新拉一次详情）才看到结果。
+ *
+ * 所以判据改成**看内容**：会话最后一条还是用户消息 → 说明这一轮还没有回复，
+ * 再等几拍；`grace` 用完之后才认输（那时界面会给「让 AI 写这条走向」重试入口）。
+ * 这样"刚写完、刚好错过"和"还在写"两种情况都能自动接上，不需要用户刷新。
+ */
 let generatingTimer = null;
-function scheduleGeneratingPoll(root, sessionId) {
+function scheduleGeneratingPoll(root, sessionId, grace = 6) {
   clearTimeout(generatingTimer);
   generatingTimer = setTimeout(async () => {
     // 已经切到别的会话/世界线了：不再轮询
@@ -769,17 +786,37 @@ function scheduleGeneratingPoll(root, sessionId) {
       detail = await api.get(`/narrative/sessions/${sessionId}`);
     } catch {
       // 网络抖动就再试一次，不打扰用户
-      scheduleGeneratingPoll(root, sessionId);
+      scheduleGeneratingPoll(root, sessionId, grace);
       return;
     }
     if (state.sessionId !== sessionId) return;
-    if (detail.generating) {
-      // ★ 还在写就**不重渲染**：用户在等待期间可能正在输入框里打字，
+
+    const msgs = detail.messages || [];
+    const lastIsUser = msgs.length > 0 && msgs[msgs.length - 1].role === 'user';
+    if (detail.generating || (lastIsUser && grace > 0)) {
+      // ★ 还在写（或者刚刚写完、还没到账）就不重渲染：用户可能正在输入框里打字，
       //   每 1.5 秒重建一次面板会把他的草稿抹掉。
-      scheduleGeneratingPoll(root, sessionId);
+      generatingTimer = null;
+      scheduleGeneratingPoll(root, sessionId, detail.generating ? grace : grace - 1);
       return;
     }
-    // 写完了：渲染出完整回复（顺手保住输入框里的草稿）
+    if (lastIsUser) {
+      // 等够了还是没有回复 ⇒ 这一轮确实什么都没留下（例如刚发出去就被中断）。
+      // 按服务端真相重渲染一次：界面会给出「让 AI 写这条走向」的重试入口，
+      // 而不是让用户对着一个看不出所以然的界面。
+      const draft0 = $('#composer-input', root)?.value || '';
+      state.detail = detail;
+      state.streaming = false;
+      renderChatPanel(root, detail);
+      hydrateRichMessages(root);
+      if (draft0) {
+        const input = $('#composer-input', root);
+        if (input) input.value = draft0;
+      }
+      return;
+    }
+
+    // 回复到了：渲染出来（顺手保住输入框里的草稿）
     const draft = $('#composer-input', root)?.value || '';
     state.detail = detail;
     state.streaming = false;
