@@ -136,6 +136,84 @@ def test_ensure_schema_is_idempotent(sqlite_env: Path) -> None:
         assert db.scalar(select(User).where(User.username == username)) is not None
 
 
+def test_ensure_schema_adds_missing_columns_to_an_old_database(sqlite_env: Path) -> None:
+    """★★ 老库缺列时，`ensure_schema()` 必须**在启动阶段**就把它补上。
+
+    ==================== 这条守着一个真实事故 ====================
+    以前 `ensure_schema()` 只调 `create_all()`，而它**只建缺失的表、绝不 ALTER
+    已有表**；补列那件事只有 `scripts/migrate_db.py` 会做 —— 那是给人手动跑的，
+    桌面版用户根本不会去跑脚本。后果（2026-10-13 实测撞到）：
+        升级安装后，老库缺 `narrative_sessions.branch_group_id` 等新列，
+        启动自检全部正常，**直到用户点开那个功能才报 "no such column"**。
+    这正是本项目最反对的故障形态：不报错、但功能是坏的，报错点还离真因很远。
+
+    做法：先建一个"旧结构"的库（用 SQLite 原生 SQL 建一张**缺列**的表），
+    再调 `ensure_schema()`，断言新列被加上、旧数据还在。
+    """
+    from app.db.bootstrap import ensure_schema
+    from app.db.mysql import get_engine
+
+    # ---- 造一个"旧库"：表存在，但缺 branch_* 这些新列 ----
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE narrative_sessions ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  user_id BIGINT NOT NULL,"
+                "  title VARCHAR(200) NOT NULL,"
+                "  status VARCHAR(20) NOT NULL DEFAULT 'active',"
+                "  message_count INTEGER NOT NULL DEFAULT 0,"
+                "  total_tokens INTEGER NOT NULL DEFAULT 0"
+                ")"
+            )
+        )
+        # 塞一行旧数据：补列之后它必须**原样还在**
+        conn.execute(
+            text(
+                "INSERT INTO narrative_sessions (user_id, title) "
+                "VALUES (1, '旧故事')"
+            )
+        )
+
+    ensure_schema()
+
+    columns = {c["name"] for c in inspect(get_engine()).get_columns("narrative_sessions")}
+    for expected in (
+        "branch_group_id",
+        "branch_index",
+        "branch_label",
+        "branch_enabled",
+        "branch_from_message_id",
+    ):
+        assert expected in columns, f"老库启动时没有补上 {expected}"
+
+    # ★ 补列绝不能丢数据
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            text("SELECT title FROM narrative_sessions WHERE id = 1")
+        ).first()
+    assert row is not None and row[0] == "旧故事", "补列把用户的旧数据弄丢了"
+
+
+def test_ensure_schema_is_additive_only(sqlite_env: Path) -> None:
+    """补列过程**只做加法**：不许出现 DROP / 改类型这类破坏性语句。
+
+    ★ 这里直接对 `plan_upgrade` 生成的语句做断言（它是升级的唯一来源），
+      而不是等出事之后再看。
+    """
+    from app.db.bootstrap import ensure_schema
+    from app.db.mysql import get_engine
+    from app.db.schema_upgrade import plan_upgrade
+
+    ensure_schema()
+    plan = plan_upgrade(get_engine())
+    assert plan.is_empty, f"刚建好的库不该还有待升级项：{plan.statements}"
+    for sql in plan.statements:
+        upper = sql.upper()
+        assert "DROP " not in upper
+        assert "TRUNCATE" not in upper
+
+
 def test_sqlite_file_is_created_under_configured_path(sqlite_env: Path) -> None:
     """库文件必须落在配置指定的位置（而不是别处悄悄建了一个）。"""
     from app.db.bootstrap import ensure_schema

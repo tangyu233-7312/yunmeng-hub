@@ -23,6 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestError, NotFoundError
+from app.narrative import branch as branch_mod
 from app.narrative import dice as dice_mod
 from app.narrative import plugin_runtime
 from app.narrative import state as state_mod
@@ -189,6 +190,9 @@ def list_sessions(
 
     lasts = _last_message_map(db, [row.id for row in rows])
     provider_names = _provider_name_map(db, [row.llm_provider_id for row in rows])
+    # ★ 世界线标记只在"这个组真的有两条线"时才给（见下面 branch_line 的说明）。
+    #   一次查询算出所有多线组，避免逐行去数（列表页最容易踩 N+1）。
+    multi_line_groups = _multi_line_group_ids(db, user_id)
 
     items = [
         SessionBrief(
@@ -206,10 +210,38 @@ def list_sessions(
             created_at=row.created_at,
             updated_at=row.updated_at,
             warnings=_session_warnings(row),
+            # ★ 判据是「**这个组里真的有第二条线**」，而不是"有没有 branch_group_id"：
+            #   开启分支模式时就会写上 group_id（那时还只有一条线），
+            #   若按它标注，用户会平白看到一个自己还没用过的概念「主线」。
+            branch_line=(
+                branch_mod.label_of(row)
+                if branch_mod.group_id_of(row) in multi_line_groups
+                else None
+            ),
         )
         for row in rows
     ]
     return items, total
+
+
+def _multi_line_group_ids(db: Session, user_id: int) -> set[int]:
+    """哪些世界线组**真的有两条以上**的线。
+
+    ★ 刻意只查"多线组"而不是给每个会话标注：单条会话不该被叫「主线」——
+      那是个用户还没用过的概念，凭空出现只会让人以为自己的会话被改过。
+    """
+    rows = db.execute(
+        select(
+            NarrativeSession.branch_group_id,
+            func.count().label("n"),
+        )
+        .where(
+            NarrativeSession.user_id == user_id,
+            NarrativeSession.branch_group_id.is_not(None),
+        )
+        .group_by(NarrativeSession.branch_group_id)
+    ).all()
+    return {int(gid) for gid, n in rows if int(n) > 1 and gid is not None}
 
 
 def _provider_name_map(db: Session, provider_ids: list[int | None]) -> dict:
@@ -485,11 +517,21 @@ def serialize_detail(
         #   而实际根本没用到 —— 属于"预览/界面骗人"，本项目零容忍。
         bound = effective = builtin_guard = None
 
+    # ---------------- 世界线组（对话分支）----------------
+    # ★ 延迟导入：branch 模块要调用本模块的 delete_session / 取会话，
+    #   模块顶层互相 import 会成环。这里在函数内 import，两边都能用。
+    from app.narrative import branch as branch_mod
+
+    branch_info = branch_mod.serialize_group(db, session)
+
     return SessionDetail(
         id=session.id,
         title=session.title,
         status=session.status,
         pure_chat=pure_chat,
+        # ★ 世界线切换器靠它渲染；没开启分支时 enabled=False，
+        #   界面据此完全不显示任何分支相关入口（默认不影响现有用户）
+        branch=branch_info,
         character_card=card_reference(db, session.character_card_id),
         provider=provider,
         prompt_preset=bound,

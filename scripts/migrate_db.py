@@ -188,6 +188,26 @@ def _plan_mysql_handwritten(engine) -> list[str]:  # noqa: ANN001 - Engine
             "translate_settings_json": (
                 "MEDIUMTEXT NULL COMMENT '翻译中间件设置 JSON（开关/模式/方向/语言/模型）'"
             ),
+            # ---- 对话分支 / 平行世界（世界线）----
+            # ★ 一条世界线 = 一个会话行，靠 branch_group_id 归组（理由见
+            #   app/db/models/narrative.py 里那一段说明：五处隔离全都已经按
+            #   session_id 做过，一条线一个 session 才不会出现"跨世界线串台"）。
+            "branch_group_id": (
+                "BIGINT NULL COMMENT '世界线组 ID（= 组内第一条线的会话 ID；NULL = 未参与分支）'"
+            ),
+            "branch_index": (
+                "INT NOT NULL DEFAULT 0 COMMENT '世界线序号：0 主线 / 1 平行线'"
+            ),
+            "branch_label": (
+                "VARCHAR(64) NULL COMMENT '世界线显示名（默认「主线」/「平行线」）'"
+            ),
+            "branch_enabled": (
+                "TINYINT(1) NOT NULL DEFAULT 0 "
+                "COMMENT '是否开启对话分支模式（默认关；关掉时行为与加此功能前一致）'"
+            ),
+            "branch_from_message_id": (
+                "BIGINT NULL COMMENT '分叉点消息 ID（平行线从这条消息之后与主线分开）'"
+            ),
         },
         "prompt_presets": {
             "is_builtin": (

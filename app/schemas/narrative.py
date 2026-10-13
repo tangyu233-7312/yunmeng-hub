@@ -65,6 +65,12 @@ class SessionBrief(BaseModel):
         default_factory=list,
         description="会话本身的问题（例如角色卡已被删除），列表上就要提醒用户",
     )
+    branch_line: str | None = Field(
+        default=None,
+        description="★ 世界线标记（对话分支）：没参与分支时为 null；"
+        "参与时形如「主线」/「平行线」，会话列表据此把两条线标出来，"
+        "避免用户看到两条同名会话却分不清谁是谁。",
+    )
 
 
 class SessionContextInfo(BaseModel):
@@ -205,6 +211,15 @@ class SessionDetail(BaseModel):
         description="★ 是否为**纯聊天会话**（没有角色卡）。"
         "这类会话不注入人设 / 预设 / 状态协议，提示词是「通用助手」那一条分支；"
         "界面据此隐藏状态栏、显示「纯聊天」标记",
+    )
+    branch: dict[str, Any] = Field(
+        default_factory=dict,
+        description="★ 对话分支（平行世界 / 世界线）状态："
+        "{enabled, group_id, max, can_branch, can_enable, has_sibling, current_id, "
+        "lines:[{id, index, label, is_current, message_count, last_active_at, status, archived}]}。"
+        "enabled=false 时界面**完全不显示**任何分支入口（默认关闭，不影响现有用户）。"
+        "★ 一条世界线就是一个独立会话（消息/记忆/状态/总结全都按 session_id 隔离），"
+        "所以不存在「在第二条线说话、第一条线跟着变」的可能。",
     )
     character_card: dict[str, Any] | None = None
     provider: dict[str, Any] | None = Field(
@@ -395,6 +410,48 @@ class SessionUpdate(BaseModel):
         default=None,
         description="换一个提示词预设。★ 传 null 表示**解绑**（回到全局默认预设 / 内置装配）",
     )
+
+
+class BranchToggle(BaseModel):
+    """开启 / 关闭某条会话的「对话分支」模式。"""
+
+    enabled: bool = Field(
+        ...,
+        description="true = 开启（界面出现分叉入口与世界线切换器）；"
+        "false = 关闭（只是收起入口，**不会删除**已经生成的平行线）",
+    )
+
+
+class BranchRename(BaseModel):
+    """给世界线改名（空字符串 = 恢复默认名「主线」/「平行线」）。"""
+
+    label: str = Field(default="", max_length=64, description="世界线显示名，留空恢复默认")
+
+
+class BranchForkRequest(BaseModel):
+    """从某条回复分叉出一条新的世界线。"""
+
+    after_message_id: int | None = Field(
+        default=None,
+        description="在**哪条角色回复**上分叉（新线从它之前接起，另写一条走向）。"
+        "不传 = 用最后一条回复。",
+    )
+    label: str | None = Field(default=None, max_length=64, description="新世界线的名字（可留空）")
+
+
+class BranchForkResult(BaseModel):
+    """分叉结果。"""
+
+    session: SessionDetail = Field(..., description="新建的那条世界线（已切到它，可直接续写）")
+    source_session_id: int = Field(..., description="从哪条线分出来的")
+    note: str = Field(default="", description="长期记忆迁移等需要如实告知用户的情况")
+
+
+class BranchToggleResult(BaseModel):
+    """开关分支模式的结果。"""
+
+    enabled: bool
+    branch: dict[str, Any] = Field(default_factory=dict, description="更新后的世界线组状态")
 
 
 class MessageCreate(BaseModel):

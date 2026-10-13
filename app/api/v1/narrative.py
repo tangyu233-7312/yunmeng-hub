@@ -59,6 +59,11 @@ from app.db.models import Message, NarrativeSession
 from app.db.mysql import session_scope
 from app.schemas.common import ApiResponse, Page
 from app.schemas.narrative import (
+    BranchForkRequest,
+    BranchForkResult,
+    BranchRename,
+    BranchToggle,
+    BranchToggleResult,
     MemoryFactCreate,
     MemoryHitOut,
     MemoryListOut,
@@ -80,6 +85,7 @@ from app.schemas.narrative import (
 )
 from app.narrative import engine, memory
 from app.narrative import anchors as anchors_mod
+from app.narrative import branch as branch_mod
 from app.narrative import state as state_mod
 from app.narrative import summary as summary_mod
 from app.narrative import translate as translate_mod
@@ -1147,6 +1153,109 @@ async def regenerate_message(
         delete_inclusive=delete_from_id is not None,
         delete_from_id=delete_from_id,
     )
+
+
+@router.post(
+    "/sessions/{session_id}/branch",
+    summary="开启 / 关闭对话分支（平行世界）",
+    response_model=ApiResponse[BranchToggleResult],
+)
+def toggle_branch(
+    session_id: int,
+    payload: BranchToggle,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ApiResponse[BranchToggleResult]:
+    """开关这条会话的「对话分支」模式。
+
+    ★ 默认关闭 —— 关着的时候界面上不出现任何分叉入口，
+      行为与加这个功能之前**完全一致**（老用户不会突然多出一堆概念）。
+
+    ★ 关闭**不会删除**平行线：那是用户花 token 生成的真实内容，
+      删掉是不可逆的损失。关闭只收起入口，两条线都还在会话列表里。
+    """
+    branch_mod.enable(db, current_user.id, session_id, bool(payload.enabled))
+    session = session_service.get_owned_session(db, current_user.id, session_id)
+    info = branch_mod.serialize_group(db, session)
+    return ApiResponse.ok(
+        BranchToggleResult(enabled=bool(payload.enabled), branch=info),
+        message="已开启对话分支" if payload.enabled else "已关闭对话分支（平行线仍然保留）",
+    )
+
+
+@router.patch(
+    "/sessions/{session_id}/branch/label",
+    summary="给世界线改名",
+    response_model=ApiResponse[dict],
+)
+def rename_branch_line(
+    session_id: int,
+    payload: BranchRename,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ApiResponse[dict]:
+    """改这条世界线的显示名（空 = 恢复默认「主线」/「平行线」）。"""
+    row = branch_mod.rename_line(db, current_user.id, session_id, payload.label)
+    return ApiResponse.ok(
+        {"id": row.id, "label": branch_mod.label_of(row)}, message="世界线已改名"
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/branch/fork",
+    status_code=status.HTTP_201_CREATED,
+    summary="分叉出一条新的世界线（平行世界）",
+    response_model=ApiResponse[BranchForkResult],
+)
+def fork_branch(
+    session_id: int,
+    payload: BranchForkRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ApiResponse[BranchForkResult]:
+    """从某条角色回复分叉出一条新世界线，并返回它。
+
+    ★ 新线**不含**被分叉的那条回复（复制到它之前为止），末尾是你说的那句话 ——
+      于是界面上紧接着调 `GET …/regenerate`（不传 message_id）就能让模型
+      在同一个位置上另写一条走向。复用的是现成的重新生成通路，
+      所以流式、状态校验、骰点、翻译、记忆写入全都自动生效。
+
+    ★ 两条线从此**各走各的**：历史、记忆、状态、总结全部按会话隔离，
+      在第二条线说话不会影响第一条线（这是本功能的核心保证）。
+    """
+    twin, note = branch_mod.fork(
+        db,
+        current_user.id,
+        session_id,
+        after_message_id=payload.after_message_id,
+        label=payload.label,
+    )
+    messages, total, truncated = session_service.get_messages(db, twin.id)
+    detail = session_service.serialize_detail(
+        db,
+        twin,
+        messages=messages,
+        messages_total=total,
+        messages_truncated=truncated,
+        prompt=_prompt_preview(db, twin),
+    )
+    return ApiResponse.ok(
+        BranchForkResult(session=detail, source_session_id=session_id, note=note),
+        message="已分叉出另一条世界线",
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/branch",
+    summary="查看世界线组（切换器用）",
+    response_model=ApiResponse[dict],
+)
+def get_branch(
+    session_id: int, db: DbSession, current_user: CurrentUser
+) -> ApiResponse[dict]:
+    """看这条会话所属的世界线组（几条线、各自叫什么、消息数）。"""
+    session = session_service.get_owned_session(db, current_user.id, session_id)
+    return ApiResponse.ok(branch_mod.serialize_group(db, session), message="世界线组")
 
 
 @router.post(

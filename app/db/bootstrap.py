@@ -226,7 +226,7 @@ def ensure_secrets() -> dict[str, str]:
 
 
 def ensure_schema() -> list[str]:
-    """按 ORM 模型建表（**幂等**：已存在的表跳过），返回本次新建的表名。
+    """按 ORM 模型对齐数据库结构（**幂等 + 只做加法**），返回本次新建的表名。
 
     ==================== ★ 为什么运行时必须自己建表 ====================
     原先只有 `scripts/init_db.py` 会建表，运行时从不建。用户拿到的空库能通过
@@ -234,16 +234,23 @@ def ensure_schema() -> list[str]:
     "自检通过、实际不可用"。桌面应用没有"让用户去跑一个脚本"这条路径，
     所以启动时自建是唯一合理的选择。
 
-    ==================== 为什么不用 Alembic 迁移 ====================
-    桌面版**首次创建**数据库文件时 `create_all` 完全够用（此时表一定与模型一致）。
-    需要谨慎的是"升级安装"——旧库缺新列。这一点由
-    `scripts/migrate_db.py` 负责（它对 MySQL 走的是手写 ALTER），
-    SQLite 侧的列级升级目前**尚未实现**：现在还是 0.x/POC 阶段，
-    升级做法是"备份旧库文件 → 用新版本的 create_all 建新库 → 手工搬数据"，
-    在 README 里如实写明，不装作已经支持。
+    ==================== ★ 为什么这里还要补列（2026-10-13 补上）====================
+    以前这里只调 `create_all()`，它**只建缺失的表、绝不 ALTER 已有表**。
+    而 `scripts/migrate_db.py` 是给人手动跑的 —— 桌面版用户根本不会去跑脚本。
+    后果（真实发生过，就是本轮）：
+        升级安装后，老库缺 `narrative_sessions.branch_group_id` 等新列，
+        启动自检一切正常，**直到用户点开某个功能才报 "no such column"**。
+    这正是本项目最反对的那类故障：不报错、但功能是坏的，而且报错点离真因很远。
 
-    ★ 已存在的表**不会被修改**：create_all 只做 `CREATE TABLE IF NOT EXISTS`，
-      它不会 ALTER 已有表，所以对旧库是安全的（不会破坏数据）。
+    所以现在启动时顺带跑一次**模型推导**的结构升级（`app/db/schema_upgrade.py`）：
+      · 两种后端（SQLite / MySQL）走同一套逻辑，DDL 按各自方言编译；
+      · 只会生成 `CREATE TABLE` / `CREATE INDEX` / `ALTER TABLE … ADD COLUMN`，
+        有代码级断言（`_assert_only_additive`）挡着 DROP / 改类型这类破坏性语句；
+      · 每条语句执行前先查存在性，重复启动不会重复执行（幂等）；
+      · 真加不了的列（NOT NULL 且无常量默认值）会**跳过并说明原因**，不猜数据。
+
+    ★ 安全性：库里有用户的真实故事，所以这里**绝不删列、绝不改类型**。
+      删列这种事交给 `migrate_db.py` 的只读报告（它会列出来让人自己决定）。
     """
     # ★ 局部 import：本模块的"生成密钥"部分希望保持轻量（不拖进 SQLAlchemy），
     #   只有真正要建表时才需要引擎。
@@ -259,7 +266,46 @@ def ensure_schema() -> list[str]:
     created = sorted(set(Base.metadata.tables) - existing)
     if created:
         logger.info("已自动创建数据表 {} 张：{}", len(created), "、".join(created))
+
+    # ---- 老库补列：与 create_all 互补（它只建表，不动已有表）----
+    _upgrade_columns(engine)
     return created
+
+
+def _upgrade_columns(engine) -> None:  # noqa: ANN001 - Engine
+    """把已有表缺的列/索引补上（只做加法；失败不阻断启动，但**必须大声报出来**）。
+
+    ★ 为什么失败不抛异常：
+      这是"尽力而为"的兼容步骤。某些列在 SQLite 上本来就加不了（NOT NULL
+      无默认值），而那种情况 `plan_upgrade` 会把它放进 `skipped_columns`
+      **并给出人话原因**，不是异常。真出了异常（权限、锁表），也不能让
+      整个应用起不来 —— 但要记 error 日志，并明确写出"哪个功能可能不可用"。
+    """
+    from app.db.schema_upgrade import apply_upgrade, plan_upgrade
+
+    try:
+        plan = plan_upgrade(engine)
+        if plan.missing_tables:
+            # 上面 create_all 已经建过表了，这里是防御性的一手（并发启动等）
+            Base.metadata.create_all(bind=engine)
+        executed = apply_upgrade(engine, plan)
+        if executed:
+            logger.info("数据库结构已补齐：执行了 {} 条加列/加索引语句（只做加法）", executed)
+        for table, column, reason in plan.skipped_columns:
+            logger.warning("跳过加列 {}.{} —— {}", table, column, reason)
+        if plan.obsolete_columns:
+            logger.info(
+                "库里有 {} 列是模型里已删的（**不会自动删除**）：{}",
+                len(plan.obsolete_columns),
+                "、".join(plan.obsolete_columns),
+            )
+    except Exception as exc:  # noqa: BLE001 - 兼容步骤不该让应用起不来
+        logger.error(
+            "数据库结构自动补齐失败（{}: {}）—— 应用会继续启动，"
+            "但用到新字段的功能可能报错。可手动运行 scripts/migrate_db.py 重试。",
+            type(exc).__name__,
+            exc,
+        )
 
 
 def _table_names(engine) -> list[str]:  # noqa: ANN001 - Engine 类型此处只需用到 inspect

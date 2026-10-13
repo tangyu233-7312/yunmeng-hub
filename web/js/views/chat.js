@@ -312,6 +312,38 @@ function bindStatic(root, signal) {
         return;
       }
       if (act === 'settings') return openSettingsDialog(root, signal);
+      // ---------------- 对话分支（平行世界） ----------------
+      // ★ 顶栏一个按钮承担两种行为（见模板处的说明）：
+      //   没开启 → 开启；已开启 → 把世界线切换条滚到眼前（不重复写库、不重复弹窗）。
+      if (act === 'branch-main') {
+        if (!state.detail?.branch?.enabled) return toggleBranch(root, signal, true);
+        $('#branch-bar', root)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        return;
+      }
+      if (act === 'branch-off') {
+        // ★ 关闭**不等于删除**：两条线都还在会话列表里。这一点必须让用户
+        //   先看清楚，否则他会以为"关掉就把另一条线丢了"而不敢点。
+        const b = state.detail?.branch;
+        const extra = b?.has_sibling
+          ? '\n\n已经生成的平行线**不会被删除**，仍可在左侧会话列表里找到、' +
+            '也可以再打开这个开关切回去。'
+          : '';
+        const go = await confirmDialog({
+          title: '关闭对话分支',
+          message:
+            '关闭后这条会话不再显示分叉入口与世界线切换器。' + extra,
+          confirmText: '关闭',
+        });
+        if (!go) return;
+        return toggleBranch(root, signal, false);
+      }
+      if (act === 'branch-switch') {
+        return switchBranch(root, signal, Number(btn.dataset.sid));
+      }
+      if (act === 'branch-rename') {
+        return renameBranch(root, signal, btn.dataset.label || '');
+      }
+      if (act === 'fork-msg') return forkFromMessage(root, signal, msgOf(btn));
       if (act === 'regen') return regenerateMessage(root, signal, msgOf(btn));
       if (act === 'edit-state') return openStateEditor(root);
       if (act === 'toggle-state') {
@@ -749,9 +781,14 @@ function roleLabel(role) {
  *   · 撤回      只有 user 消息能撤回 —— 会连带删掉它之后的全部内容
  *   · 重新生成  只有 assistant 消息能重新生成 —— 同样会删掉它之后的内容，
  *               但**不会**多出一条重复的用户发言（这是它存在的意义）
+ *   · 分支      只有"前面确实有你说过的话"的 assistant 消息才给
+ *               —— 开场白前面什么都没有，在那儿分支必然失败（见下方说明）
  * 把不可能的操作藏起来，比点下去报错体验好得多。
+ *
+ * @param m     消息（后端 MessageOut）
+ * @param opts  { forkable } 这条回复能不能分叉（由 renderMessages 算，理由见下）
  */
-function messageActions(m) {
+function messageActions(m, opts = {}) {
   const buttons = [
     `<button class="btn link small" data-act="copy-msg">复制</button>`,
     // ★ 逐条翻译（第十六轮）：适用于"忘了开翻译中间件"或"只想看这一条"的用户。
@@ -770,6 +807,19 @@ function messageActions(m) {
       `<button class="btn link small" data-act="regen" ` +
         `title="用同一句话让模型重新写一遍（会删掉这条回复之后的内容，但不会多出发言）">重新生成</button>`,
     );
+    // ★ 对话分支（平行世界）：开启分支模式、还没两条线、且**这条回复前面有用户发言**。
+    //   与「重新生成」的区别必须让用户一眼看懂：
+    //     重新生成 = 替换这条回复（原来那条没了）
+    //     分支     = 保留这条回复，另开一条线写**另一条走向**（两条都在）
+    //   ★ 为什么必须排除开场白：分叉要"用你说过的那句话"当锚点另写一条走向，
+    //     而开场白前面根本没有用户消息 —— 后端会（正确地）拒绝。
+    //     实测确认过：不给这个判断的话，开场白上也会挂一个点了必报错的按钮。
+    if (state.detail?.branch?.can_branch && opts.forkable) {
+      buttons.push(
+        `<button class="btn link small" data-act="fork-msg" ` +
+          `title="从这条回复分叉出另一条世界线：保留现在这条，另写一种走向（两条线各自独立，互不影响）">🌿 分支</button>`,
+      );
+    }
   }
   return `<div class="msg-actions">${buttons.join('')}</div>`;
 }
@@ -832,11 +882,26 @@ function renderMessages(detail) {
         <div class="msg-body">${esc(displayText(m))}</div>
         ${translationChipHTML(m)}
         ${rollsHTML(m.rolls)}
-        ${messageActions(m)}
+        ${messageActions(m, { forkable: forkableAt(detail.messages, index) })}
       </div>`,
       )
       .join('')
   );
+}
+
+/**
+ * 这条回复能不能「🌿 分支」。
+ *
+ * ★ 判据是"它前面确实有你说过的话" —— 分叉要用**那句话**当锚点另写一条走向
+ *   （后端 branch.fork 就是这么做的），所以开场白（前面空空如也）不能分叉。
+ *   不给这个判断的话，开场白上会挂一个"点了必然报错"的按钮 ——
+ *   实测确认过这种按钮真的会出现（探针里数到 2 个分叉按钮，其中一个是开场白）。
+ */
+function forkableAt(messages, index) {
+  for (let i = index - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') return true;
+  }
+  return false;
 }
 
 /* ==================================================================
@@ -956,9 +1021,167 @@ function summaryBannerHTML(detail) {
   </div>`;
 }
 
-/** 点横幅上的「立即总结」：唯一会花 token 的手动入口。 */
-async function runMemorySummary(root) {
+/* ==================================================================
+   对话分支（平行世界 / 世界线）
+
+   ★ 核心保证（用户最在意的一条）：**两条世界线完全独立**。
+     实现上，一条世界线就是一个独立会话 —— 消息、长期记忆、结构化状态、
+     剧情总结全都按 session_id 隔离（后端本来就如此），
+     所以「在第二条线说话、第一条线跟着变」在结构上不可能发生。
+
+   ★ 这个功能的入口**默认全部隐藏**：只有 branch.enabled 为真时才渲染。
+     没开启它的用户，界面上一个字都不会多出来。
+   ================================================================== */
+
+/** 世界线切换条：没开启分支模式时返回空字符串（不渲染任何东西）。 */
+function branchBarHTML(detail) {
+  const b = detail?.branch;
+  if (!b || !b.enabled) return '';
+  const lines = b.lines || [];
+
+  // ★ 只有**一条线**时，这里只放一个"开启/关闭"的温和入口 ——
+  //   不给用户看还不存在的概念（两条线、切换器都等真有第二条线再说）。
+  if (lines.length < 2) {
+    return `<div class="branch-bar" id="branch-bar">
+      <span class="branch-label">🌿 对话分支</span>
+      <span class="small muted" style="flex:1">
+        开启后，可以在某条回复上点「🌿 分支」让 AI <strong>另写一条走向</strong>；
+        两条线各自独立、随时切换（在另一条线说话不会影响这一条）。
+      </span>
+      <button class="btn sec sm" data-act="branch-off"
+        title="收起分支功能（已经生成的平行线不会被删除）">关闭分支</button>
+    </div>`;
+  }
+
+  const tabs = lines
+    .map(
+      (l) => `<button class="branch-tab${l.is_current ? ' active' : ''}" data-act="branch-switch"
+        data-sid="${l.id}"
+        title="切换到「${esc(l.label)}」（${l.message_count} 条消息）${
+          l.archived ? ' · 这条线已归档，切过去会自动恢复' : ''
+        }">${esc(l.label)}<span class="faint"> · ${l.message_count}</span></button>`,
+    )
+    .join('');
+
+  const current = lines.find((l) => l.is_current);
+  return `<div class="branch-bar" id="branch-bar">
+    <span class="branch-label">🌿 世界线</span>
+    <div class="branch-tabs">${tabs}</div>
+    <span class="small faint" style="flex:1">
+      ${b.can_branch
+        ? '两条线各自独立：在这一条说话，另一条不会跟着变。'
+        : `最多 ${b.max} 条线（已用满）。想再分叉请先删掉一条。`}
+    </span>
+    <button class="btn link small" data-act="branch-rename"
+      data-label="${esc(current?.label || '')}"
+      title="给当前这条世界线改个名字（默认「主线」/「平行线」）">改名</button>
+    <button class="btn link small" data-act="branch-off"
+      title="收起分支入口（两条线都不会被删除，仍可在左侧会话列表里找到）">关闭分支</button>
+  </div>`;
+}
+
+/**
+ * 从某条回复分叉出另一条世界线。
+ *
+ * ★ 这里的交互顺序是刻意的：先分叉（同步、快）→ 切到新线 → 再让模型
+ *   在新线上生成"另一条走向"。生成走的是**现成的重新生成通路**
+ *   （新线末尾正好是分叉点前面那条用户消息），所以流式、状态校验、
+ *   骰点、翻译、记忆写入全都不用另写一份。
+ */
+async function forkFromMessage(root, signal, msg) {
+  if (state.streaming) return;
+  if (!state.sessionId || !msg?.id) return;
+  const b = state.detail?.branch;
+  if (!b?.enabled) return;
+
+  if (!b.can_branch) {
+    toastWarn(`最多只支持 ${b.max || 2} 条世界线，已经用满了。`);
+    return;
+  }
+
+  const go = await confirmDialog({
+    title: '从这条回复分支',
+    message:
+      '会新建一条**世界线**，并在这个位置让 AI 另写一种走向。\n\n' +
+      '· 现在这条回复以及之后的剧情**保持不动**，随时能切回来看；\n' +
+      '· 两条线从此各走各的：在一条线里说话、改状态、总结，都不会影响另一条；\n' +
+      '· 分叉之后会花一次模型调用（让 AI 写新那条走向）。',
+    confirmText: '分叉并生成另一条走向',
+  });
+  if (!go) return;
+
+  const btn = root.querySelector(`.msg[data-id="${msg.id}"] [data-act="fork-msg"]`);
+  const restore = btn ? buttonLoading(btn, '分叉中') : () => {};
+
+  let forked;
+  try {
+    // ★ api.post 返回的是响应壳里的 data，所以这里直接就是
+    //   BranchForkResult {session, source_session_id, note}。
+    forked = await api.post(`/narrative/sessions/${state.sessionId}/branch/fork`, {
+      after_message_id: msg.id,
+    });
+    toastOk(
+      forked?.note ? `已分叉出另一条世界线。${forked.note}` : '已分叉出另一条世界线',
+    );
+  } catch (err) {
+    toastErr(err.toDisplay ? err.toDisplay() : String(err));
+    return;
+  } finally {
+    restore();
+  }
+  const twin = forked?.session;
+  if (!twin?.id) return;
+
+  // 切到新线（消息列表里会多出这条会话，列表也要刷新）
+  await openSession(root, twin.id, signal);
+  await refreshSessions(root, signal);
+
+  // ★ 在界面上先放一个空白助手气泡，再在新线上生成"另一条走向"。
+  //   为什么必须自己造这个气泡：`regenerateMessage` 在不传 message 时
+  //   （useLastUser=true）**没有**可复用的气泡 —— 它的 index 是 -1，
+  //   取不到节点就直接 return 了。那个"空白气泡"平时由「编辑后自动重生成」
+  //   那条路提供，这里同样得自己给一个。
+  //   位置正好：新线复制到那条用户消息为止，这个气泡接在它后面。
+  const bubble = appendMessage(root, { role: 'assistant', content: '', pending: true });
+  await regenerateMessage(root, signal, null, bubble);
+}
+
+/** 开启 / 关闭分支模式。 */
+async function toggleBranch(root, signal, enabled) {
   if (!state.sessionId) return;
+  try {
+    const res = await api.post(`/narrative/sessions/${state.sessionId}/branch`, { enabled });
+    toastOk(res?.message ? res.message : enabled ? '已开启对话分支' : '已关闭对话分支');
+    await openSession(root, state.sessionId, signal);
+  } catch (err) {
+    toastErr(err.toDisplay ? err.toDisplay() : String(err));
+  }
+}
+
+/** 切换到另一条世界线。 */
+async function switchBranch(root, signal, targetId) {
+  if (!targetId || targetId === state.sessionId) return;
+  await openSession(root, targetId, signal);
+  await refreshSessions(root, signal);
+}
+
+/** 给当前世界线改名。 */
+async function renameBranch(root, signal, currentLabel) {
+  if (!state.sessionId) return;
+  const name = window.prompt('给这条世界线起个名字（留空恢复默认「主线」/「平行线」）', currentLabel || '');
+  if (name === null) return;
+  try {
+    await api.patch(`/narrative/sessions/${state.sessionId}/branch/label`, { label: name });
+    toastOk('世界线已改名');
+    await openSession(root, state.sessionId, signal);
+    await refreshSessions(root, signal);
+  } catch (err) {
+    toastErr(err.toDisplay ? err.toDisplay() : String(err));
+  }
+}
+
+/** 点横幅上的「立即总结」：唯一会花 token 的手动入口。 */
+async function runMemorySummary(root) {  if (!state.sessionId) return;
   const btn = $('#summary-banner [data-act="summary-run"]', root);
   // ★ 反馈必须**在第一个 await 之前**就摆上（同步执行到 await 时按钮已经禁用/变字），
   //   否则用户会以为没点上、连点几下 —— 真实事故：他连点几次，AI 连着总结了好几遍、白花 token。
@@ -1328,9 +1551,27 @@ function renderChatPanel(root, detail) {
         <div class="small faint token-stats" id="token-stats">${tokenStatsHTML(null, detail)}</div>
       </div>
       <div class="chat-head-actions">
-        <button class="btn sec sm" data-act="memories" title="看看模型记住了什么（向量长期记忆）">记忆</button>
-        <button class="btn sec sm${detail.translate?.settings?.enabled ? ' on' : ''}" data-act="translate" id="btn-translate" title="跨语言对话：原文 / 译文可切换（默认关闭，开会多花钱）">🌐 翻译${detail.translate?.settings?.enabled ? '开' : ''}</button>
+        <button class="btn sec sm" data-act="memories" title="看看模型记住了什么（向量长期记忆）">记忆</button>        <button class="btn sec sm${detail.translate?.settings?.enabled ? ' on' : ''}" data-act="translate" id="btn-translate" title="跨语言对话：原文 / 译文可切换（默认关闭，开会多花钱）">🌐 翻译${detail.translate?.settings?.enabled ? '开' : ''}</button>
         <button class="btn sec sm" data-act="prompt" title="看看这一轮到底给模型发了什么">查看提示词</button>
+        ${
+          // ★ 分支入口：**一个按钮、一个字面量 data-act**。
+          //   为什么不按开关状态拼两个不同的动作名（branch-on / branch-focus）：
+          //   `tests/test_console.py::test_chat_view_buttons_match_their_delegated_actions`
+          //   会静态检查"判断过的 data-act"必须有一个**字面量**按钮与之对应 ——
+          //   用模板表达式拼出来的动作名它看不见，等于把这个按钮漏出守门人的视野
+          //   （那个测试守的正是"按钮点了毫无反应还不报错"这类 bug）。
+          //   所以这里统一叫 branch-main，由处理函数按当前状态决定做什么。
+          pureChat
+            ? ''
+            : `<button class="btn sec sm${detail.branch?.enabled ? ' on' : ''}" data-act="branch-main" id="btn-branch"
+                 title="${
+                   detail.branch?.enabled
+                     ? '对话分支已开启：在某条回复上点「🌿 分支」可让 AI 另写一条走向；两条世界线完全独立，点这里可跳到切换器'
+                     : '开启对话分支（平行世界）：让 AI 对同一段剧情写出两条不同走向，可随时切换；默认关闭'
+                 }">🌿 ${detail.branch?.enabled ? '世界线' : '分支'}${
+                   detail.branch?.enabled ? '开' : ''
+                 }</button>`
+        }
         ${detail.vn ? `<button class="btn sec sm${vnStageOn(detail) ? ' on' : ''}" data-act="vn-stage" id="btn-vn-stage" title="立绘舞台：背景 + 立绘 + 台词框（表情跟着状态栏变）">🎭 舞台${vnStageOn(detail) ? '开' : '关'}</button>` : ''}
         ${
           detail.vn && vnStageOn(detail)
@@ -1346,6 +1587,8 @@ function renderChatPanel(root, detail) {
     </div>
 
     <div id="chat-alerts">${detail.warnings?.length ? alertsHTML(detail.warnings) : ''}</div>
+
+    ${pureChat ? '' : branchBarHTML(detail)}
 
     ${pureChat ? '' : summaryBannerHTML(detail)}
 
@@ -2142,7 +2385,23 @@ function attachActions(bubble, data) {
   const id = Number(data?.message_id) || Number(bubble.dataset.id) || null;
   if (id) bubble.dataset.id = String(id);
   const role = Number(id) && bubble.classList.contains('user') ? 'user' : 'assistant';
-  bubble.insertAdjacentHTML('beforeend', messageActions({ role, id }));
+  // ★ forkable 必须按**真实的 DOM 前序消息**算，不能想当然写成 true：
+  //   流式气泡的来源不止一条（发消息 / 重新生成 / 分叉后在新线上生成），
+  //   还有"开场白刚渲染出来"这类没有前序用户消息的情形。
+  //   判据与 renderMessages 里的 forkableAt 完全一致：前面得有一条 user 消息。
+  bubble.insertAdjacentHTML(
+    'beforeend',
+    messageActions({ role, id }, { forkable: hasPrecedingUserMessage(bubble) }),
+  );
+}
+
+/** 这条气泡前面（DOM 里）是否有一条用户消息 —— 分叉能否成立的唯一判据。 */
+function hasPrecedingUserMessage(bubble) {
+  for (let node = bubble?.previousElementSibling; node; node = node.previousElementSibling) {
+    if (!node.classList?.contains('msg')) continue;
+    if (node.classList.contains('user')) return true;
+  }
+  return false;
 }
 
 function finishBubble(bubble, data) {
@@ -3349,6 +3608,22 @@ async function openSettingsDialog(root, signal) {
           —— 可在「提示词预设」页修改或还原。
         </div>
       </div>
+      <div class="field">
+        <label>对话分支（平行世界）</label>
+        <label class="switch-row">
+          <input type="checkbox" name="branch_enabled" ${detail.branch?.enabled ? 'checked' : ''} />
+          <span>开启后可在某条回复上点「🌿 分支」，让 AI 另写一条走向</span>
+        </label>
+        <div class="hint">
+          两条世界线<strong>完全独立</strong>：各自有自己的对话历史、长期记忆、
+          结构化状态与剧情总结 —— 在一条线里说话、改状态、做总结，
+          <strong>都不会影响另一条</strong>。
+          <br />
+          只支持两条线（主线 + 平行线）。关掉这个开关只是收起入口，
+          <strong>已经生成的平行线不会被删除</strong>。
+          ${detail.branch?.has_sibling ? '<br />当前已有两条世界线，可用会话上方的切换器来回切。' : ''}
+        </div>
+      </div>
       ${
         detail.rolling_summary
           ? `<div class="field">
@@ -3380,6 +3655,13 @@ async function openSettingsDialog(root, signal) {
         //   所以这里必须显式发 null，不能省略这个字段。
         prompt_preset_id: values.prompt_preset_id ? Number(values.prompt_preset_id) : null,
       });
+      // ★ 分支开关单独走它自己的接口（不是会话 PATCH 的字段）：
+      //   它要顺带把这条会话登记进世界线组、并回传最新的组状态。
+      //   这里只在**值真的变了**时才调用，避免每次保存设置都白写一次库、白记一条日志。
+      const wantBranch = Boolean($('[name="branch_enabled"]', m.root)?.checked);
+      if (wantBranch !== Boolean(detail.branch?.enabled)) {
+        await api.post(`/narrative/sessions/${detail.id}/branch`, { enabled: wantBranch });
+      }
       m.close();
       toastOk('设置已更新');
       await openSession(root, detail.id, signal);

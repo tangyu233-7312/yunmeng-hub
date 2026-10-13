@@ -83,6 +83,52 @@ class NarrativeSession(Base, TimestampMixin):
         comment="会话类型：story（叙事）/ chat（纯聊天，无角色）",
     )
 
+    # ---------------- 对话分支 / 平行世界（世界线）----------------
+    # ★ 设计要点（这是整个功能最重要的一条，改之前先读完）：
+    #   **一条世界线就是一个普通的会话行**，靠 `branch_group_id` 归组。
+    #   为什么不搞"同一个会话里加 branch_id 再到处过滤"：
+    #     对话历史、长期记忆召回、结构化状态、剧情总结、撤回/重新生成的删除范围
+    #     ——这五处**全都已经按 session_id 隔离**（engine.load_history、
+    #     memory.recall 的 cross_session 默认 False、sessions.delete_messages_from…）。
+    #     一条线一个 session，这些隔离就**自动**成立；
+    #     反之若在会话内部分支，上述每一处漏改一个 where 条件，
+    #     就会出现用户最担心的那种事故：**在第二条线说话，第一条线跟着变**。
+    #     用空间（多一行会话）换正确性，这里非常划算。
+    branch_group_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        index=True,
+        nullable=True,
+        comment="世界线组 ID（= 组内第一条线的会话 ID；NULL = 未参与分支）",
+    )
+    #: 组内序号：0 = 主线（分叉前那条），1 = 平行线。
+    #  本项目只支持两条线（用户拍板："只分叉成两条"），所以取值只有 0/1。
+    branch_index: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+        comment="世界线序号：0 主线 / 1 平行线",
+    )
+    #: 用户可改的线名（默认「主线」「平行线」）。空 = 用默认名。
+    branch_label: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="世界线显示名（默认「主线」/「平行线」）"
+    )
+    #: ★ 这个会话是否**开启分支模式**（用户自己选，默认关）。
+    #  关闭时：界面上不出现任何分叉入口，行为与加这个功能之前完全一致。
+    branch_enabled: Mapped[bool] = mapped_column(
+        default=False,
+        server_default=text("0"),
+        nullable=False,
+        comment="是否开启对话分支模式（开启后才有生成另一条走向的入口）",
+    )
+    #: 分叉点：平行线是从主线的**这条消息之后**分出去的。
+    #  只记录在平行线上；主线为 NULL。界面靠它说明"两条线在哪里分开"。
+    branch_from_message_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+        comment="分叉点消息 ID（平行线从这条消息之后与主线分开）",
+    )
+
     # ---------------- 会话内容 ----------------
     title: Mapped[str] = mapped_column(
         String(200), nullable=False, comment="会话标题（默认取角色卡名+时间，可重命名）"
