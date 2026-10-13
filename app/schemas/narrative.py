@@ -74,8 +74,13 @@ class SessionBrief(BaseModel):
     branch_line: str | None = Field(
         default=None,
         description="★ 世界线标记（对话分支）：没参与分支时为 null；"
-        "参与时形如「主线」/「平行线」，会话列表据此把两条线标出来，"
-        "避免用户看到两条同名会话却分不清谁是谁。",
+        "参与时形如「主线」/「平行线」。",
+    )
+    branch_line_count: int = Field(
+        default=1,
+        description="★ 这条故事**共有几条世界线**（1 = 普通会话）。列表上显示"
+        "「🌿 N 条世界线」而不是「主线/平行线」—— 用户 2026-10-13 的要求："
+        "「别让用户还要注意是主线还是平行」；切换交给会话上方的世界线切换器。",
     )
 
 

@@ -248,9 +248,10 @@ def list_sessions(
     # ★ 轮次：界面上显示"N 轮"而不是"N 条消息"（用户 2026-10-13 的要求）。
     #   一次查询算完这一页，避免逐行去数。
     rounds = round_count_map(db, [row.id for row in rows])
-    # ★ 世界线标记只在"这个组真的有两条线"时才给（见下面 branch_line 的说明）。
-    #   一次查询算出所有多线组，避免逐行去数（列表页最容易踩 N+1）。
-    multi_line_groups = _multi_line_group_ids(db, user_id)
+    # ★ 世界线组里有几条线（1 = 普通会话）。列表上只显示**条数**，不显示
+    #   "主线/平行线" —— 用户 2026-10-13 的原话："别让用户还要注意是主线还是平行"。
+    #   一次查询算完这一页，避免逐行去数（列表页最容易踩 N+1）。
+    line_counts = _branch_line_counts(db, user_id)
 
     items = [
         SessionBrief(
@@ -262,6 +263,7 @@ def list_sessions(
             model_name=provider_names.get(("model", row.llm_provider_id or 0)),
             message_count=row.message_count,
             round_count=rounds.get(row.id, 0),
+            branch_line_count=line_counts.get(branch_mod.group_id_of(row) or 0, 1),
             total_tokens=row.total_tokens,
             last_message_preview=_preview(lasts.get(row.id)),
             last_message_role=lasts[row.id].role if row.id in lasts else None,
@@ -269,12 +271,13 @@ def list_sessions(
             created_at=row.created_at,
             updated_at=row.updated_at,
             warnings=_session_warnings(row),
-            # ★ 判据是「**这个组里真的有第二条线**」，而不是"有没有 branch_group_id"：
-            #   开启分支模式时就会写上 group_id（那时还只有一条线），
-            #   若按它标注，用户会平白看到一个自己还没用过的概念「主线」。
+            # ★ 只有**这个组真的有第二条线**时才给线名；单条会话不该被叫「主线」
+            #   （那是个用户还没用过的概念，凭空出现只会让人以为自己的会话被改过）。
+            #   ★ 界面现在主要用 `branch_line_count`（显示"N 条世界线"），
+            #     保留这个字段是为了接口层仍然能拿到线名（例如将来的重新命名入口）。
             branch_line=(
                 branch_mod.label_of(row)
-                if branch_mod.group_id_of(row) in multi_line_groups
+                if line_counts.get(branch_mod.group_id_of(row) or 0, 1) > 1
                 else None
             ),
         )
@@ -283,11 +286,10 @@ def list_sessions(
     return items, total
 
 
-def _multi_line_group_ids(db: Session, user_id: int) -> set[int]:
-    """哪些世界线组**真的有两条以上**的线。
+def _branch_line_counts(db: Session, user_id: int) -> dict[int, int]:
+    """每个世界线组里有几条线：`{group_id: 条数}`（只有一条的组不在结果里）。
 
-    ★ 刻意只查"多线组"而不是给每个会话标注：单条会话不该被叫「主线」——
-      那是个用户还没用过的概念，凭空出现只会让人以为自己的会话被改过。
+    ★ 用一条 group by 查询算完这一页要用到的计数，避免逐行去数（列表页的 N+1）。
     """
     rows = db.execute(
         select(
@@ -300,7 +302,7 @@ def _multi_line_group_ids(db: Session, user_id: int) -> set[int]:
         )
         .group_by(NarrativeSession.branch_group_id)
     ).all()
-    return {int(gid) for gid, n in rows if int(n) > 1 and gid is not None}
+    return {int(gid): int(n) for gid, n in rows if gid is not None}
 
 
 def _provider_name_map(db: Session, provider_ids: list[int | None]) -> dict:

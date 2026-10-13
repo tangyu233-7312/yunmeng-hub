@@ -1039,3 +1039,38 @@ def test_frontend_shows_rounds_and_has_line_delete() -> None:
     assert "function pendingReplyHTML(" in src, "要有「停在用户消息上」的判据"
     # SSE 出错必须弹 toast（失败气泡会被随后的刷新抹掉，只留气泡等于没提示）
     assert "toastErr(data?.message || '生成失败')" in src, "生成失败必须弹出提示"
+
+    # ★ 顶栏按钮就是总开关，文案要能一眼看出**当前状态**（用户要求「分支开/分支关」）
+    assert "🌿 分支${detail.branch?.enabled ? '开' : '关'}" in src, (
+        "顶栏按钮要显示「分支开」/「分支关」"
+    )
+    assert "return turnOnBranch(root, signal)" in src, "顶栏按钮要能开启分支"
+    assert "return turnOffBranch(root, signal)" in src, "顶栏按钮也要能关闭分支（总开关）"
+
+
+def test_no_persistent_branch_banner_when_only_one_line() -> None:
+    """★ 只有一条线时**不许**渲染常驻的分支提示条（用户明确要求去掉）。
+
+    用户原话：「图二中不要我圈起来的弹窗，或者让它只在打开分支的前几秒显示一会，
+    像一个弹窗提醒一样，不然一直放在不好看」。
+    现在的做法：`branchBarHTML` 在 `lines.length < 2` 时直接返回空串，
+    提示改由**开启那一刻的 toast** 承担（会自动消失）。
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "web" / "js" / "views" / "chat.js").read_text(encoding="utf-8")
+
+    # 取 branchBarHTML 的函数体，确认"只有一条线"这一支不再返回 HTML
+    start = src.index("function branchBarHTML(")
+    end = src.index("async function forkFromMessage(")
+    body = src[start:end]
+    assert "if (lines.length < 2) return '';" in body, (
+        "只有一条线时 branchBarHTML 必须直接返回空串（不许再渲染常驻提示条）"
+    )
+    assert "开启后，可以在某条回复上点" not in body, "那条常驻提示文案必须已经删掉"
+    # 提示改由开启时的 toast 承担
+    assert "toastOk('对话分支已开启" in src, "开启分支要用会自动消失的 toast 说明下一步"
+
+    # 会话列表不再区分主线/平行线，只显示有几条世界线
+    assert "s.branch_line_count" in src, "列表要显示世界线条数（用户要求别提主线/平行）"
