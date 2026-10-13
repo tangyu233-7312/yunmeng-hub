@@ -130,29 +130,25 @@ def advance(rs: RunningGeneration, generator: Any) -> tuple[str, Any]:
 
 
 def close_generator(generator: Any) -> None:
-    """让同步生成器走 finally（关闭上游 HTTP 连接、并触发"保留已生成部分"落库）。"""
+    """让同步生成器走 finally（关闭上游 HTTP 连接、并触发"保留已生成部分"落库）。
+
+    ==================== ★ 为什么这里**不**加锁 ====================
+    收尾时线程池里可能还有一步 `next()` 正在飞（模型刚吐一个字、正在算下一个）。
+    此时直接 `close()` 会抛 `ValueError: generator already executing` ——
+    被下面那个 except 吞成一条 warning，生成器就**没被真正关上**。
+
+    要消掉它得先拿 `rs.lock`（等在飞那一步结束）；**但我们刻意不拿**：
+    那一步可能要等好几秒（等模型吐下一个字），而这里是**事件循环**里的收尾路径，
+    拿锁就等于把整个服务卡住这么多秒。
+
+    代价可以接受，因为"用户已经看到的那段字"**不靠这条路保命**：
+    接口层手里就有已经推送给用户的正文与思考，断开时会用**它自己的新 session**
+    落库（`app/api/v1/narrative.py::_persist_interrupted_reply`）。
+    这条 close 只负责"尽力让上游停下来"。
+    """
     close = getattr(generator, "close", None)
     if callable(close):
         try:
             close()
         except BaseException as exc:  # noqa: BLE001 - 收尾失败不能盖住原始错误
             logger.warning("关闭流式生成器时出错: {}", exc)
-
-
-def close_locked(rs: RunningGeneration, generator: Any) -> None:
-    """**在锁保护下**关闭生成器：先等在飞的那一步结束，再关。
-
-    ==================== ★ 这条是真实断线复现抓出来的 ====================
-    第一版收尾时直接 `generator.close()`，结果"已经写出来的字"没保住。
-    差别就在这里：
-
-      前端断开的那一刻，线程池里**很可能还有一步 `next()` 正在跑**
-      （模型刚吐了一个字、正在算下一个）。此时从另一个线程 `close()` 它会直接抛
-      `ValueError: generator already executing`；而它被 `close_generator` 吞成了
-      warning，于是生成器没被关上 → `finally` 不跑 → `_keep_partial` 不跑 →
-      **已经写出来的那段字丢了** —— 用户看到的还是空白。
-
-    所以关之前必须拿一次锁：那一步跑完、锁释放，再关就必定成功。
-    """
-    with rs.lock:
-        close_generator(generator)

@@ -183,7 +183,6 @@ def serialize_group(db: Session, session: NarrativeSession) -> dict[str, Any]:
         "max": MAX_BRANCHES,
         # 只有"还没到两条线"时才给分叉入口（用户拍板：只两条）
         "can_branch": len(rows) < MAX_BRANCHES,
-        "can_enable": len(rows) < MAX_BRANCHES,
         "has_sibling": len(rows) > 1,
         "current_id": session.id,
         "lines": lines,
