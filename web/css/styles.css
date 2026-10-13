@@ -819,6 +819,18 @@ body.log-open .topbar {
 }
 .msg-warn { font-size: 12px; color: var(--warn); margin-top: 5px; }
 .msg-error { font-size: 12px; color: var(--danger); margin-top: 5px; }
+/* ★ 历史消息里思考过程的折叠开关（2026-10-13）：默认只占一行，点开才铺开。
+   为什么折叠：推理模型的思考常占输出 80% 以上，全摊开会把故事正文挤没。
+   走主题变量（写死浅色会被暗色主题守门人测试抓到）。 */
+.msg-reason-toggle {
+  /* 它是个 <button>（委托监听器只认 button[data-act]，div 会被静默忽略），
+     所以这里要把浏览器默认按钮样式压掉，让它看起来仍是一行淡字。 */
+  appearance: none; border: 0; background: transparent; font: inherit;
+  font-size: 12px; color: var(--text-dim); cursor: pointer;
+  padding: 2px 6px; margin-bottom: 4px; border-radius: 6px;
+  display: inline-block; user-select: none; text-align: left;
+}
+.msg-reason-toggle:hover { background: var(--surface-2); color: var(--text); }
 
 /* ---------------- 骰子气泡（骰子插件） ----------------
    ★ 为什么必须显示"是谁掷的"：大模型没有真随机，点数一律由后端掷出。

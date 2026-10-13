@@ -122,6 +122,21 @@ class Message(Base):
         Text, nullable=True, comment="本轮真实用量 JSON（厂商分项 + 我们的输入估算）"
     )
 
+    # ★ 思考过程（2026-10-13 用户要求）：推理模型这一轮的 `reasoning_content`。
+    #   ==================== 为什么必须落库 ====================
+    #   用户原话："如果用户想看模型思考过程怎么办？而且已经明确得知许多预设就会更改
+    #   模型的思考链路，包括完全杀掉原生思考、破甲等。所以将思考过程放出来是十分有必要的。"
+    #   在此之前，思考只在**流式过程中**显示一眼（前端 .msg-reason），刷新就没了 ——
+    #   于是"换个预设以后模型的思考到底变了没有"这件事根本无法回看、无法对比，
+    #   而这恰恰是用户调提示词时最需要看的东西。
+    #   ★ 代价要知道：推理模型的思考经常占输出的 80% 以上（见 usage_json 里的
+    #     reasoning_tokens，项目里实测过），落库会让消息表明显变大。
+    #     本地单机应用可以接受；真要省空间，这里是最先该考虑加开关的地方。
+    #   ★ 普通模型不返回思考 ⇒ 这一列就是 NULL（不是空字符串，便于区分"没有"与"空"）。
+    reasoning: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="推理模型的思考过程（reasoning_content）；普通模型为 NULL"
+    )
+
     # ---------------- 时间 ----------------
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False, comment="创建时间"

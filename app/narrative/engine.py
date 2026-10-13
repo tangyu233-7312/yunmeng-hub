@@ -977,6 +977,7 @@ def save_assistant_reply(
     usage: TokenUsage | None = None,
     estimated_input_tokens: int | None = None,
     notes: list[str] | None = None,
+    reasoning: str | None = None,
 ) -> Message:
     """助手回复落库，并更新会话统计。
 
@@ -1018,6 +1019,10 @@ def save_assistant_reply(
         token_count=int(token_count or 0),
         model_name=model_name,
         latency_ms=latency_ms,
+        # ★ 思考过程（2026-10-13）：推理模型的 reasoning_content 落库，
+        #   这样"换个预设后模型的思考变了没有"可以回看、可以对比（见模型的列注释）。
+        #   普通模型没有思考 ⇒ 存 NULL（而不是空字符串）。
+        reasoning=(reasoning or None),
         # ★ 状态遥测：这一轮模型自称的状态与校验后落库的状态差在哪。
         #   必须在这里写（落库的唯一入口），事后无法从正文反推 —— `<state>` 已被剥掉。
         #   `required=False` 表示这一轮压根没要求输出状态块（纯聊天 / 卡没声明状态栏），
@@ -1085,6 +1090,10 @@ def reply(db: Session, session: NarrativeSession, user_message: Message) -> tupl
         estimated_input_tokens=turn.context.estimated_tokens,
         # 状态校验的提醒挂到 ChatResult.notes 上，一路带到界面
         notes=result.notes,
+        # ★ 顺手修掉项目自己记下的"两边能力不对称"：非流式接口本来也拿得到
+        #   `ChatResult.reasoning`（app/llm/schema.py 里写着"对推理模型来说，
+        #   思考过程有时比正文更有价值"），却一直被丢掉、既没返回也没落库。
+        reasoning=result.reasoning,
     )
     # ★ 落库成功之后才写长期记忆：顺序反了会出现"记忆里有、对话记录里没有"的幽灵内容
     #   ★ 翻译中间件：先把回复译好（如果开了），再写记忆 ——
@@ -1218,6 +1227,8 @@ def stream_reply(
         estimated_input_tokens=turn.context.estimated_tokens,
         # 状态校验的提醒随 "done" 事件一起发给前端
         notes=notes,
+        # ★ 流式这一轮攒下来的思考过程，一并落库（见模型的 reasoning 列注释）
+        reasoning="".join(reasoning),
     )
     # ★ 翻译中间件：先把回复译好，再写记忆（记忆写"给人看的那一份"，见 _display_message）
     #   ★ 译之前先告诉前端一声：这一步是**同步的模型调用**（实测好几秒），
@@ -1271,11 +1282,28 @@ def stream_reply(
     }
 
 
+def _interrupted_reasoning(reasoning_text: str) -> str | None:
+    """被中断的那一轮，思考过程也要如实标注"到这里就断了"。
+
+    ★ 用户 2026-10-13 问的正是这件事："思考模式要不要一起像正文输出一样加一个回复中断呢？"
+      答案是**要**，而且不能偷懒套用正文那句「（回复中断）」：
+      正文被截断与思考被截断是两件事 —— 模型完全可能**思考已经结束**、正文才被打断
+      （`finish_reason=length` 就是典型的这种）。套同一句话会让人误以为思考也没想完。
+      所以这里的措辞只说**事实**：本轮中断了、以下是我们收到的全部思考。
+      思考一个字都没有（普通模型 / 还没开始想就断了）⇒ 返回 None，不硬造空串。
+    """
+    text = (reasoning_text or "").strip()
+    if not text:
+        return None
+    return text + "\n\n……（本轮被中断：以上是中断前收到的全部思考）"
+
+
 def keep_interrupted_reply(
     db: Session,
     session_id: int,
     *,
     text: str,
+    reasoning_text: str = "",
     model_name: str | None = None,
     notes: list[str] | None = None,
 ) -> Message | None:
@@ -1319,6 +1347,7 @@ def keep_interrupted_reply(
         token_count=estimate_tokens(body),
         latency_ms=None,
         notes=notes,
+        reasoning=_interrupted_reasoning(reasoning_text),
     )
 
 
@@ -1361,6 +1390,8 @@ def _keep_partial(
             latency_ms=int((time.perf_counter() - started) * 1000),
             usage=usage,
             estimated_input_tokens=turn.context.estimated_tokens,
+            # 思考过程同样保留（并如实标注中断），措辞见 _interrupted_reasoning
+            reasoning=_interrupted_reasoning("".join(reasoning)),
         )
     except BaseException:  # noqa: BLE001 - 落库失败不能盖住原始错误
         logger.exception("保存中断的部分回复失败 | session_id={}", session.id)

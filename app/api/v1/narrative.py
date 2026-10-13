@@ -870,7 +870,9 @@ STREAM_SEND = "send"
 STREAM_REGENERATE = "regenerate"
 
 
-def _persist_interrupted_reply(*, user_id: int, session_id: int, text: str) -> None:
+def _persist_interrupted_reply(
+    *, user_id: int, session_id: int, text: str, reasoning_text: str = ""
+) -> None:
     """把"已经推送给用户、但这一轮没写完"的那段字存下来（标注「回复中断」）。
 
     ★ 为什么不复用请求里那个 db / 生成器自己那个 session：
@@ -885,7 +887,11 @@ def _persist_interrupted_reply(*, user_id: int, session_id: int, text: str) -> N
         with session_scope() as db:
             session = session_service.get_owned_session(db, user_id, session_id)
             engine.keep_interrupted_reply(
-                db, session.id, text=text, model_name=_model_name_of(db, session)
+                db,
+                session.id,
+                text=text,
+                reasoning_text=reasoning_text,
+                model_name=_model_name_of(db, session),
             )
     except BaseException as exc:  # noqa: BLE001
         logger.warning(
@@ -1017,7 +1023,10 @@ def _sse_stream_response(
                 # ★ 逐字记下"已经推送给用户"的正文：中途断开时，就靠它把用户
                 #   已经看到的那段字存下来（见下面的异常分支）。
                 #   只记正文 delta —— 思考过程（reason）不是他眼里的回复内容。
+                # ★ 逐字记下"已经推送给用户"的正文与思考过程：中途断开时，就靠它们
+                #   把用户已经看到的东西存下来（见下面的异常分支）。
                 sent: list[str] = []
+                thought: list[str] = []
 
                 # ==================== ★ 断开 = 中止，但**一个字都不许丢** ====================
                 # 这个 try 必须包住**整个循环**（包括那个 await），不能只包住 yield：
@@ -1037,6 +1046,10 @@ def _sse_stream_response(
                         event, data = step
                         if event == "delta":
                             sent.append(str((data or {}).get("delta") or ""))
+                        elif event == "reason":
+                            # 思考过程也一起记：断开时它同样要落库（用户 2026-10-13 要求：
+                            # "思考模式要不要一起像正文输出一样加一个回复中断呢？" —— 要）
+                            thought.append(str((data or {}).get("delta") or ""))
                         yield sse_event(event, data)
                         if event == "error":
                             # 错误已经如实发出去了，这里结束流（生成器也已被关闭）
@@ -1065,6 +1078,7 @@ def _sse_stream_response(
                         user_id=user_id,
                         session_id=session_id,
                         text="".join(sent),
+                        reasoning_text="".join(thought),
                     )
                     raise
 

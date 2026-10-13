@@ -323,6 +323,7 @@ function bindStatic(root, signal) {
       }
       if (act === 'fork-msg') return forkFromMessage(root, signal, msgOf(btn));
       if (act === 'continue-reply') return continuePendingReply(root, signal);
+      if (act === 'toggle-reason') return toggleReasoning(btn);
       if (act === 'branch-delete') return deleteBranchLine(root, signal);
       if (act === 'regen') return regenerateMessage(root, signal, msgOf(btn));
       if (act === 'edit-state') return openStateEditor(root);
@@ -929,6 +930,7 @@ function renderMessages(detail) {
           m.latency_ms ? `<span class="faint"> · ${(m.latency_ms / 1000).toFixed(1)}s</span>` : ''
         }
         </div>
+        ${reasoningHTML(m)}
         <div class="msg-reason hidden"></div>
         <div class="msg-body">${esc(displayText(m))}</div>
         ${translationChipHTML(m)}
@@ -937,6 +939,54 @@ function renderMessages(detail) {
       </div>`,
       )
       .join('')
+  );
+}
+
+/**
+ * 历史消息里的**思考过程**（折叠着，点一下展开）。
+ *
+ * ==================== ★ 为什么必须做（用户 2026-10-13）====================
+ * 用户原话："如果用户想看模型思考过程怎么办？而且已经明确得知许多预设就会更改模型的
+ * 思考链路，包括完全杀掉原生思考、破甲等。所以将思考过程放出来是十分有必要的。"
+ *
+ * 在此之前，思考过程只在**流式生成的那几秒**显示一眼（appendReasoning 往
+ * `.msg-reason` 里写），一刷新就没了 —— 于是"换个预设以后模型的思考到底变了没有"
+ * 根本无法回看、无法对比，而这恰恰是他调提示词时最需要看的东西。
+ *
+ * ★ 为什么默认**折叠**：推理模型的思考经常占输出的 80% 以上（项目里实测过，
+ *   见 token 统计里的「其中思考」）。历史里每条回复都摊开一大段思考，
+ *   会把真正读的故事挤没。所以默认只给一行「💭 思考过程（N 字）」。
+ * ★ 为什么流式期间**不折叠**：那会儿用户就是在等着看它吐字，摊开才自然
+ *   （`appendReasoning` 会把 .msg-reason 显示出来）。
+ */
+function reasoningHTML(m) {
+  const text = (m?.reasoning || '').trim();
+  if (!text) return '';
+  const interrupted = text.includes('本轮被中断');
+  // ★ 必须是 <button>，不能是 <div>：委托监听器用的是
+  //   `e.target.closest('button[data-act]')`（见 bindStatic），div 会被**静默忽略** ——
+  //   点了没反应、也不报错。这不是推理出来的：真实浏览器里点过一次才发现（v1 就是 div）。
+  return `<button type="button" class="msg-reason-toggle" data-act="toggle-reason"
+      title="点开/收起模型这一轮的思考过程 —— 提示词预设会改变它（有的会直接杀掉原生思考），想对比就靠它">
+      💭 思考过程（${text.length} 字${interrupted ? '，本轮被中断' : ''}）
+      <span class="faint">· 点开看</span>
+    </button>
+    <div class="msg-reason hidden">${esc(text)}</div>`;
+}
+
+/**
+ * 点「💭 思考过程」：展开 / 收起紧跟在它后面的那个 `.msg-reason`。
+ *
+ * ★ 用 `nextElementSibling` 而不是全局查 `.msg-reason`：一屏里有几十条消息，
+ *   每条都有自己的思考块，必须只动**点的那一条**。
+ */
+function toggleReasoning(btn) {
+  const box = btn.nextElementSibling;
+  if (!box || !box.classList.contains('msg-reason')) return;
+  const willShow = box.classList.contains('hidden');
+  box.classList.toggle('hidden', !willShow);
+  btn.querySelector('.faint')?.replaceChildren(
+    document.createTextNode(willShow ? '· 点一下收起' : '· 点开看'),
   );
 }
 

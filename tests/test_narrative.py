@@ -1072,9 +1072,105 @@ def test_stream_reports_reasoning_separately(client: TestClient, user: dict) -> 
     assert [d["delta"] for n, d in events if n == "reason"] == ["让我想想…"]
     assert [d["delta"] for n, d in events if n == "delta"] == ["答案"]
     assert dict(events)["done"]["reasoning"] == "让我想想…"
-    # 思考过程不落库（只落正文），否则会污染下一轮的上下文
+
+    # ★ 语义在 2026-10-13 变了（用户要求把思考过程放出来，好对比不同预设）：
+    #   思考过程**落库**（单独的 reasoning 列），但**绝不混进 content** ——
+    #   这一点是硬的：content 是喂回下一轮上下文的东西，思考混进去就会污染模型。
     detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
-    assert detail["messages"][-1]["content"] == "答案"
+    last = detail["messages"][-1]
+    assert last["content"] == "答案", "正文里不能混进思考过程（否则会污染下一轮上下文）"
+    assert last["reasoning"] == "让我想想…", (
+        "思考过程要能回看：刷新之后仍然拿得到（以前只在流式那几秒显示一眼）"
+    )
+
+
+def test_interrupted_reasoning_is_marked_with_its_own_wording() -> None:
+    """★ 思考过程被中断时，要有**自己的**标注，不能照抄正文那句「回复中断」。
+
+    用户 2026-10-13 问的正是这件事："思考模式要不要一起像正文输出一样加一个回复中断呢？"
+    答案是"要保留、也要标"，但**措辞必须分开**：
+    正文被截断与思考被截断是两件事 —— 模型完全可能思考已经结束、正文才被 max_tokens
+    截断（`finish_reason=length`）。套同一句话会让人以为思考也没想完。
+    """
+    assert engine._interrupted_reasoning("") is None, "没有思考就不该硬造空串"
+    assert engine._interrupted_reasoning("   ") is None
+    marked = engine._interrupted_reasoning("我先想了想")
+    assert marked.startswith("我先想了想")
+    assert "中断" in marked
+    assert "回复中断" not in marked, "思考的标注不能照抄正文那句，两件事不一样"
+
+
+def test_interrupted_turn_keeps_body_and_reasoning_separately(
+    client: TestClient, user: dict
+) -> None:
+    """被中断的一轮：正文进 content、思考进 reasoning，**各带各的标注**。
+
+    ★ 为什么必须分开存：正文是喂回下一轮上下文的东西（只能放模型说过的话），
+      思考是给人看的审计材料。混在一起会污染上下文，等价于把模型的内心独白
+      塞回它自己的下一轮提示词里。
+    """
+    card = make_card(client, user)
+    provider = make_provider(client, user)
+    session = make_session(client, user, card["id"], provider["id"])
+
+    with session_scope() as db:
+        row = db.get(NarrativeSession, session["id"])
+        engine.save_user_message(db, row, "我说了一句话")
+
+    with session_scope() as db:
+        saved = engine.keep_interrupted_reply(
+            db,
+            session["id"],
+            text="【已经写出来的那半段",
+            reasoning_text="【想了一半",
+            model_name="fake-model",
+        )
+        assert saved is not None
+        assert saved.content.startswith("【已经写出来的那半段")
+        assert saved.content.endswith("（回复中断）")
+        assert saved.reasoning.startswith("【想了一半")
+        assert "中断" in saved.reasoning
+        assert "【想了一半" not in saved.content, "思考绝不能混进正文（会污染下一轮上下文）"
+
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    last = detail["messages"][-1]
+    assert "【已经写出来的那半段" in last["content"]
+    assert "【想了一半" in (last["reasoning"] or ""), "思考要能回看"
+
+
+def test_frontend_exposes_the_reasoning_panel() -> None:
+    """前端的静态契约：历史里能看到思考过程，且默认折叠、点一下展开。
+
+    ★ 为什么这条要用静态断言守：这是"用户能不能看到"的问题。后端把思考存好了、
+    接口也返回了，但界面不渲染，等于没做（用户的原话就是"想看模型思考过程怎么办"）。
+    ★ 顺带守两条容易写错的地方：折叠开关必须只作用于**点的那一条**（用
+    nextElementSibling，不能用全局查询），样式必须走主题变量（写死浅色会被
+    暗色主题守门人测试抓到）。
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "web" / "js" / "views" / "chat.js").read_text(encoding="utf-8")
+    css = (root / "web" / "css" / "styles.css").read_text(encoding="utf-8")
+
+    assert "function reasoningHTML(" in src, "要有渲染思考过程的函数"
+    assert "m?.reasoning" in src, "要读接口返回的 reasoning"
+    assert 'data-act="toggle-reason"' in src, "要有展开/收起的入口"
+    assert "act === 'toggle-reason'" in src, "该入口要有动作分发"
+    # ★ 必须是 <button>：委托监听器用 `e.target.closest('button[data-act]')`，
+    #   写成 <div data-act=...> 会被**静默忽略**（点了没反应、也不报错）——
+    #   这不是推演出来的，是真实浏览器里点过一次才发现的（v1 就是 div）。
+    assert '<button type="button" class="msg-reason-toggle" data-act="toggle-reason"' in src, (
+        "思考过程的开关必须是 button[data-act]，否则委托监听器收不到"
+    )
+    assert "nextElementSibling" in src, (
+        "折叠开关只能作用于点的那一条（一屏几十条消息，全局查会连别人的一起展开）"
+    )
+    # 默认折叠：没点开之前是 hidden
+    assert 'class="msg-reason hidden"' in src
+    assert ".msg-reason-toggle" in css, "要有折叠开关的样式"
+    block = css[css.index(".msg-reason-toggle") : css.index(".msg-reason-toggle") + 600]
+    assert "var(--" in block, "折叠开关的样式要走主题变量"
 
 
 def test_stream_reports_error_event_instead_of_silent_break(

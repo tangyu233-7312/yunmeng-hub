@@ -31,6 +31,15 @@ class MessageOut(BaseModel):
         "`translation.text` 是**给人看的文本**（输出侧=译文，输入侧=用户原话），"
         "`display` 说明界面该显示哪一份。",
     )
+    reasoning: str | None = Field(
+        default=None,
+        description="★ 推理模型的**思考过程**（reasoning_content）；普通模型为 null。"
+        "用户 2026-10-13 要求放出来：预设会改变思考链路（有的直接杀掉原生思考），"
+        "不回看就无从对比。被中断的那一轮末尾会带一句"
+        "「……（本轮被中断：以上是中断前收到的全部思考）」——刻意**不**套用正文那句"
+        "「回复中断」，因为「思考结束了」与「正文被截断」是两件事"
+        "（模型完全可能想完了、正文才被 max_tokens 截断）。",
+    )
     state_raw: str | None = Field(
         default=None,
         description="★ 这条回复里模型输出的 `<state>` **原始文本**（没输出就是 null）："

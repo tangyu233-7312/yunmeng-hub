@@ -364,6 +364,10 @@ def serialize_message(row: Message) -> MessageOut:
         translation=translate_mod.loads(getattr(row, "translation_json", None)),
         # ★ 模型输出的 <state> 原文（界面「看作者原格式」；解析成字段后原排版就没了）
         state_raw=getattr(row, "state_raw_json", None),
+        # ★ 思考过程（2026-10-13）：落库的那一份，刷新后还能回看
+        #   （以前只在流式期间显示一眼，过去就没了 —— 于是"换预设后思考变了没有"
+        #     根本无法对比，而那正是用户要看它的原因）
+        reasoning=getattr(row, "reasoning", None),
         created_at=row.created_at,
     )
 
