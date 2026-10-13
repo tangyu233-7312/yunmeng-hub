@@ -313,15 +313,8 @@ function bindStatic(root, signal) {
       }
       if (act === 'settings') return openSettingsDialog(root, signal);
       // ---------------- 对话分支（平行世界） ----------------
-      // ★ 顶栏那个按钮就是**总开关**（用户 2026-10-13 的要求：开关交给右上角）。
-      //   关着 → 点一下开启；开着 → 点一下关闭（走下面那套确认）。
-      if (act === 'branch-main') {
-        if (!state.detail?.branch?.enabled) return turnOnBranch(root, signal);
-        return turnOffBranch(root, signal);
-      }
-      if (act === 'branch-off') {
-        return turnOffBranch(root, signal);
-      }
+      // ★ 分支功能**没有开关**（用户 2026-10-13 拍板去掉）：
+      //   入口就是每条角色回复下面那个「🌿 分支」；防误点靠它后面的确认弹窗。
       if (act === 'branch-switch') {
         return switchBranch(root, signal, Number(btn.dataset.sid));
       }
@@ -1073,20 +1066,20 @@ async function continuePendingReply(root, signal) {
      剧情总结全都按 session_id 隔离（后端本来就如此），
      所以「在第二条线说话、第一条线跟着变」在结构上不可能发生。
 
-   ★ 这个功能的入口**默认全部隐藏**：只有 branch.enabled 为真时才渲染。
-     没开启它的用户，界面上一个字都不会多出来。
+   ★ **没有开关**（用户 2026-10-13 拍板去掉）：入口就是每条角色回复下面的
+     「🌿 分支」，防误点靠它后面的确认弹窗（取消则什么都不发生、0 token）。
+     只有**真的出现两条线**时，下面这条切换器才渲染；否则一个字都不显示。
    ================================================================== */
 
-/** 世界线切换条：没开启分支模式、或只有一条线时**不渲染任何东西**。 */
+/** 世界线切换条：只有**真有两条线**时才渲染，其余情况一个字都不显示。 */
 function branchBarHTML(detail) {
   const b = detail?.branch;
-  if (!b || !b.enabled) return '';
-  const lines = b.lines || [];
+  const lines = b?.lines || [];
 
   // ★ 只有**一条线**时这里**什么都不显示**（用户 2026-10-13 的要求）。
   //   以前这里摆着一条常驻提示占一整行，用户原话："不要那个弹窗，或者让它只在
-  //   打开分支的前几秒显示一会" —— 现在改成：开启时弹一个**会自动消失的 toast**
-  //   说明"去某条回复上点 🌿 分支"，开关本身交给右上角那个按钮。
+  //   打开分支的前几秒显示一会"。现在提示彻底不常驻 —— 用户第一次点「🌿 分支」时，
+  //   确认弹窗本身就把"会发生什么"讲清楚了，不需要在界面上再挂一条。
   //   等真的有两条线了，这一条切换器才出现（那时候它才是有用的）。
   if (lines.length < 2) return '';
 
@@ -1107,6 +1100,9 @@ function branchBarHTML(detail) {
   //   用户根本认不出哪条是哪条（他实测就是这么找不到删除按钮的）。
   //   现在平行线不再单独出现在列表里，删除只能在这里做 —— 所以必须有。
   const canDelete = lines.length > 1;
+  // ★ 「关闭分支」这个按钮**去掉了**：分支功能不再有开关（开关只会在
+  //   "关掉之后入口消失、用户以为功能没了"这一点上添乱）。
+  //   两条线都在的时候，能做的只有三件事：切过去、改名、删掉一条。
   return `<div class="branch-bar" id="branch-bar">
     <span class="branch-label">🌿 世界线</span>
     <div class="branch-tabs">${tabs}</div>
@@ -1124,8 +1120,6 @@ function branchBarHTML(detail) {
     <button class="btn link small" data-act="branch-rename"
       data-label="${esc(current?.label || '')}"
       title="给当前这条世界线改个名字（默认「主线」/「平行线」）">改名</button>
-    <button class="btn link small" data-act="branch-off"
-      title="收起分支入口（两条线都不会被删除）">关闭分支</button>
   </div>`;
 }
 
@@ -1229,44 +1223,6 @@ async function deleteBranchLine(root, signal) {
     await refreshSessions(root, signal);
   } catch (err) {
     toastErr(err.toDisplay ? err.toDisplay() : String(err));
-  }
-}
-
-/** 开启分支模式：**用一个会自动消失的 toast 提示下一步怎么做**（不再常驻提示条）。 */
-async function turnOnBranch(root, signal) {
-  const ok = await toggleBranch(root, signal, true);
-  if (ok === false) return; // 开启失败（toggleBranch 已经报错了）
-  // ★ 这里刻意用 toast 而不是常驻横幅：用户原话是"不要那个弹窗，或者让它只在
-  //   打开分支的前几秒显示一会"。开启这一刻他最需要知道"接下来点哪儿"。
-  toastOk('对话分支已开启 —— 在想改写的**那条角色回复**下面点「🌿 分支」，AI 会另写一条走向。');
-}
-
-/** 关闭分支模式（不等于删除：两条线都还在）。 */
-async function turnOffBranch(root, signal) {
-  const b = state.detail?.branch;
-  const extra = b?.has_sibling
-    ? '\n\n已经生成的平行线**不会被删除** —— 但关掉之后，世界线切换器会收起，'
-      + '就暂时看不到另一条线了。想再看它，把「🌿 分支」重新点开即可。'
-    : '';
-  const go = await confirmDialog({
-    title: '关闭对话分支',
-    message: '关闭后这条会话不再显示分叉入口与世界线切换器。' + extra,
-    confirmText: '关闭',
-  });
-  if (!go) return;
-  return toggleBranch(root, signal, false);
-}
-
-/** 开启 / 关闭分支模式（返回 false 表示失败）。 */
-async function toggleBranch(root, signal, enabled) {
-  if (!state.sessionId) return false;
-  try {
-    await api.post(`/narrative/sessions/${state.sessionId}/branch`, { enabled });
-    await openSession(root, state.sessionId, signal);
-    return true;
-  } catch (err) {
-    toastErr(err.toDisplay ? err.toDisplay() : String(err));
-    return false;
   }
 }
 
@@ -1665,26 +1621,6 @@ function renderChatPanel(root, detail) {
       <div class="chat-head-actions">
         <button class="btn sec sm" data-act="memories" title="看看模型记住了什么（向量长期记忆）">记忆</button>        <button class="btn sec sm${detail.translate?.settings?.enabled ? ' on' : ''}" data-act="translate" id="btn-translate" title="跨语言对话：原文 / 译文可切换（默认关闭，开会多花钱）">🌐 翻译${detail.translate?.settings?.enabled ? '开' : ''}</button>
         <button class="btn sec sm" data-act="prompt" title="看看这一轮到底给模型发了什么">查看提示词</button>
-        ${
-          // ★ 分支入口：**一个按钮、一个字面量 data-act**。
-          //   为什么不按开关状态拼两个不同的动作名（branch-on / branch-focus）：
-          //   `tests/test_console.py::test_chat_view_buttons_match_their_delegated_actions`
-          //   会静态检查"判断过的 data-act"必须有一个**字面量**按钮与之对应 ——
-          //   用模板表达式拼出来的动作名它看不见，等于把这个按钮漏出守门人的视野
-          //   （那个测试守的正是"按钮点了毫无反应还不报错"这类 bug）。
-          //   所以这里统一叫 branch-main，由处理函数按当前状态决定做什么。
-          //   ★ 文案按用户要求改成「分支开 / 分支关」：一眼能看出**当前状态**，
-          //     而不是「分支 / 世界线开」那种状态与动作混着的写法。
-          //     点它就是切换（开着点一下=关，关着点一下=开）。
-          pureChat
-            ? ''
-            : `<button class="btn sec sm${detail.branch?.enabled ? ' on' : ''}" data-act="branch-main" id="btn-branch"
-                 title="${
-                   detail.branch?.enabled
-                     ? '对话分支：当前**已开启**（点一下就关闭）。开启时，在某条回复上点「🌿 分支」可让 AI 另写一条走向；两条世界线完全独立'
-                     : '对话分支：当前**已关闭**（点一下就开启）。开启后可以让 AI 对同一段剧情写出两条不同走向，可随时切换'
-                 }">🌿 分支${detail.branch?.enabled ? '开' : '关'}</button>`
-        }
         ${detail.vn ? `<button class="btn sec sm${vnStageOn(detail) ? ' on' : ''}" data-act="vn-stage" id="btn-vn-stage" title="立绘舞台：背景 + 立绘 + 台词框（表情跟着状态栏变）">🎭 舞台${vnStageOn(detail) ? '开' : '关'}</button>` : ''}
         ${
           detail.vn && vnStageOn(detail)
@@ -3728,18 +3664,19 @@ async function openSettingsDialog(root, signal) {
       </div>
       <div class="field">
         <label>对话分支（平行世界）</label>
-        <label class="switch-row">
-          <input type="checkbox" name="branch_enabled" ${detail.branch?.enabled ? 'checked' : ''} />
-          <span>开启后可在某条回复上点「🌿 分支」，让 AI 另写一条走向</span>
-        </label>
         <div class="hint">
+          <!-- ★ 这里**没有开关**（用户 2026-10-13 拍板去掉）：入口常驻在每条
+               角色回复下面的「🌿 分支」，点它之后有确认弹窗，取消就什么都不发生。
+               提前拨一个开关防不了误点，只会制造"关着时入口消失"的困惑。 -->
+          在某条角色回复下面点「🌿 分支」，可以让 AI 对这一段剧情<strong>另写一条走向</strong>，
+          生成前会先问你一次。
+          <br />
           两条世界线<strong>完全独立</strong>：各自有自己的对话历史、长期记忆、
           结构化状态与剧情总结 —— 在一条线里说话、改状态、做总结，
           <strong>都不会影响另一条</strong>。
           <br />
-          只支持两条线（主线 + 平行线）。关掉这个开关只是收起入口，
-          <strong>已经生成的平行线不会被删除</strong>。
-          ${detail.branch?.has_sibling ? '<br />当前已有两条世界线，可用会话上方的切换器来回切。' : ''}
+          只支持两条线（主线 + 平行线）。
+          ${detail.branch?.has_sibling ? '<br />当前已有两条世界线，可用会话上方的切换器来回切（删除也在那一行）。' : ''}
         </div>
       </div>
       ${
@@ -3773,13 +3710,8 @@ async function openSettingsDialog(root, signal) {
         //   所以这里必须显式发 null，不能省略这个字段。
         prompt_preset_id: values.prompt_preset_id ? Number(values.prompt_preset_id) : null,
       });
-      // ★ 分支开关单独走它自己的接口（不是会话 PATCH 的字段）：
-      //   它要顺带把这条会话登记进世界线组、并回传最新的组状态。
-      //   这里只在**值真的变了**时才调用，避免每次保存设置都白写一次库、白记一条日志。
-      const wantBranch = Boolean($('[name="branch_enabled"]', m.root)?.checked);
-      if (wantBranch !== Boolean(detail.branch?.enabled)) {
-        await api.post(`/narrative/sessions/${detail.id}/branch`, { enabled: wantBranch });
-      }
+      // ★ 这里**不再**调 `/branch` 开关接口（用户 2026-10-13 拍板去掉那个开关：
+      //   分支始终可用，防误点靠点「🌿 分支」之后的确认弹窗）。
       m.close();
       toastOk('设置已更新');
       await openSession(root, detail.id, signal);

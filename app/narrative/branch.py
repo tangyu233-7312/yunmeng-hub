@@ -171,13 +171,18 @@ def serialize_group(db: Session, session: NarrativeSession) -> dict[str, Any]:
                 "pending_user": _pending_user(db, row),
             }
         )
-    enabled = is_branching(session) or any(is_branching(r) for r in rows)
+    # ★ 分支功能**始终可用**，不再需要先"开启一个模式"（用户 2026-10-13 拍板）：
+    #   真正的"防误点"是点「🌿 分支」之后的**确认弹窗**（取消就什么都不做、0 token），
+    #   而不是一个提前拨的开关 —— 开关开着的时候按钮照样能点，它防不了误点；
+    #   反倒会制造"关着的时候入口看不见、用户以为功能没了"的困惑。
+    #   所以 `enabled` 恒为 True（保留字段是为了兼容前端与旧数据），
+    #   能不能分叉只看**组内是否已满两条线**。
     return {
-        "enabled": bool(enabled),
+        "enabled": True,
         "group_id": gid,
         "max": MAX_BRANCHES,
-        # 只有一条线时也能"开启分支"；已经两条线就不能再分了（用户拍板：只两条）
-        "can_branch": bool(enabled) and len(rows) < MAX_BRANCHES,
+        # 只有"还没到两条线"时才给分叉入口（用户拍板：只两条）
+        "can_branch": len(rows) < MAX_BRANCHES,
         "can_enable": len(rows) < MAX_BRANCHES,
         "has_sibling": len(rows) > 1,
         "current_id": session.id,
@@ -201,12 +206,14 @@ def _pending_user(db: Session, session: NarrativeSession) -> bool:
 
 
 def enable(db: Session, user_id: int, session_id: int, enabled: bool = True) -> NarrativeSession:
-    """开启 / 关闭这条会话的分支模式。
+    """设置这条会话的"用过世界线"标记。
+
+    ★ 2026-10-13 起**这个开关不再影响功能可用性** —— 分支始终可用
+      （用户拍板：防误点靠确认弹窗，不靠提前拨的开关；开关反而会制造
+      "关着时入口消失、用户以为功能没了"）。接口保留只是为了兼容与将来的偏好设置。
 
     ★ 关闭**不会删除**已经产生的平行线 —— 那是用户花 token 生成的真实内容，
-      删掉是不可逆的损失。关闭只意味着"界面上不再出现分叉入口与切换器"，
-      两条线都还在、都能从会话列表里找到。要清理请用会话列表里的「删除」。
-      这一点必须在界面文案里说清楚（见 chat.js 的确认弹窗）。
+      删掉是不可逆的损失。
     """
     session = get_one(db, user_id, session_id)
     if enabled and group_id_of(session) is not None and get_group_size(db, session) >= MAX_BRANCHES:
@@ -303,15 +310,9 @@ def fork(
     """
     source = get_one(db, user_id, session_id)
 
-    if not is_branching(source):
-        raise BadRequestError(
-            "这条会话还没有开启「对话分支」",
-            detail={
-                "session_id": session_id,
-                "suggestion": "先在会话头部的分支开关里开启分支模式，再从某条回复点「分支」",
-            },
-        )
-
+    # ★ 这里**不再**要求"先开启分支模式"（用户 2026-10-13 拍板去掉那个开关）：
+    #   防误点靠的是前端点「🌿 分支」之后的确认弹窗，不是提前拨的开关。
+    #   代码层面仍然只拦一件事：**已经两条线了就不能再分**。
     if get_group_size(db, source) >= MAX_BRANCHES:
         raise BadRequestError(
             f"最多只支持 {MAX_BRANCHES} 条世界线（已经用满）",
@@ -409,6 +410,9 @@ def fork(
     # 主线自己也要登记进组（可能它是迁移前建的、branch_group_id 还是 NULL）
     if source.branch_group_id is None:
         source.branch_group_id = gid
+    # `branch_enabled` 现在只是"这条故事用过世界线"的**标记**（不再是开关）：
+    # 保留它是为了兼容旧数据与旧接口，功能可用性与它无关（见 serialize_group 的说明）。
+    source.branch_enabled = True
     db.commit()
     db.refresh(twin)
 

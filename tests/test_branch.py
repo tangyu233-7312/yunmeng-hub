@@ -244,40 +244,64 @@ def _db_session(session_id: int) -> NarrativeSession:
 # ==================================================================
 #  一、默认行为：不开分支时一切照旧（"不打扰现有用户"）
 # ==================================================================
-def test_branch_is_off_by_default(client: TestClient, user: dict) -> None:
-    """新建的会话**默认没有开启**分支 —— 详情里 enabled=False，一条线。"""
+def test_branch_is_always_available_without_any_mode(
+    client: TestClient, user: dict
+) -> None:
+    """★ 分支功能**没有开关**：新会话直接就能分叉（用户 2026-10-13 拍板去掉）。
+
+    为什么去掉：防误点靠的是点「🌿 分支」之后的**确认弹窗**（取消则什么都不做、
+    0 token），而不是提前拨一个开关 —— 开关开着时按钮照样能点，防不了误点；
+    反倒会制造"关着的时候入口看不见、用户以为功能没了"的困惑。
+
+    ★ 但有一条**不变**：用户还没用过世界线时，列表里不该冒出"世界线"这个概念。
+    """
     session = make_session(client, user)
     data = detail(client, user, session["id"])
 
-    assert data["branch"]["enabled"] is False
-    assert data["branch"]["can_branch"] is False
+    assert data["branch"]["enabled"] is True, "分支功能应当始终可用（不再有开关）"
+    assert data["branch"]["can_branch"] is True, "还没满两条线，就该给分叉入口"
     assert len(data["branch"]["lines"]) == 1
-    # 列表里也不该出现世界线标记（用户还没用过这个概念）
+    # 列表里不该出现世界线概念（用户还没用过）
     listing = client.get(BASE, headers=user["headers"]).json()["data"]
     row = next(s for s in listing["items"] if s["id"] == session["id"])
     assert row["branch_line"] is None
+    assert row["branch_line_count"] == 1, "只有一条线时不该说'2 条世界线'"
 
 
-def test_branch_toggle_round_trip(client: TestClient, user: dict) -> None:
-    """开启 → 能分支；关闭 → 入口收起，但**不删除**已经生成的平行线。"""
+def test_legacy_flag_never_deletes_the_twin(client: TestClient, user: dict) -> None:
+    """★ 旧的开关接口还在（兼容用），但它**既不删除平行线、也不影响可用性**。
+
+    历史：这个开关原本是"是否开启分支模式"。现在功能始终可用，它只剩下
+    "这条故事用过世界线"的标记作用。这条测试钉住两件事：
+      ① 无论怎么拨它，用户花 token 生成的平行线**都不会被删**；
+      ② 拨过之后分支仍然可用（不会再出现"关掉就没入口"的老毛病）。
+    """
     session = make_session(client, user)
     send(client, user, session["id"], "你好")
-    enabled = enable_branch(client, user, session["id"])
-    assert enabled["branch"]["enabled"] is True
-    assert enabled["branch"]["can_branch"] is True
-
-    forked = fork(client, user, session["id"], after_message_id=last_assistant(detail(client, user, session["id"]))["id"])
+    forked = fork(
+        client,
+        user,
+        session["id"],
+        after_message_id=last_assistant(detail(client, user, session["id"]))["id"],
+    )
     twin_id = forked["session"]["id"]
 
     response = client.post(
         f"{BASE}/{session['id']}/branch", json={"enabled": False}, headers=user["headers"]
     )
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["enabled"] is False
 
-    # ★ 关键断言：关闭只收起入口，平行线**必须还在**（那是真实生成的内容）
-    still_there = client.get(f"{BASE}/{twin_id}", headers=user["headers"])
-    assert still_there.status_code == 200, "关闭分支模式不该删除平行线"
+    # ① 平行线必须还在（那是真实生成的内容，删掉不可逆）
+    assert client.get(f"{BASE}/{twin_id}", headers=user["headers"]).status_code == 200, (
+        "拨动旧开关不该删除平行线"
+    )
+    # ② 功能照旧可用（这条故事已经有两条线了，所以 can_branch 变为 False ——
+    #    但那是"已用满"造成的，不是"被关掉了"）
+    after = detail(client, user, session["id"])["branch"]
+    assert after["enabled"] is True
+    assert after["has_sibling"] is True
+    assert after["can_branch"] is False, "两条线已满，不该再给分叉入口"
+    assert len(after["lines"]) == 2
 
 
 def test_toggle_requires_ownership(client: TestClient, user: dict, other_user: dict) -> None:
@@ -367,8 +391,13 @@ def test_fork_is_capped_at_two_lines(client: TestClient, user: dict) -> None:
     assert "两条" in again.json()["message"] or "2" in again.json()["message"]
 
 
-def test_fork_requires_branch_mode(client: TestClient, user: dict) -> None:
-    """没开分支模式就想分叉 → 明确报错（而不是悄悄建一条线）。"""
+def test_fork_works_without_enabling_anything(client: TestClient, user: dict) -> None:
+    """★ **不需要先开启任何东西**就能分叉（用户 2026-10-13 拍板去掉那个开关）。
+
+    以前这里断言的是"没开分支模式 → 400"。现在开关取消了，正确行为是
+    **直接分叉成功** —— 用户在回复上点「🌿 分支」并确认之后，就必须真的能分出来。
+    （真正该拦的只有"已经两条线了"，那由上面那条测试守着。）
+    """
     session = make_session(client, user)
     send(client, user, session["id"], "你好")
     target = last_assistant(detail(client, user, session["id"]))
@@ -377,8 +406,11 @@ def test_fork_requires_branch_mode(client: TestClient, user: dict) -> None:
         json={"after_message_id": target["id"]},
         headers=user["headers"],
     )
-    assert response.status_code == 400
-    assert "分支" in response.json()["message"]
+    assert response.status_code == 201, response.text
+    twin = response.json()["data"]["session"]
+    assert twin["id"] != session["id"]
+    # 新线末尾是那条用户消息（等着生成"另一条走向"）
+    assert [m["role"] for m in twin["messages"]] == ["assistant", "user"]
 
 
 def test_fork_rejects_foreign_message_id(client: TestClient, user: dict) -> None:
@@ -815,19 +847,17 @@ def test_frontend_exposes_branch_entry_points() -> None:
 
     assert 'data-act="fork-msg"' in src, "回复上要有「🌿 分支」按钮"
     assert 'data-act="branch-switch"' in src, "要有世界线切换标签"
-    # ★ 顶栏那个按钮的 data-act 必须是**字面量**（不能是模板表达式拼出来的）：
-    #   tests/test_console.py::test_chat_view_buttons_match_their_delegated_actions
-    #   会静态检查"判断过的 act 有没有对应按钮" —— 拼出来的名字它看不见，
-    #   那个按钮就会漏出守门人的视野。这里同时钉住这条约定。
-    assert 'data-act="branch-main"' in src, "顶栏分支入口要用字面量 data-act"
-    assert "act === 'branch-main'" in src, "要有顶栏分支按钮的动作分发"
-    assert "act === 'branch-off'" in src, "要有关闭对话分支的动作分发"
     assert "act === 'fork-msg'" in src and "act === 'branch-switch'" in src
-    assert 'id="btn-branch"' in src, "顶栏要有一个看得见的分支入口按钮"
     assert "branch/fork" in src and "/branch" in src, "要调用分支接口"
     assert "两条线各自独立" in src, "界面上必须写清两条线互不影响（这是用户最在意的一点）"
-    # 关闭分支的说明必须点明"不会删除"（否则用户不敢点）
-    assert "不会被删除" in src
+    # ★ 开关**必须已经去掉**（用户 2026-10-13 拍板：入口常驻，防误点靠确认弹窗）。
+    #   这里反向钉住，免得以后有人"顺手"把开关加回来：
+    assert 'id="btn-branch"' not in src, "不该再有顶栏分支开关按钮"
+    assert "act === 'branch-main'" not in src, "不该再有顶栏开关的动作分发"
+    assert "act === 'branch-off'" not in src, "不该再有「关闭分支」的动作分发"
+    assert 'name="branch_enabled"' not in src, "不该再在会话设置里放分支开关"
+    # 但"分叉前先问一次"这道闸必须还在（它才是防误点的东西）
+    assert "分叉并生成另一条走向" in src, "点分叉必须弹确认框（防误点）"
 
 
 def test_fork_button_is_hidden_where_forking_is_impossible() -> None:
@@ -1040,21 +1070,15 @@ def test_frontend_shows_rounds_and_has_line_delete() -> None:
     # SSE 出错必须弹 toast（失败气泡会被随后的刷新抹掉，只留气泡等于没提示）
     assert "toastErr(data?.message || '生成失败')" in src, "生成失败必须弹出提示"
 
-    # ★ 顶栏按钮就是总开关，文案要能一眼看出**当前状态**（用户要求「分支开/分支关」）
-    assert "🌿 分支${detail.branch?.enabled ? '开' : '关'}" in src, (
-        "顶栏按钮要显示「分支开」/「分支关」"
-    )
-    assert "return turnOnBranch(root, signal)" in src, "顶栏按钮要能开启分支"
-    assert "return turnOffBranch(root, signal)" in src, "顶栏按钮也要能关闭分支（总开关）"
-
 
 def test_no_persistent_branch_banner_when_only_one_line() -> None:
-    """★ 只有一条线时**不许**渲染常驻的分支提示条（用户明确要求去掉）。
+    """★ 只有一条线时**不许**渲染常驻的分支提示条，而且**不许再有开关**。
 
     用户原话：「图二中不要我圈起来的弹窗，或者让它只在打开分支的前几秒显示一会，
-    像一个弹窗提醒一样，不然一直放在不好看」。
-    现在的做法：`branchBarHTML` 在 `lines.length < 2` 时直接返回空串，
-    提示改由**开启那一刻的 toast** 承担（会自动消失）。
+    像一个弹窗提醒一样，不然一直放在不好看」，随后又拍板
+    「去掉开关，「🌿 分支」常驻」。
+    所以现在：`branchBarHTML` 在 `lines.length < 2` 时直接返回空串；
+    界面上再没有任何"要不要开启"的开关，入口就是回复下面那个按钮。
     """
     from pathlib import Path
 
@@ -1069,8 +1093,7 @@ def test_no_persistent_branch_banner_when_only_one_line() -> None:
         "只有一条线时 branchBarHTML 必须直接返回空串（不许再渲染常驻提示条）"
     )
     assert "开启后，可以在某条回复上点" not in body, "那条常驻提示文案必须已经删掉"
-    # 提示改由开启时的 toast 承担
-    assert "toastOk('对话分支已开启" in src, "开启分支要用会自动消失的 toast 说明下一步"
+    assert "data-act=\"branch-off\"" not in body, "切换器那一行不该再有「关闭分支」"
 
     # 会话列表不再区分主线/平行线，只显示有几条世界线
     assert "s.branch_line_count" in src, "列表要显示世界线条数（用户要求别提主线/平行）"
