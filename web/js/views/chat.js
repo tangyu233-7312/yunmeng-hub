@@ -691,7 +691,9 @@ async function refreshSessions(root, signal) {
    ================================================================== */
 async function openSession(root, id, signal) {
   if (!id) return;
-  // 切会话时先停掉上一个会话正在进行的生成，避免回复串到别的会话里
+  // ★ 切会话时断开上一条流的接收（服务端会中止并**保留已经写出来的部分**）：
+  //   旧代码在这里掐掉生成却没保住已生成的内容，于是"切走再回来"
+  //   只剩用户那句话孤零零摆着 —— 正是用户 2026-10-13 反馈的故障。
   stopStreaming();
 
   state.sessionId = id;
@@ -724,11 +726,71 @@ async function openSession(root, id, signal) {
   state.detail = detail;
   // 换了会话，上一轮的用量就不该继续显示（否则会让人以为这个会话花过这些 token）
   state.usage = null;
+  // ★ 这一轮可能正在**后台**写（用户切走过，服务端继续写完了）：把它当"正在流式"来看待，
+  //   于是发送按钮禁用、「停止」可用 —— 与真正在本地接收时的手感一致。
+  state.streaming = Boolean(detail.generating);
   renderChatPanel(root, detail);
   hydrateRichMessages(root);
   $$('.session-item', root).forEach((el) =>
     el.classList.toggle('active', Number(el.dataset.id) === id),
   );
+  // 正在后台写：轮询到它落库为止（写完自动渲染出来，不用用户手动刷新）
+  if (detail.generating) scheduleGeneratingPoll(root, id);
+}
+
+/**
+ * 「这条世界线的回复正在写…」的提示。
+ *
+ * ★ 为什么需要它：用户切走会让服务端**中止**这一轮，并把已经写出来的部分
+ *   标注「（回复中断）」存下来（见 stopStreaming 的说明）。切回来后如果回复
+ *   还没落库，界面上如果什么都不说，看起来就像"自己那句话被丢了"。
+ */
+function generatingHTML(detail) {
+  if (!detail?.generating) return '';
+  return `<div class="alert info" id="generating-hint"
+      style="display:flex;align-items:center;gap:10px;margin:10px 16px">
+    <span style="flex:1">
+      ✍️ 这一轮正在生成中（可能是在另一个标签页里发起的）。写好后会自动出现在这里，
+      不用重新花钱生成。
+    </span>
+  </div>`;
+}
+
+/** 会话正在生成时，轮询到它落库为止。 */
+let generatingTimer = null;
+function scheduleGeneratingPoll(root, sessionId) {
+  clearTimeout(generatingTimer);
+  generatingTimer = setTimeout(async () => {
+    // 已经切到别的会话/世界线了：不再轮询
+    if (state.sessionId !== sessionId) return;
+    let detail;
+    try {
+      detail = await api.get(`/narrative/sessions/${sessionId}`);
+    } catch {
+      // 网络抖动就再试一次，不打扰用户
+      scheduleGeneratingPoll(root, sessionId);
+      return;
+    }
+    if (state.sessionId !== sessionId) return;
+    if (detail.generating) {
+      // ★ 还在写就**不重渲染**：用户在等待期间可能正在输入框里打字，
+      //   每 1.5 秒重建一次面板会把他的草稿抹掉。
+      scheduleGeneratingPoll(root, sessionId);
+      return;
+    }
+    // 写完了：渲染出完整回复（顺手保住输入框里的草稿）
+    const draft = $('#composer-input', root)?.value || '';
+    state.detail = detail;
+    state.streaming = false;
+    renderChatPanel(root, detail);
+    hydrateRichMessages(root);
+    if (draft) {
+      const input = $('#composer-input', root);
+      if (input) input.value = draft;
+    }
+    await refreshSessions(root);
+    toastOk('刚才那一轮的回复写好了');
+  }, 1500);
 }
 
 /**
@@ -1031,6 +1093,9 @@ function pendingReplyHTML(detail) {
   if (!last || last.role !== 'user') return '';
   // 正在流式生成时不要显示（那会儿本来就还没回复，显示会显得多余且闪烁）
   if (state.streaming) return '';
+  // ★ 正在**后台**写这一轮时也不显示"没被回复"：它马上就出来了，
+  //   这时候给一个"让 AI 写"的按钮反而会让用户以为回复丢了、又点一次白花钱。
+  if (detail?.generating) return '';
   return `<div class="alert info pending-reply" id="pending-reply"
       style="display:flex;align-items:center;gap:10px;margin:10px 16px">
     <span style="flex:1">
@@ -1649,6 +1714,7 @@ function renderChatPanel(root, detail) {
       pureChat ? '' : stateBarHTML(detail.state, detail.state_schema, lastRawState(detail))
     }</div>
     ${pendingReplyHTML(detail)}
+    ${generatingHTML(detail)}
     <button class="btn sec sm scroll-bottom hidden" data-act="scroll-bottom">↓ 回到最新</button>
 
     <div class="composer">
@@ -2322,8 +2388,28 @@ async function sendMessage(root, signal) {
   }
 }
 
+/**
+ * 断开前端的接收（切会话 / 切世界线 / 点「停止」都走这里）。
+ *
+ * ==================== ★ 断开 = 中止，但一个字都不许丢 ====================
+ * 用户 2026-10-13 反馈：
+ *     "在 AI 输出的过程中切换到其他角色卡或者世界线会直接打断 ai 的生成，
+ *      再回来就会发现用户输入孤零零的摆在那里……只有再消耗 token 点
+ *      「让 AI 写这个走向」。"
+ * 他的判断是对的（上游确实已经在算了），但真正的问题是**丢掉的东西没告诉他**。
+ * 现在的约定：断开就让服务端**中止这一轮**（上游一起停，没生成的部分不用付钱），
+ * 但**已经写出来的字会被保留并标注「（回复中断）」** —— 切回去看到的是
+ * "你的话 + 已经写出来的那段 + 中断标注"，绝不会是空白。
+ * （后端实现在 app/narrative/streaming.py 顶部有完整说明。）
+ */
 function stopStreaming() {
-  if (streamController) streamController.abort();
+  if (streamController) {
+    streamController.abort();
+    streamController = null;
+  }
+  state.streaming = false;
+  $('#btn-stop')?.classList.add('hidden');
+  $('#btn-send')?.removeAttribute('disabled');
 }
 
 function scrollBottom(root, force) {

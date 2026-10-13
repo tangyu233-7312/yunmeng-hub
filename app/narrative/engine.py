@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestError
@@ -1270,6 +1271,57 @@ def stream_reply(
     }
 
 
+def keep_interrupted_reply(
+    db: Session,
+    session_id: int,
+    *,
+    text: str,
+    model_name: str | None = None,
+    notes: list[str] | None = None,
+) -> Message | None:
+    """把"**已经发给用户、但这一轮没写完**"的那段字落库（标注「（回复中断）」）。
+
+    ==================== ★ 为什么由接口层来存 ====================
+    用户 2026-10-13 反馈："在 AI 输出的过程中切换到其他角色卡或者世界线会直接打断
+    ai 的生成，再回来就会发现用户输入孤零零的摆在那里。"
+
+    原本指望生成器自己的收尾（`_keep_partial`）把已经写出来的部分存下来。
+    但真实断线复现里连撞两次：先是 `generator already executing`，再是
+    `ObjectDereferencedError: ... has been garbage collected` ——
+    因为那条路要跨「请求任务 / 线程池 / GC」碰**同一个** SQLAlchemy Session，
+    时序根本管不住，结果就是"已经写出来的字照样丢"。
+
+    而接口层手里本来就有**已经推送给用户的那段字**（它是一段段发出去的）。
+    用它、配一个**自己的新 session** 直接落库，是这条路上唯一没有竞态的写法。
+
+    ★ 幂等：同一句用户消息后面已经有回复了就不再写第二条 ——
+      生成器那边的 `_keep_partial` 也可能跑到，两条路只允许一条留下内容。
+    """
+    session = db.get(NarrativeSession, session_id)
+    if session is None:
+        return None
+    last_role = db.scalar(
+        select(Message.role)
+        .where(Message.session_id == session_id)
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    if str(last_role or "") == "assistant":
+        return None  # 已经有回复落库了（生成器那边先存了），不能变成同一句话两条回复
+    body = text.rstrip()
+    if not body:
+        return None  # 一个字都没写出来：不硬造一条空回复，界面会给重试入口
+    return save_assistant_reply(
+        db,
+        session,
+        content=body + "\n\n……（回复中断）",
+        model_name=model_name,
+        token_count=estimate_tokens(body),
+        latency_ms=None,
+        notes=notes,
+    )
+
+
 def _keep_partial(
     db: Session,
     session: NarrativeSession,
@@ -1285,7 +1337,19 @@ def _keep_partial(
       用户已经看到那半段文字了。如果不落库，刷新页面它就消失了，
       用户会以为"我刚才看到的内容是幻觉"。
       存下来并加上"（回复中断）"的标注，用户能接着往下说。
+
+    ★ 幂等：接口层可能已经用"已经推送给用户的那段字"存过一条了
+      （见 `keep_interrupted_reply`）。这里再存一条就会变成同一句话两条回复 ——
+      所以先看一眼：这条会话最后一条已经是角色回复，就直接放弃。
     """
+    last_role = db.scalar(
+        select(Message.role)
+        .where(Message.session_id == session.id)
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    if str(last_role or "") == "assistant":
+        return
     text = content + "\n\n……（回复中断）"
     try:
         save_assistant_reply(

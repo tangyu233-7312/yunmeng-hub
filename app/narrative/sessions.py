@@ -28,6 +28,7 @@ from app.narrative import dice as dice_mod
 from app.narrative import plugin_runtime
 from app.narrative import state as state_mod
 from app.narrative import state_schema as state_schema_mod
+from app.narrative import streaming
 from app.narrative import translate as translate_mod
 from app.narrative import vn as vn_mod
 from app.db.models import (
@@ -615,6 +616,10 @@ def serialize_detail(
         # ★ 轮次（一问一答算一轮；口径与 summary.count_rounds 一致）。
         #   按**整条会话**算，不受 messages 被截断影响。
         round_count=round_count_map(db, [session.id]).get(session.id, 0),
+        # ★ 这一轮是不是**正在生成**（可能发生在后台：用户切走了，服务端继续写完）。
+        #   界面据此显示"AI 正在写这条回复…"并轮询，而不是让用户看到
+        #   "自己那句话孤零零摆在那里"（那是 2026-10-13 反馈的故障现象）。
+        generating=streaming.is_generating(session.id),
         total_tokens=session.total_tokens,
         last_active_at=session.last_active_at,
         created_at=session.created_at,

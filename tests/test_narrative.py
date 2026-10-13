@@ -44,7 +44,7 @@ from app.db.mysql import session_scope
 from app.llm.params import GenerationParams, compute_context_budget
 from app.llm.schema import ChatMessage, ChatResult, StreamChunk, TokenUsage
 from app.main import app
-from app.narrative import context_manager, engine, world_book_scanner
+from app.narrative import context_manager, engine, streaming, world_book_scanner
 from app.narrative.prompt_builder import build_prompt
 
 BASE = "/api/v1/narrative/sessions"
@@ -1494,3 +1494,221 @@ def test_message_actions_require_login(client: TestClient, user: dict) -> None:
         f"{BASE}/{session_id}/messages/{user_message_id}/retract"
     ).status_code == 401
     assert client.get(f"{BASE}/{session_id}/regenerate").status_code == 401
+
+
+# ==================================================================
+#  九、★ 用户切走了也不能丢：**断开 ≠ 取消**（2026-10-13 用户反馈的故障）
+#
+#  故障原话：
+#      "当用户输入后，在 AI 输出的过程中切换到其他角色卡或者世界线会直接打断 ai 的
+#       生成，再回来就会发现用户输入孤零零的摆在那里……上游一定已经收到这个请求并且
+#       输出了，但是我的系统却没有返回到用户的对话框里，只有再消耗 token 点
+#       「让 AI 写这个走向」。"
+#
+#  根因：旧代码里取消**多半落在 `await run_in_threadpool(...)` 那一行**
+#       （模型正在思考），而那一行不在包住 yield 的 try 里 —— 生成器压根没被关闭，
+#       于是"保留半截内容"的收尾不会跑，这一轮彻底丢失。
+# ==================================================================
+def test_interrupted_turn_keeps_what_the_user_already_saw(
+    client: TestClient, user: dict
+) -> None:
+    """★ 已经推送给用户的那段字必须落库，并标注「（回复中断）」——且**幂等**。
+
+    这是用户 2026-10-13 反馈的直接落点：
+      "……再回来就会发现用户输入孤零零的摆在那里……一定要告诉用户被中断，
+        而不是像我刚刚那样什么都没有。"
+    接口层用手里的"已经发出去的字"自己存（`keep_interrupted_reply`），
+    不再依赖生成器的收尾 —— 那条路要跨"请求任务 / 线程池 / GC"碰同一个 Session，
+    真实断线复现里撞出了 ObjectDereferencedError，字照样丢。
+
+    ★ 幂等这一条同样关键：生成器那边的 `_keep_partial` 也可能跑到，
+      两条路都写就会变成"同一句话两条回复"，模型下一轮会以为自己自言自语。
+    """
+    from app.db.models import Message, NarrativeSession as _S
+
+    card = make_card(client, user)
+    provider = make_provider(client, user)
+    session = make_session(client, user, card["id"], provider["id"])
+
+    with session_scope() as db:
+        row = db.get(_S, session["id"])
+        engine.save_user_message(db, row, "我说了一句话")
+
+    with session_scope() as db:
+        saved = engine.keep_interrupted_reply(
+            db, session["id"], text="【已经写出来的那半段", model_name="fake-model"
+        )
+        assert saved is not None, "有内容就该存下来"
+        assert saved.content.endswith("（回复中断）"), "必须标注它是被中断的"
+        assert saved.content.startswith("【已经写出来的那半段"), "存入的必须是用户看到的那段"
+        assert saved.role == "assistant"
+
+    # 幂等：再存一次不应该多出第二条
+    with session_scope() as db:
+        again = engine.keep_interrupted_reply(
+            db, session["id"], text="【已经写出来的那半段", model_name="fake-model"
+        )
+        assert again is None, "同一句话后面已经有回复了，不能再写第二条"
+        assert db.query(Message).filter(Message.session_id == session["id"]).count() == 3
+
+    # 一个字都没有时不该硬造空回复（界面会给重试入口）
+    other = make_session(client, user, card["id"], provider["id"])
+    with session_scope() as db:
+        row2 = db.get(_S, other["id"])
+        engine.save_user_message(db, row2, "另一句话")
+    with session_scope() as db:
+        assert engine.keep_interrupted_reply(db, other["id"], text="   ") is None
+
+
+def test_close_generator_alone_is_not_safe_while_a_step_is_in_flight() -> None:
+    """反证：**不持锁**直接 close 会失败 —— 这正是收尾必须用 `close_locked` 的原因。
+
+    真实断线复现里就是这么丢掉"已经写出来的字"的：前端断开那一刻，线程池里
+    还有一步 `next()` 在跑，此时 `close()` 抛 `generator already executing`、
+    被 `close_generator` 吞成 warning，于是 finally 不跑、半截内容不落库。
+    """
+    import threading
+    import time as _time
+
+    log: list[str] = []
+    rs = streaming.register(999_004, "测试")
+    try:
+
+        def gen():
+            try:
+                for i in range(30):
+                    _time.sleep(0.05)
+                    yield "delta", {"delta": str(i)}
+                log.append("saved")
+            finally:
+                log.append("closed")
+
+        generator = gen()
+        worker = threading.Thread(target=streaming.advance, args=(rs, generator), daemon=True)
+        worker.start()
+        _time.sleep(0.01)  # 让那一步先抢到锁（模拟"还在飞"）
+        streaming.close_generator(generator)  # ← 故意用不持锁的版本
+        assert "closed" not in log, (
+            "如果这条断言失败，说明 Python 改了生成器语义 —— 那时可以简化收尾逻辑"
+        )
+    finally:
+        streaming.unregister(rs)
+
+
+def test_close_locked_waits_for_the_in_flight_step() -> None:
+    """★ 真实断线复现抓出来的坑：收尾必须**持锁**关，等在飞的那一步结束。
+
+    否则"点停止 / 切走"时已经写出来的那段字不会落库 ——
+    用户回来看到的还是空白（他 2026-10-13 反馈的正是这个）。
+    """
+    import threading
+    import time as _time
+
+    log: list[str] = []
+    rs = streaming.register(999_003, "测试")
+    try:
+
+        def gen():
+            try:
+                for i in range(30):
+                    _time.sleep(0.05)  # 模拟"模型正在算这一步"
+                    yield "delta", {"delta": str(i)}
+                log.append("saved")
+            finally:
+                log.append("closed")
+
+        generator = gen()
+        # 在另一个线程里推进它（持有 rs.lock 一小会儿，模拟"那一步还在飞"）
+        worker = threading.Thread(target=streaming.advance, args=(rs, generator), daemon=True)
+        worker.start()
+        _time.sleep(0.01)  # 让它先抢到锁
+        streaming.close_locked(rs, generator)
+        assert "closed" in log, (
+            "持锁关必须等在飞的那一步结束再关 —— 否则收尾不跑、已写出的字会丢"
+        )
+        assert "saved" not in log, "被中断的这一轮不该被当成正常完成"
+    finally:
+        streaming.unregister(rs)
+
+
+def test_generating_flag_reflects_a_running_turn(client: TestClient, user: dict) -> None:
+    """会话详情里的 `generating` 要如实反映"这一轮还在写"（界面据此显示并轮询）。"""
+    card = make_card(client, user)
+    provider = make_provider(client, user)
+    session = make_session(client, user, card["id"], provider["id"])
+
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    assert detail["generating"] is False
+
+    rs = streaming.register(session["id"], "测试")
+    try:
+        detail = client.get(
+            f"{BASE}/{session['id']}", headers=user["headers"]
+        ).json()["data"]
+        assert detail["generating"] is True, (
+            "正在写就必须如实说，否则界面又变成「孤零零一句话」"
+        )
+    finally:
+        streaming.unregister(rs)
+
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    assert detail["generating"] is False
+
+
+def test_send_is_rejected_while_previous_turn_is_still_writing(
+    client: TestClient, user: dict
+) -> None:
+    """上一轮还在后台写时，再发消息要被**明确拒绝**（409），且不留下用户消息。
+
+    ★ 为什么必须拒绝：两轮同时写同一个会话会互相插队，历史里会出现
+      "两条回复针对同一句话"，模型下一轮会以为自己自言自语。
+    ★ 为什么"不留下用户消息"也要断言：注定被拒的请求不该先在库里留一句话，
+      否则用户会看到"我说了但它永远没回"。
+    """
+    card = make_card(client, user)
+    provider = make_provider(client, user)
+    session = make_session(client, user, card["id"], provider["id"])
+
+    rs = streaming.register(session["id"], "测试")
+    try:
+        response = client.get(
+            f"{BASE}/{session['id']}/stream",
+            params={"content": "再说一句"},
+            headers=user["headers"],
+        )
+        assert response.status_code == 409, response.text
+        assert "还在写" in response.json()["message"]
+
+        detail = client.get(
+            f"{BASE}/{session['id']}", headers=user["headers"]
+        ).json()["data"]
+        assert [m["role"] for m in detail["messages"]] == ["assistant"], (
+            "被拒绝的请求不该把用户那句话写进库"
+        )
+
+        # 重新生成同理
+        regen = client.get(f"{BASE}/{session['id']}/regenerate", headers=user["headers"])
+        assert regen.status_code == 409, regen.text
+    finally:
+        streaming.unregister(rs)
+
+
+def test_registry_is_clean_after_a_normal_stream(client: TestClient, user: dict) -> None:
+    """正常跑完一条流之后，注册表里不能留下脏条目。
+
+    ★ 这条守的是"名额泄漏"：如果跑完不摘掉，用户下次发消息会被自己上一轮挡住（409），
+      而且界面会一直显示"AI 正在写…"。测试间共用一个进程，所以这里顺便断言全局干净。
+    """
+    FakeAdapter.script["stream"] = ["好"]
+    card = make_card(client, user)
+    provider = make_provider(client, user)
+    session = make_session(client, user, card["id"], provider["id"])
+
+    response = client.get(
+        f"{BASE}/{session['id']}/stream",
+        params={"content": "你好"},
+        headers=user["headers"],
+    )
+    assert response.status_code == 200
+    assert streaming.is_generating(session["id"]) is False
+    assert streaming.running_count() == 0, "正常结束后注册表必须是空的"

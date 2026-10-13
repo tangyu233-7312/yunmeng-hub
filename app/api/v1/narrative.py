@@ -90,6 +90,7 @@ from app.narrative import state as state_mod
 from app.narrative import summary as summary_mod
 from app.narrative import translate as translate_mod
 from app.narrative import sessions as session_service
+from app.narrative import streaming
 from app.services import plugin_service
 
 router = APIRouter()
@@ -869,12 +870,46 @@ STREAM_SEND = "send"
 STREAM_REGENERATE = "regenerate"
 
 
+def _persist_interrupted_reply(*, user_id: int, session_id: int, text: str) -> None:
+    """把"已经推送给用户、但这一轮没写完"的那段字存下来（标注「回复中断」）。
+
+    ★ 为什么不复用请求里那个 db / 生成器自己那个 session：
+      真实断线复现里，那条路要跨"请求任务 / 线程池 / GC"碰同一个 Session，
+      撞出 `ObjectDereferencedError: ... has been garbage collected`，
+      结果用户已经看到的字照样丢。这里开**自己的**新 session，谁都不碰，没有竞态。
+
+    ★ 失败只记日志、绝不往上抛：这是个旁路补救，出问题不该盖住"连接已断开"
+      这个原始情况（那会让调用方看到一个莫名其妙的异常）。
+    """
+    try:
+        with session_scope() as db:
+            session = session_service.get_owned_session(db, user_id, session_id)
+            engine.keep_interrupted_reply(
+                db, session.id, text=text, model_name=_model_name_of(db, session)
+            )
+    except BaseException as exc:  # noqa: BLE001
+        logger.warning(
+            "保存中断的部分回复失败（不影响连接收尾） | session_id={} | {}", session_id, exc
+        )
+
+
+def _model_name_of(db: Session, session: NarrativeSession) -> str | None:
+    """这条会话当前用的模型名（只用于给那条中断回复留个痕）。"""
+    if session.llm_provider_id is None:
+        return None
+    from app.db.models import LlmProvider
+
+    row = db.get(LlmProvider, session.llm_provider_id)
+    return getattr(row, "model_name", None)
+
+
 def _sse_stream_response(
     *,
     session_id: int,
     user_message_id: int,
     mode: str,
     request_label: str,
+    user_id: int,
     delete_inclusive: bool = False,
     delete_from_id: int | None = None,
 ) -> StreamingResponse:
@@ -910,92 +945,137 @@ def _sse_stream_response(
         # 告诉浏览器自动重连的等待时间（本项目不依赖自动重连，写上无害）
         yield "retry: 3000\n\n"
 
-        with session_scope() as stream_db:
-            session = stream_db.get(NarrativeSession, session_id)
-            if session is None:
-                # 极端情况：用户在流开始前刚好把会话删了
-                yield sse_event(
-                    "error",
-                    {
-                        "code": "NOT_FOUND",
-                        "message": "会话不存在",
-                        "status": 404,
-                        "detail": {"session_id": session_id},
-                        "request_id": get_request_id(),
-                    },
-                )
-                return
+        # ★ 生成期间在登记表里占一个位：界面据此显示"AI 正在写…"，
+        #   也拦住"同一个会话两轮同时写"（互相插队会写出两条针对同一句话的回复）。
+        try:
+            rs = streaming.register(session_id, request_label)
+        except AppException as exc:
+            # 竞态：上一个请求刚登记、前端的预检查没拦住。如实发一条 error 事件。
+            yield sse_event("error", error_event_payload(exc))
+            return
 
-            user_message = stream_db.get(Message, user_message_id)
-            if user_message is None:
-                yield sse_event(
-                    "error",
-                    {
-                        "code": "INTERNAL_ERROR",
-                        "message": "刚保存的用户消息找不到了",
-                        "status": 500,
-                        "detail": {"message_id": user_message_id},
-                        "request_id": get_request_id(),
-                    },
-                )
-                return
-
-            if mode == STREAM_REGENERATE:
-                # ★ 重新生成：先把被替换的那条回复**及其之后的内容**删掉，再生成。
-                #
-                #   为什么连它自己一起删（inclusive=True）？
-                #     不删它的话，新回复会追加在它后面 —— 于是历史里出现
-                #     "两条针对同一句话的回复"，模型下次会以为自己在自言自语。
-                #     （这个 bug 是写测试时抓到的，不是推理出来的。）
-                #
-                #   为什么删除放在流里、而不是流开始前？
-                #     放前面就会"删了但生成失败"，用户连旧回复都没了；
-                #     放这里至少保证删完立刻接着生成，失败也能再点一次。
-                removed = session_service.delete_messages_from(
-                    stream_db,
-                    session,
-                    after_message_id=(
-                        delete_from_id if delete_from_id is not None else user_message.id
-                    ),
-                    inclusive=delete_inclusive,
-                )
-                if removed:
-                    logger.info(
-                        "重新生成：已清除被替换的 {} 条内容 | session_id={}",
-                        removed,
-                        session_id,
+        try:
+            with session_scope() as stream_db:
+                session = stream_db.get(NarrativeSession, session_id)
+                if session is None:
+                    # 极端情况：用户在流开始前刚好把会话删了
+                    yield sse_event(
+                        "error",
+                        {
+                            "code": "NOT_FOUND",
+                            "message": "会话不存在",
+                            "status": 404,
+                            "detail": {"session_id": session_id},
+                            "request_id": get_request_id(),
+                        },
                     )
+                    return
 
-            generator = engine.stream_reply(stream_db, session, user_message)
+                user_message = stream_db.get(Message, user_message_id)
+                if user_message is None:
+                    yield sse_event(
+                        "error",
+                        {
+                            "code": "INTERNAL_ERROR",
+                            "message": "刚保存的用户消息找不到了",
+                            "status": 500,
+                            "detail": {"message_id": user_message_id},
+                            "request_id": get_request_id(),
+                        },
+                    )
+                    return
 
-            while True:
-                # ★ 同步生成器必须在**线程池**里推进：
-                #   直接 next() 会把"等模型吐字"的这段时间用在事件循环上，
-                #   整个服务在此期间无法处理任何其它请求。
-                step = await run_in_threadpool(_next_or_none, generator)
-                if step is None:
-                    break
-                event, data = step
+                if mode == STREAM_REGENERATE:
+                    # ★ 重新生成：先把被替换的那条回复**及其之后的内容**删掉，再生成。
+                    #
+                    #   为什么连它自己一起删（inclusive=True）？
+                    #     不删它的话，新回复会追加在它后面 —— 于是历史里出现
+                    #     "两条针对同一句话的回复"，模型下次会以为自己在自言自语。
+                    #     （这个 bug 是写测试时抓到的，不是推理出来的。）
+                    #
+                    #   为什么删除放在流里、而不是流开始前？
+                    #     放前面就会"删了但生成失败"，用户连旧回复都没了；
+                    #     放这里至少保证删完立刻接着生成，失败也能再点一次。
+                    removed = session_service.delete_messages_from(
+                        stream_db,
+                        session,
+                        after_message_id=(
+                            delete_from_id
+                            if delete_from_id is not None
+                            else user_message.id
+                        ),
+                        inclusive=delete_inclusive,
+                    )
+                    if removed:
+                        logger.info(
+                            "重新生成：已清除被替换的 {} 条内容 | session_id={}",
+                            removed,
+                            session_id,
+                        )
+
+                generator = engine.stream_reply(stream_db, session, user_message)
+                # ★ 逐字记下"已经推送给用户"的正文：中途断开时，就靠它把用户
+                #   已经看到的那段字存下来（见下面的异常分支）。
+                #   只记正文 delta —— 思考过程（reason）不是他眼里的回复内容。
+                sent: list[str] = []
+
+                # ==================== ★ 断开 = 中止，但**一个字都不许丢** ====================
+                # 这个 try 必须包住**整个循环**（包括那个 await），不能只包住 yield：
+                #   用户切页面/切会话时，取消**多半落在 `await run_in_threadpool(...)`
+                #   那一行**（模型正在思考、还没吐下一个字）。旧代码只在 yield 外面
+                #   兜异常，于是这种取消根本没人管 —— 生成器不被关闭、已写出来的
+                #   那段字既不落库也不标注，用户回来只看到"自己那句话孤零零摆着"。
+                #   （用户 2026-10-13 反馈的故障，就是这么来的。）
                 try:
-                    yield sse_event(event, data)
+                    while True:
+                        # ★ 同步生成器必须在**线程池**里推进：
+                        #   直接 next() 会把"等模型吐字"的这段时间用在事件循环上，
+                        #   整个服务在此期间无法处理任何其它请求。
+                        step = await run_in_threadpool(_advance, rs, generator)
+                        if step is None:
+                            break
+                        event, data = step
+                        if event == "delta":
+                            sent.append(str((data or {}).get("delta") or ""))
+                        yield sse_event(event, data)
+                        if event == "error":
+                            # 错误已经如实发出去了，这里结束流（生成器也已被关闭）
+                            break
                 except BaseException as exc:  # noqa: BLE001
-                    # ★ 前端断开（关页面 / 点停止）：主动通知同步生成器收尾，
-                    #   否则它会继续把整段回复生成完、白花钱。
                     logger.info(
-                        "SSE 连接中断，停止生成 | {} | session_id={} | {}",
+                        "SSE 连接中断：中止这一轮，并保留已经写出来的部分 | {} | session_id={} | {}",
                         request_label,
                         session_id,
                         exc,
                     )
-                    _close_generator(generator)
-                    return
-                if event == "error":
-                    # 错误已经如实发出去了，这里结束流（生成器也已被关闭）
-                    break
+                    # ① 先让上游停下来（没生成的部分不用付钱）。尽力而为即可：
+                    #    此刻线程池里可能还有一步 next() 在跑，close() 会抛
+                    #    "generator already executing" —— 那也只是晚一点释放连接，
+                    #    绝不能因此影响下面②的落库。
+                    streaming.close_generator(generator)
+                    # ② **自己**把已经推送给用户的那段字存下来。
+                    #    ★ 为什么不交给生成器的收尾（`_keep_partial`）：那条路要跨
+                    #      "请求任务 / 线程池 / GC" 碰同一个 Session，真实断线复现里
+                    #      撞出了 `ObjectDereferencedError`（对象被 GC 掉），
+                    #      用户已经看到的字照样丢。这里用**自己的新 session**，没有竞态。
+                    #    ★ 必须**同步**做：任务此刻正在被取消，任何 await 都会立刻抛
+                    #      CancelledError —— 那一等就又是"什么都没有"了。
+                    #      代价是短暂占用事件循环（一次 INSERT + UPDATE），可以接受。
+                    _persist_interrupted_reply(
+                        user_id=user_id,
+                        session_id=session_id,
+                        text="".join(sent),
+                    )
+                    raise
 
-        logger.info("SSE 流结束 | {} | session_id={}", request_label, session_id)
-        # 告诉浏览器/客户端这条流正常结束了（EventSource 会识别它）
-        yield "event: end\ndata: {}\n\n"
+            logger.info("SSE 流结束 | {} | session_id={}", request_label, session_id)
+            # 告诉浏览器/客户端这条流正常结束了（EventSource 会识别它）
+            yield "event: end\ndata: {}\n\n"
+        finally:
+            # 无论怎么结束（正常 / 中断 / 报错），都要把名额还回去：
+            # 不还的话用户下次发消息会被自己上一轮挡住（409），界面还会一直显示"正在写"。
+            rs.finished.set()
+            streaming.unregister(rs)
 
     return StreamingResponse(
         event_stream(),
@@ -1061,7 +1141,22 @@ async def stream_message(
           run_in_threadpool 的每次调用都要跨线程传数据，而 SQLAlchemy 的
           ORM 对象**不能跨线程安全使用**（session 绑定在线程上）。
           所以这里只返回纯数字，生成器里再用自己的 session 重新取数据。
+
+        ★ 为什么第一件事就是查"这条会话是不是正在生成"：
+          后端现在允许"用户切走了、这一轮继续在后台写完"（见 streaming.py）。
+          于是他切回来再发一句时，上一轮可能还在写 —— 两轮同时写同一个会话会互相
+          插队（历史里出现两条针对同一句话的回复）。这里提前拒绝，
+          **并且是在保存用户消息之前拒绝**：注定要被拒的请求不该先在库里留一句话。
         """
+        if streaming.is_generating(session_id):
+            raise ConflictError(
+                "这条世界线还在写上一轮的回复，等它写完再发下一条吧",
+                detail={
+                    "session_id": session_id,
+                    "generating": True,
+                    "suggestion": "上一轮在后台继续写，切走也不会丢；写完刷新就能看到",
+                },
+            )
         session = session_service.get_owned_session(db, current_user.id, session_id)
         user_message = engine.save_user_message(db, session, content)
         return user_message.id
@@ -1073,6 +1168,7 @@ async def stream_message(
         user_message_id=user_message_id,
         mode=STREAM_SEND,
         request_label="发送",
+        user_id=current_user.id,
     )
 
 
@@ -1116,6 +1212,12 @@ async def regenerate_message(
           但这次生成该"接着哪句话往下写"，靠的是它前面那条**用户消息**。
           老代码只有一个变量，两种含义混在了一起。
         """
+        # 同 stream_message：上一轮还在后台写就先拒绝（否则两轮会互相插队）
+        if streaming.is_generating(session_id):
+            raise ConflictError(
+                "这条世界线还在写上一轮的回复，等它写完再重新生成吧",
+                detail={"session_id": session_id, "generating": True},
+            )
         session = session_service.get_owned_session(db, current_user.id, session_id)
         if message_id is not None:
             target = session_service.get_owned_message(db, session, message_id)
@@ -1150,6 +1252,7 @@ async def regenerate_message(
         user_message_id=prompt_id,
         mode=STREAM_REGENERATE,
         request_label="重新生成",
+        user_id=current_user.id,
         delete_inclusive=delete_from_id is not None,
         delete_from_id=delete_from_id,
     )
@@ -1317,7 +1420,7 @@ def edit_message(
 
 
 #: 生成器推进的辅助函数放在模块级，方便 run_in_threadpool 直接引用
-def _next_or_none(generator) -> tuple[str, object] | None:
+def _advance(rs, generator) -> tuple[str, object] | None:
     """推进一步同步生成器；StopIteration 时返回 None。
 
     ★ 不能直接在 run_in_threadpool 里传 `lambda: next(gen, None)`：
@@ -1327,23 +1430,16 @@ def _next_or_none(generator) -> tuple[str, object] | None:
     ★ 适配层抛出的语义化异常（限流 / 鉴权失败 / 超时…）在这里被翻译成
       一条 error 事件，而不是让整个响应 500 —— 前端已经收到了 200 与若干片段，
       此时唯一正确的做法就是把错误**如实发下去**（红线：不许静默断开）。
+
+    ★ 真正的 `next()` 在 `streaming.advance` 里、带一把锁：前端断开后后台收尾
+      线程也会推进同一个生成器，两个线程同时碰它会抛 "generator already executing"。
     """
     try:
-        return next(generator)
+        return streaming.advance(rs, generator)
     except StopIteration:
         return None
     except BaseException as exc:  # noqa: BLE001
         payload = error_event_payload(exc)
         # 生成器已经因为异常退出了，这里顺手关掉它（触发 finally 里的 close()）
-        _close_generator(generator)
+        streaming.close_generator(generator)
         return "error", payload
-
-
-def _close_generator(generator) -> None:
-    """让同步生成器走 finally（关闭 HTTP 连接池、保存半截内容）。"""
-    close = getattr(generator, "close", None)
-    if callable(close):
-        try:
-            close()
-        except BaseException as exc:  # noqa: BLE001
-            logger.warning("关闭流式生成器时出错: {}", exc)

@@ -299,6 +299,11 @@ class SessionDetail(BaseModel):
         description="★ **轮次**（一问一答算一轮；开场白、以及最后那句还没被回复的"
         "用户消息都不算）。会话头部显示用这个。",
     )
+    generating: bool = Field(
+        default=False,
+        description="★ 这一轮是不是**正在生成**（可能发生在后台：用户切走了，"
+        "服务端继续把它写完）。界面据此显示「AI 正在写这条回复…」并轮询结果。",
+    )
     total_tokens: int
     last_active_at: datetime | None = None
     created_at: datetime
