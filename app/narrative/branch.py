@@ -136,13 +136,20 @@ def serialize_group(db: Session, session: NarrativeSession) -> dict[str, Any]:
 
     形状：
         {"enabled": bool, "group_id": int, "max": 2,
-         "current_id": int, "can_branch": bool,
+         "current_id": int, "can_branch": bool, "has_sibling": bool,
          "lines": [{"id", "index", "label", "is_current", "message_count",
-                    "last_active_at", "status", "activatable"}]}
+                    "round_count", "last_active_at", "status", "archived"}]}
+
+    ★ `round_count`（一问一答算一轮）是**界面显示用**的那个数：用户明确要求
+      别写"N 条消息"。口径与 `sessions.round_count_map` 完全一致（同一个函数）。
     """
+    # 延迟导入：sessions 已经 import 了本模块，顶层互相 import 会成环。
+    from app.narrative.sessions import round_count_map
+
     gid = group_id_of(session)
     lines: list[dict[str, Any]] = []
     rows = group_sessions(db, session)
+    rounds = round_count_map(db, [row.id for row in rows])
     for row in rows:
         lines.append(
             {
@@ -151,10 +158,17 @@ def serialize_group(db: Session, session: NarrativeSession) -> dict[str, Any]:
                 "label": label_of(row),
                 "is_current": row.id == session.id,
                 "message_count": int(row.message_count or 0),
+                "round_count": int(rounds.get(row.id, 0)),
                 "last_active_at": row.last_active_at,
                 "status": row.status,
                 # 归档的线要能如实说明"它被归档了"（点过去会先自动恢复）
                 "archived": str(getattr(row, "status", "active")) == "archived",
+                # 这条线末尾是不是"一句还没被回复的用户消息"：
+                #   是的话界面会给出「让 AI 写出这条走向」的重试入口。
+                #   为什么需要它：分叉后那次生成如果失败/被中断，这条线会停在
+                #   用户那句话上，而错误气泡会被随后的刷新抹掉 —— 用户看到的是
+                #   "点了分支，AI 却没回复"，且**没有任何办法再触发一次**。
+                "pending_user": _pending_user(db, row),
             }
         )
     enabled = is_branching(session) or any(is_branching(r) for r in rows)
@@ -169,6 +183,21 @@ def serialize_group(db: Session, session: NarrativeSession) -> dict[str, Any]:
         "current_id": session.id,
         "lines": lines,
     }
+
+
+def _pending_user(db: Session, session: NarrativeSession) -> bool:
+    """这条线的最后一条消息是不是"还没被回复的用户消息"。
+
+    判据只看**最后一条**：它是 user 就说明这一轮还没答完（正常生成中、
+    或者生成失败/被中断了）。界面据此给出重试入口。
+    """
+    last_role = db.scalar(
+        select(Message.role)
+        .where(Message.session_id == session.id)
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    return str(last_role or "") == "user"
 
 
 def enable(db: Session, user_id: int, session_id: int, enabled: bool = True) -> NarrativeSession:

@@ -55,6 +55,12 @@ class SessionBrief(BaseModel):
         default=None, description="生效的提示词预设名（空 = 内置装配）"
     )
     message_count: int
+    round_count: int = Field(
+        default=0,
+        description="★ **轮次**（一问一答算一轮）。判据与 summary.count_rounds 一致："
+        "开场白不算、最后那句还没被回复的用户消息也不算。"
+        "界面显示用这个（用户 2026-10-13 要求：别写「N 条」，写「N 轮」）。",
+    )
     total_tokens: int
     last_message_preview: str | None = Field(default=None, description="最后一条消息的前几十字")
     last_message_role: str | None = None
@@ -283,6 +289,11 @@ class SessionDetail(BaseModel):
         "cost_tokens, translated_messages, spent_tokens}",
     )
     message_count: int
+    round_count: int = Field(
+        default=0,
+        description="★ **轮次**（一问一答算一轮；开场白、以及最后那句还没被回复的"
+        "用户消息都不算）。会话头部显示用这个。",
+    )
     total_tokens: int
     last_active_at: datetime | None = None
     created_at: datetime

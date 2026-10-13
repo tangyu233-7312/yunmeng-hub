@@ -875,3 +875,167 @@ def test_branch_css_uses_theme_variables() -> None:
     block_start = css.index(".branch-bar")
     block = css[block_start : block_start + 1800]
     assert "var(--surface" in block, "分支条应当用主题变量做背景"
+
+
+# ==================================================================
+#  七、★ 用户 2026-10-13 的反馈：世界线要**放在一起管理**
+#     （平行线不再单独出现在左侧列表；删除入口挪到切换器那一行）
+# ==================================================================
+def _list_ids(client: TestClient, user: dict) -> set[int]:
+    listing = client.get(BASE, headers=user["headers"]).json()["data"]
+    return {s["id"] for s in listing["items"]}
+
+
+def test_parallel_line_is_hidden_from_the_session_list(
+    client: TestClient, user: dict
+) -> None:
+    """★ 平行线**不再**出现在左侧会话列表里（用户要求）。
+
+    理由（用户原话）：平行线和主线的标题、角色卡、模型全一样，
+    两条并排放在列表里根本分不清谁是谁（他实测以为"平行世界没有删除按钮"，
+    其实列表里第二条就是它）。现在只留组内序号最小的那条当代表。
+    """
+    session = make_session(client, user)
+    send(client, user, session["id"], "第一句话")
+    enable_branch(client, user, session["id"])
+    target = last_assistant(detail(client, user, session["id"]))
+    twin = fork(client, user, session["id"], after_message_id=target["id"])["session"]
+
+    ids = _list_ids(client, user)
+    assert session["id"] in ids, "主线要留在列表里（它是这个组的代表）"
+    assert twin["id"] not in ids, "平行线不该再单独出现在列表里"
+
+    # 但两条线本身都还在、都能直接打开（切换器靠 detail.branch.lines）
+    assert client.get(f"{BASE}/{twin['id']}", headers=user["headers"]).status_code == 200
+    lines = detail(client, user, twin["id"])["branch"]["lines"]
+    assert len(lines) == 2
+
+
+def test_deleting_the_main_line_promotes_the_survivor_into_the_list(
+    client: TestClient, user: dict
+) -> None:
+    """★ 删掉主线后，幸存的那条线必须**重新出现在列表里**。
+
+    这是上面那条"列表只显示序号 0"必须配的不变式：不改编号的话，
+    幸存者（序号 1）会在列表里永远看不到，用户以为整个故事都没了。
+    """
+    session = make_session(client, user)
+    send(client, user, session["id"], "第一句话")
+    enable_branch(client, user, session["id"])
+    target = last_assistant(detail(client, user, session["id"]))
+    twin = fork(client, user, session["id"], after_message_id=target["id"])["session"]
+
+    assert client.delete(f"{BASE}/{session['id']}", headers=user["headers"]).status_code == 200
+
+    ids = _list_ids(client, user)
+    assert twin["id"] in ids, "删掉主线后，幸存的那条线必须回到列表里（否则它成了打不开的孤儿）"
+    # 而且它已经不再被当作"某个世界线组里的第二条线"
+    survivor = detail(client, user, twin["id"])["branch"]
+    assert len(survivor["lines"]) == 1
+    assert survivor["has_sibling"] is False
+
+
+def test_archiving_one_line_archives_the_whole_group(
+    client: TestClient, user: dict
+) -> None:
+    """★ 归档一条线时，同组的一起归档。
+
+    否则会出现"两个标签页都找不到它"的死角：平行线在"进行中"里被状态过滤掉、
+    在"已归档"里又因为序号不为 0 被过滤掉。
+    """
+    session = make_session(client, user)
+    send(client, user, session["id"], "第一句话")
+    enable_branch(client, user, session["id"])
+    target = last_assistant(detail(client, user, session["id"]))
+    twin = fork(client, user, session["id"], after_message_id=target["id"])["session"]
+
+    # 归档主线（列表里能点到的只有它）
+    resp = client.patch(
+        f"{BASE}/{session['id']}", json={"status": "archived"}, headers=user["headers"]
+    )
+    assert resp.status_code == 200, resp.text
+
+    active = client.get(f"{BASE}?status=active", headers=user["headers"]).json()["data"]
+    archived = client.get(f"{BASE}?status=archived", headers=user["headers"]).json()["data"]
+    assert {s["id"] for s in active["items"]} == set(), "归档后不该还在「进行中」里"
+    assert session["id"] in {s["id"] for s in archived["items"]}
+    # ★ 关键不变式：平行线的**状态**也变成 archived 了（同组一起走）。
+    #   注意它**不会**出现在归档列表里 —— 列表只显示组的代表（序号 0），
+    #   这正是"两条同名会话不再并排"的设计。要验证的是状态，不是列表条目。
+    assert _db_session(twin["id"]).status == "archived", "同组的平行线也要一起归档"
+
+
+def test_round_count_counts_only_complete_rounds(client: TestClient, user: dict) -> None:
+    """★ 轮次 = 一问一答算一轮；开场白不算，最后那句没被回复的用户消息也不算。
+
+    ★ 为什么这条必须钉住：界面上显示的"N 轮"如果与总结逻辑
+      （`summary.count_rounds`）口径不一致，就会出现"界面说 3 轮、
+      总结认为只有 2 轮"这种同一份数据两个答案的情况。
+    """
+    session = make_session(client, user)
+    # 刚建好只有开场白 → 0 轮
+    assert detail(client, user, session["id"])["round_count"] == 0
+
+    send(client, user, session["id"], "第一句话")
+    assert detail(client, user, session["id"])["round_count"] == 1
+    send(client, user, session["id"], "第二句话")
+    assert detail(client, user, session["id"])["round_count"] == 2
+
+    # 直接插一句"还没被回复的用户消息"（模拟生成失败/被打断后那条线停在半路）
+    with session_scope() as db:
+        db.add(Message(session_id=session["id"], role="user", content="这句还没被回复"))
+    # 轮次不变（一问一答**都齐了**才算一轮），但列表/详情都要能看出它没答完
+    assert detail(client, user, session["id"])["round_count"] == 2
+
+    listing = client.get(BASE, headers=user["headers"]).json()["data"]
+    row = next(s for s in listing["items"] if s["id"] == session["id"])
+    assert row["round_count"] == 2
+
+    # 分支信息里的 pending_user 应当为真（界面据此给出「让 AI 写这条走向」）
+    if client.post(
+        f"{BASE}/{session['id']}/branch", json={"enabled": True}, headers=user["headers"]
+    ).status_code == 200:
+        lines = detail(client, user, session["id"])["branch"]["lines"]
+        assert lines and lines[0]["pending_user"] is True
+        assert lines[0]["round_count"] == 2
+
+
+def test_branch_lines_expose_round_count(client: TestClient, user: dict) -> None:
+    """切换器标签上的数字也必须是**轮次**（用户要求：别写"几条"）。"""
+    session = make_session(client, user)
+    send(client, user, session["id"], "第一句话")
+    send(client, user, session["id"], "第二句话")
+    enable_branch(client, user, session["id"])
+    target = last_assistant(detail(client, user, session["id"]))
+    twin = fork(client, user, session["id"], after_message_id=target["id"])["session"]
+
+    lines = {l["id"]: l for l in twin["branch"]["lines"]}
+    # 主线 2 轮（一问一答各两次），平行线复制到第一句话为止 → 1 轮
+    assert lines[session["id"]]["round_count"] == 2
+    assert lines[twin["id"]]["round_count"] == 1
+
+
+def test_frontend_shows_rounds_and_has_line_delete() -> None:
+    """前端的静态契约：显示轮次 + 切换器那一行有「删除这条线」。"""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "web" / "js" / "views" / "chat.js").read_text(encoding="utf-8")
+
+    # 不再显示"N 条消息"
+    assert "${s.message_count} 条" not in src, "会话列表不该再显示消息条数"
+    assert "共 ${detail.message_count} 条" not in src, "会话头不该再显示消息条数"
+    assert "s.round_count" in src and "detail.round_count" in src, "要显示轮次"
+    assert "l.round_count" in src, "切换器标签也要显示轮次"
+
+    # 删除入口在选择主线/平行线的那一行
+    assert 'data-act="branch-delete"' in src, "世界线切换那一行要有删除按钮"
+    assert "act === 'branch-delete'" in src, "删除按钮要有动作分发"
+    assert "async function deleteBranchLine(" in src
+
+    # 「AI 没回复」时的重试入口
+    assert 'data-act="continue-reply"' in src, "要有「让 AI 写这条走向」的重试入口"
+    assert "act === 'continue-reply'" in src
+    assert "function pendingReplyHTML(" in src, "要有「停在用户消息上」的判据"
+    # SSE 出错必须弹 toast（失败气泡会被随后的刷新抹掉，只留气泡等于没提示）
+    assert "toastErr(data?.message || '生成失败')" in src, "生成失败必须弹出提示"

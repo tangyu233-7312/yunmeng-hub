@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestError, NotFoundError
@@ -81,6 +81,45 @@ def get_owned_session(db: Session, user_id: int, session_id: int) -> NarrativeSe
     if row is None:
         raise NotFoundError("会话不存在", detail={"session_id": session_id})
     return row
+
+
+def round_count_map(db: Session, session_ids: list[int]) -> dict[int, int]:
+    """每个会话完成了多少**轮**（一问一答算一轮）。
+
+    ==================== ★ 为什么不是"数用户消息"====================
+    判据必须与 `summary.count_rounds()` **逐字一致**：那边是"一问一答
+    **都齐了**才算一轮"（开场白不算、最后那句还没被回复的用户消息也不算）。
+    若这里图省事写 `用户消息数`（或 `用户数 - 最后一条是用户 ? 1 : 0`），
+    遇到"连着两条用户消息、只有后一条被回复"的情况就会多算一轮 ——
+    界面上显示"3 轮"而总结逻辑认为只有 2 轮，同一份数据两个口径，正是本项目
+    最反对的那种不一致。所以这里用与逐条遍历**等价**的 SQL 写法：
+
+        轮 = "前一条是用户消息"的**角色回复**条数
+
+    它与 `count_rounds` 的遍历完全等价（开场白前面没有用户消息，故不计；
+    连着两条 user 时只有紧邻的那条能配上；连着两条 assistant 时只有第一条算）。
+    用窗口函数 `LAG` 取前一条的 role，两种后端（MySQL 8 / SQLite）都支持。
+    """
+    if not session_ids:
+        return {}
+    prev_role = func.lag(Message.role).over(
+        partition_by=Message.session_id, order_by=Message.id
+    )
+    inner = (
+        select(
+            Message.session_id.label("session_id"),
+            Message.role.label("role"),
+            prev_role.label("prev_role"),
+        )
+        .where(Message.session_id.in_(session_ids))
+        .subquery()
+    )
+    rows = db.execute(
+        select(inner.c.session_id, func.count())
+        .where(inner.c.role == "assistant", inner.c.prev_role == "user")
+        .group_by(inner.c.session_id)
+    ).all()
+    return {int(sid): int(n) for sid, n in rows}
 
 
 def _last_message_map(db: Session, session_ids: list[int]) -> dict[int, Message]:
@@ -168,6 +207,22 @@ def list_sessions(
         conditions.append(NarrativeSession.status == status)
     if q:
         conditions.append(NarrativeSession.title.like(f"%{q}%"))
+    # ★ 世界线只在左边的会话列表里**留一条代表**（用户 2026-10-13 的要求）。
+    #   为什么：平行线和主线的标题、角色卡、模型**全都一样**，两条并排放在
+    #   列表里，用户根本分不清谁是谁（实测：用户以为"平行世界没有删除按钮"，
+    #   其实列表里那第二条就是它）。
+    #   现在的约定：**只显示组内序号最小的那条**（= 主线），平行线一律从
+    #   会话上方的「世界线」切换器进入 —— 那里既能切换、也能删除。
+    #   ★ 配套两条不变式（在下面的归档/删除里维持），否则平行线会变成
+    #     "列表里看不到、也没有入口"的孤儿：
+    #       ① 删除一条线后，剩下的线要重新编号（幸存者一定变成 0）；
+    #       ② 归档/恢复一条线时，同组一起归档/恢复（组是个整体）。
+    conditions.append(
+        or_(
+            NarrativeSession.branch_group_id.is_(None),
+            NarrativeSession.branch_index == 0,
+        )
+    )
 
     total = db.scalar(
         select(func.count()).select_from(NarrativeSession).where(*conditions)
@@ -190,6 +245,9 @@ def list_sessions(
 
     lasts = _last_message_map(db, [row.id for row in rows])
     provider_names = _provider_name_map(db, [row.llm_provider_id for row in rows])
+    # ★ 轮次：界面上显示"N 轮"而不是"N 条消息"（用户 2026-10-13 的要求）。
+    #   一次查询算完这一页，避免逐行去数。
+    rounds = round_count_map(db, [row.id for row in rows])
     # ★ 世界线标记只在"这个组真的有两条线"时才给（见下面 branch_line 的说明）。
     #   一次查询算出所有多线组，避免逐行去数（列表页最容易踩 N+1）。
     multi_line_groups = _multi_line_group_ids(db, user_id)
@@ -203,6 +261,7 @@ def list_sessions(
             provider_name=provider_names.get(row.llm_provider_id or 0),
             model_name=provider_names.get(("model", row.llm_provider_id or 0)),
             message_count=row.message_count,
+            round_count=rounds.get(row.id, 0),
             total_tokens=row.total_tokens,
             last_message_preview=_preview(lasts.get(row.id)),
             last_message_role=lasts[row.id].role if row.id in lasts else None,
@@ -551,6 +610,9 @@ def serialize_detail(
         # ★ 翻译面板：设置 + 可选项 + 已译条数 / 花掉的 token
         translate=translate_state(db, session, messages),
         message_count=session.message_count,
+        # ★ 轮次（一问一答算一轮；口径与 summary.count_rounds 一致）。
+        #   按**整条会话**算，不受 messages 被截断影响。
+        round_count=round_count_map(db, [session.id]).get(session.id, 0),
         total_tokens=session.total_tokens,
         last_active_at=session.last_active_at,
         created_at=session.created_at,
@@ -785,6 +847,15 @@ def update_session(db: Session, user_id: int, session_id: int, payload) -> Narra
 
     if "status" in submitted and payload.status:
         session.status = payload.status
+        # ★ 归档 / 恢复必须**整组一起**（用户 2026-10-13 的要求：主线与平行世界
+        #   放在一起管理）。为什么不做就会出事：
+        #   会话列表只显示组内序号最小的那条线（平行线从「世界线」切换器进入），
+        #   若只归档主线而平行线仍是 active，平行线在"进行中"里被过滤掉、
+        #   在"已归档"里又因为序号不为 0 被过滤掉 —— 于是它**两个标签页都找不到**，
+        #   成了一个打不开的孤儿。
+        for sibling in branch_mod.group_sessions(db, session):
+            if sibling.id != session.id:
+                sibling.status = payload.status
 
     if "character_card_id" in submitted and payload.character_card_id is not None:
         # 换卡只影响**之后**的提示词，已经落库的历史消息不动 ——
@@ -828,6 +899,8 @@ def delete_session(db: Session, user_id: int, session_id: int) -> int:
     """
     session = get_owned_session(db, user_id, session_id)
     message_count = session.message_count or 0
+    # ★ 记下它的世界线组，删完之后要重排剩下的线（见下面的说明）
+    group_id = session.branch_group_id
     # messages.session_id 的外键是 ON DELETE CASCADE + relationship 的
     # cascade="all, delete-orphan"，所以能自动删干净（这一点由测试真删一次验证）
     db.delete(session)
@@ -838,11 +911,53 @@ def delete_session(db: Session, user_id: int, session_id: int) -> int:
         session_id,
         message_count,
     )
+    # ★ 删掉一条世界线后，把同组剩下的线**重新编号**（一定让最低的那条变成 0）。
+    #   为什么必须做：会话列表只显示序号为 0 的线，平行线靠切换器进入。
+    #   如果删掉的是主线（序号 0），平行线（序号 1）会变成"列表里看不到、
+    #   也没有任何入口"的孤儿 —— 用户以为整个故事都没了。
+    #   重排之后幸存者变成 0，自动回到会话列表里。
+    if group_id is not None:
+        _reindex_branch_group(db, user_id, int(group_id), exclude_id=session_id)
     # 先落库成功、再清向量库；向量库失败不回滚（对话记录已经删了，不该因此报错）
     from app.narrative import memory as memory_mod
 
     memory_mod.forget_session(user_id, session_id)
     return message_count
+
+
+def _reindex_branch_group(
+    db: Session, user_id: int, group_id: int, *, exclude_id: int | None = None
+) -> None:
+    """把同一个世界线组里的线按 id 升序重排 `branch_index`（0,1,2…）。
+
+    ★ 只动 `branch_index`，不碰任何消息与其它字段；`exclude_id` 用来跳过
+      刚刚被删掉的那条（此时它已经不在库里了，留着参数是为了测试能单独验证）。
+    """
+    rows = list(
+        db.scalars(
+            select(NarrativeSession)
+            .where(
+                NarrativeSession.user_id == user_id,
+                NarrativeSession.branch_group_id == group_id,
+            )
+            .order_by(NarrativeSession.id)
+        ).all()
+    )
+    rows = [r for r in rows if exclude_id is None or r.id != exclude_id]
+    # ★ 组里只剩一条线时，把组标记也清掉：它已经不再是"平行世界"了，
+    #   留着 group_id 会让它继续走"只显示序号 0"这条特殊规则（虽然序号 0 也显示），
+    #   但语义上更干净的是"这就是一条普通会话"。
+    if len(rows) <= 1:
+        for row in rows:
+            row.branch_index = 0
+            row.branch_group_id = None
+            row.branch_label = None
+            row.branch_from_message_id = None
+        db.commit()
+        return
+    for i, row in enumerate(rows):
+        row.branch_index = i
+    db.commit()
 
 
 # ==================================================================

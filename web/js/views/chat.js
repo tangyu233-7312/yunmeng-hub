@@ -321,12 +321,13 @@ function bindStatic(root, signal) {
         return;
       }
       if (act === 'branch-off') {
-        // ★ 关闭**不等于删除**：两条线都还在会话列表里。这一点必须让用户
-        //   先看清楚，否则他会以为"关掉就把另一条线丢了"而不敢点。
+        // ★ 关闭**不等于删除**：两条线都还在。这一点必须让用户先看清楚，
+        //   否则他会以为"关掉就把另一条线丢了"而不敢点。
         const b = state.detail?.branch;
         const extra = b?.has_sibling
-          ? '\n\n已经生成的平行线**不会被删除**，仍可在左侧会话列表里找到、' +
-            '也可以再打开这个开关切回去。'
+          ? '\n\n已经生成的平行线**不会被删除** —— 但关掉之后，平行线会从'
+            + '会话切换器里消失（它本来就不在左侧列表里单独出现）。'
+            + '想再看它，把这里的分支重新打开即可，或者从「会话设置」里开启。'
           : '';
         const go = await confirmDialog({
           title: '关闭对话分支',
@@ -344,6 +345,8 @@ function bindStatic(root, signal) {
         return renameBranch(root, signal, btn.dataset.label || '');
       }
       if (act === 'fork-msg') return forkFromMessage(root, signal, msgOf(btn));
+      if (act === 'continue-reply') return continuePendingReply(root, signal);
+      if (act === 'branch-delete') return deleteBranchLine(root, signal);
       if (act === 'regen') return regenerateMessage(root, signal, msgOf(btn));
       if (act === 'edit-state') return openStateEditor(root);
       if (act === 'toggle-state') {
@@ -679,7 +682,19 @@ async function refreshSessions(root, signal) {
             : '<span class="faint">（还没有消息）</span>'
         }</div>
         <div class="si-meta">
-          <span>${s.message_count} 条</span>
+          <!-- ★ 显示**轮次**而不是消息条数（用户 2026-10-13 要求：一问一答算一轮）。
+               条数对用户没有意义，"聊了几轮"才是他心里的进度。 -->
+          <span>${s.round_count ?? 0} 轮</span>
+          ${
+            // 这条会话有平行世界线时标一下：平行线**不在**列表里单独出现
+            // （标题与主线完全一样，两条并排用户分不清谁是谁），
+            // 它从上方的「世界线」切换器进入 —— 这里给个提示，别让用户不知道有第二条。
+            s.branch_line
+              ? `<span>·</span><span title="这条故事有两条世界线，用会话上方的「世界线」切换器来回切">🌿 ${esc(
+                  s.branch_line,
+                )}</span>`
+              : ''
+          }
           <span>·</span>
           <span>${esc(s.model_name || '未配置模型')}</span>
           <span class="spacer"></span>
@@ -1021,6 +1036,54 @@ function summaryBannerHTML(detail) {
   </div>`;
 }
 
+/**
+ * 「这条线停在你的话上，AI 还没回复」的提示 + 一键重试。
+ *
+ * ==================== ★ 为什么必须有它 ====================
+ * 真实反馈（2026-10-13，用户点了「分支」之后）：
+ *     "我点了分支后，ai 并没有回复我那一轮的消息"
+ * 根因不是后端不会写（实测那条替代走向**已经落库**），而是**失败完全不可见**：
+ *     · 那次生成若被中断/出错，错误只在气泡上闪一下；
+ *     · 紧接着的 `silentReload` 会拿服务端数据**重建整个面板**，把错误气泡抹掉；
+ *     · 于是这条线永远停在"你的话没有回复"的样子，而且**没有任何入口再触发一次** ——
+ *       用户只能放弃这条线、重新分叉。
+ * 现在：只要会话的最后一条消息是**用户消息**（= 这一轮还没答完），就在这里
+ * 摆一个明确的入口请他重试。判据取自服务端数据，所以**任何原因**造成的
+ * 中断（限流、超时、切走页面、进程被杀）都能被这个入口救回来。
+ */
+function pendingReplyHTML(detail) {
+  const msgs = detail?.messages || [];
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== 'user') return '';
+  // 正在流式生成时不要显示（那会儿本来就还没回复，显示会显得多余且闪烁）
+  if (state.streaming) return '';
+  return `<div class="alert info pending-reply" id="pending-reply"
+      style="display:flex;align-items:center;gap:10px;margin:10px 16px">
+    <span style="flex:1">
+      ⏳ 这条世界线停在你的这句话上 —— AI 还没有写出回复
+      （可能是刚才那次生成失败了、或者中途被打断）。
+    </span>
+    <button class="btn sm" data-act="continue-reply"
+      title="用你刚才那句话再让 AI 写一次（花一次模型调用）">让 AI 写这条走向</button>
+  </div>`;
+}
+
+/**
+ * 点「让 AI 写这条走向」：把提示块换成一个空白气泡，然后走现成的重新生成通路。
+ *
+ * ★ 为什么不复用 `sendMessage`：那会**多出一条重复的用户发言**
+ *   （用户那句话已经在库里了），模型会以为自己被问了两遍。
+ *   `regenerateMessage` 不传 message_id 时正是"用最后一条用户消息重新生成"，
+ *   语义刚好 —— 这也是分叉后生成另一条走向用的同一条通路。
+ */
+async function continuePendingReply(root, signal) {
+  if (state.streaming) return;
+  if (!state.sessionId) return;
+  $('#pending-reply', root)?.remove();
+  const bubble = appendMessage(root, { role: 'assistant', content: '', pending: true });
+  await regenerateMessage(root, signal, null, bubble);
+}
+
 /* ==================================================================
    对话分支（平行世界 / 世界线）
 
@@ -1034,8 +1097,7 @@ function summaryBannerHTML(detail) {
    ================================================================== */
 
 /** 世界线切换条：没开启分支模式时返回空字符串（不渲染任何东西）。 */
-function branchBarHTML(detail) {
-  const b = detail?.branch;
+function branchBarHTML(detail) {  const b = detail?.branch;
   if (!b || !b.enabled) return '';
   const lines = b.lines || [];
 
@@ -1053,30 +1115,42 @@ function branchBarHTML(detail) {
     </div>`;
   }
 
+  // ★ 标签上显示**轮次**而不是消息条数（用户要求）。
   const tabs = lines
     .map(
       (l) => `<button class="branch-tab${l.is_current ? ' active' : ''}" data-act="branch-switch"
         data-sid="${l.id}"
-        title="切换到「${esc(l.label)}」（${l.message_count} 条消息）${
+        title="切换到「${esc(l.label)}」（${l.round_count ?? 0} 轮）${
           l.archived ? ' · 这条线已归档，切过去会自动恢复' : ''
-        }">${esc(l.label)}<span class="faint"> · ${l.message_count}</span></button>`,
+        }">${esc(l.label)}<span class="faint"> · ${l.round_count ?? 0} 轮</span></button>`,
     )
     .join('');
 
   const current = lines.find((l) => l.is_current);
+  // ★ 删除入口就放在**选择主线/平行线的地方**（用户 2026-10-13 的要求）：
+  //   以前只能去左边的会话列表删，而平行线在列表里跟主线**同名**，
+  //   用户根本认不出哪条是哪条（他实测就是这么找不到删除按钮的）。
+  //   现在平行线不再单独出现在列表里，删除只能在这里做 —— 所以必须有。
+  const canDelete = lines.length > 1;
   return `<div class="branch-bar" id="branch-bar">
     <span class="branch-label">🌿 世界线</span>
     <div class="branch-tabs">${tabs}</div>
     <span class="small faint" style="flex:1">
       ${b.can_branch
         ? '两条线各自独立：在这一条说话，另一条不会跟着变。'
-        : `最多 ${b.max} 条线（已用满）。想再分叉请先删掉一条。`}
+        : `最多 ${b.max} 条线（已用满）。想再分叉请先删掉一条（点右边的「删除这条线」）。`}
     </span>
+    ${
+      canDelete
+        ? `<button class="btn link small danger-link" data-act="branch-delete"
+             title="删除**当前这条**世界线（连同它的对话记录，无法恢复）。另一条线不受影响。">删除这条线</button>`
+        : ''
+    }
     <button class="btn link small" data-act="branch-rename"
       data-label="${esc(current?.label || '')}"
       title="给当前这条世界线改个名字（默认「主线」/「平行线」）">改名</button>
     <button class="btn link small" data-act="branch-off"
-      title="收起分支入口（两条线都不会被删除，仍可在左侧会话列表里找到）">关闭分支</button>
+      title="收起分支入口（两条线都不会被删除）">关闭分支</button>
   </div>`;
 }
 
@@ -1144,6 +1218,43 @@ async function forkFromMessage(root, signal, msg) {
   //   位置正好：新线复制到那条用户消息为止，这个气泡接在它后面。
   const bubble = appendMessage(root, { role: 'assistant', content: '', pending: true });
   await regenerateMessage(root, signal, null, bubble);
+}
+
+/** 删除**当前这条**世界线（另一条不受影响）。 */
+async function deleteBranchLine(root, signal) {
+  if (!state.sessionId) return;
+  const b = state.detail?.branch;
+  const lines = b?.lines || [];
+  const current = lines.find((l) => l.is_current);
+  if (lines.length < 2) {
+    // 只有一条线时不在这里删（那等于删整个会话，用左侧列表的删除更清楚）
+    return;
+  }
+  const other = lines.find((l) => !l.is_current);
+  const rounds = current?.round_count ?? 0;
+
+  // ★ 不可逆操作，必须问清楚：删哪条、另一条会怎样、能不能恢复。
+  const go = await confirmDialog({
+    title: `删除世界线「${current?.label || '这一条'}」`,
+    message:
+      `会删除「${current?.label || '这一条'}」以及它的全部对话记录（${rounds} 轮）。\n\n` +
+      `· **另一条线「${other?.label || '另一条'}」不受影响**，会接着保留；\n` +
+      `· 删除后会自动切到另一条线；\n` +
+      `· 删掉的对话记录**无法恢复**。`,
+    confirmText: '删除这条世界线',
+    danger: true,
+  });
+  if (!go) return;
+
+  try {
+    await api.del(`/narrative/sessions/${state.sessionId}`);
+    toastOk(`已删除「${current?.label || '这一条'}」，已切到另一条世界线`);
+    // 切到幸存的那条线：删掉的正是当前会话，只能换一个 id 打开
+    await openSession(root, other.id, signal);
+    await refreshSessions(root, signal);
+  } catch (err) {
+    toastErr(err.toDisplay ? err.toDisplay() : String(err));
+  }
 }
 
 /** 开启 / 关闭分支模式。 */
@@ -1542,7 +1653,7 @@ function renderChatPanel(root, detail) {
         <div class="small muted" id="chat-sub">
           ${pureChat ? '<span class="badge info">纯聊天</span> 无角色' : esc(detail.character_card?.name || '（角色卡已删除）')}
           · ${providerLine}
-          · 共 ${detail.message_count} 条 · 累计 ${detail.total_tokens} token
+          · ${detail.round_count ?? 0} 轮 · 累计 ${detail.total_tokens} token
         </div>
         <!-- ★ Token 统计：把「上一轮花了多少」摊开给用户看。
              reasoning_tokens 单独列出来，是因为推理模型可能把 88% 的输出配额
@@ -1599,6 +1710,7 @@ function renderChatPanel(root, detail) {
     <div class="messages" id="messages">${renderMessages(detail)}${
       pureChat ? '' : stateBarHTML(detail.state, detail.state_schema, lastRawState(detail))
     }</div>
+    ${pendingReplyHTML(detail)}
     <button class="btn sec sm scroll-bottom hidden" data-act="scroll-bottom">↓ 回到最新</button>
 
     <div class="composer">
@@ -1848,6 +1960,10 @@ function streamHandlers(root, bubble) {
     onError: (data) => {
       clearTranslating(bubble);
       failBubble(bubble, data);
+      // ★ 必须**再弹一次 toast**：失败气泡会在下面的 silentReload 里被服务端数据
+      //   重建掉，用户只看到"闪了一下就没了" —— 真实反馈就是"点了分支，AI 像没反应"。
+      //   全程没有任何提示时，用户只会以为功能坏了。
+      toastErr(data?.message || '生成失败');
     },
   };
 }
