@@ -37,6 +37,14 @@ class ProviderCreate(BaseModel):
         description="是否使用流式传输。★ 关掉后后端走非流式调用、整段一次性返回；"
         "开启但上游不支持流式时，效果会与关闭时相同（界面上的提醒写明了这一点）",
     )
+    store_reasoning: bool = Field(
+        default=True,
+        description="★ 是否把推理模型的**思考过程**存进库（默认开）。"
+        "开：思考随回复一起落库、界面可折叠回看（用来对比不同预设下的思考链路）；"
+        "关：回到以前的样子 —— 思考只在流式生成时显示一眼，不落库、刷新即消失。"
+        "★ 它与「思考强度」（generation.reasoning_effort）是两件事：那个管要不要向模型"
+        "要思考，这个只管存不存；关掉能显著省库（思考常占输出 80% 以上）。",
+    )
     is_default: bool = Field(default=False, description="是否设为默认模型")
     is_active: bool = Field(default=True, description="是否启用")
 
@@ -103,6 +111,10 @@ class ProviderUpdate(BaseModel):
         description="备用模型配置ID。★ 传 null 表示**解绑**（不自动切换）；不传该字段表示不修改",
     )
     stream_enabled: bool | None = None
+    store_reasoning: bool | None = Field(
+        default=None,
+        description="★ 是否把思考过程存进库（不传 = 不修改）。详见创建接口的说明",
+    )
     is_default: bool | None = None
     is_active: bool | None = None
 
@@ -156,6 +168,9 @@ class ProviderOut(BaseModel):
         default=None, description="备用模型配置ID（主模型失败且尚未输出内容时自动切换）"
     )
     stream_enabled: bool = Field(default=True, description="是否使用流式传输")
+    store_reasoning: bool = Field(
+        default=True, description="★ 是否把推理模型的思考过程存进库（默认开）"
+    )
 
     # ---------------- 连通性测试结果 ----------------
     last_tested_at: datetime | None = None

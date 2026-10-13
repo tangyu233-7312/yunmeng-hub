@@ -256,6 +256,15 @@ def ensure_schema() -> list[str]:
     #   只有真正要建表时才需要引擎。
     from app.db.mysql import get_engine
 
+    # ★★ 必须先确保所有模型都注册进 Base.metadata（2026-10-13 实测踩到）：
+    #   `plan_upgrade` 是拿模型的表和列去比对数据库的 —— 如果调用方没导入过模型包，
+    #   `Base.metadata` 里就**没有**这些表，于是规划出**空计划、一条都不补**，
+    #   而且既不报错也不告警（静默失效）。
+    #   真实启动路径（`app.main` → 各 router → models）本来就导入过，所以从没暴露；
+    #   但只要有人直接调 `ensure_schema()`（脚本 / 测试）就会悄悄什么都没做。
+    #   本项目最反对这种失败，所以在这里自己保证前提成立。
+    import app.db.models  # noqa: F401 - 只为触发模型注册
+
     settings = get_settings()
     if settings.is_sqlite:
         Path(settings.sqlite_file).parent.mkdir(parents=True, exist_ok=True)

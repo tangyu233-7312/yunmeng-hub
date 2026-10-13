@@ -1022,7 +1022,9 @@ def save_assistant_reply(
         # ★ 思考过程（2026-10-13）：推理模型的 reasoning_content 落库，
         #   这样"换个预设后模型的思考变了没有"可以回看、可以对比（见模型的列注释）。
         #   普通模型没有思考 ⇒ 存 NULL（而不是空字符串）。
-        reasoning=(reasoning or None),
+        #   ★ 是否落库由**模型配置里的开关**决定（默认开，见 should_store_reasoning）：
+        #     关掉就回到以前的样子 —— 思考只在流式时显示一眼、不落库。
+        reasoning=(reasoning or None) if should_store_reasoning(db, session) else None,
         # ★ 状态遥测：这一轮模型自称的状态与校验后落库的状态差在哪。
         #   必须在这里写（落库的唯一入口），事后无法从正文反推 —— `<state>` 已被剥掉。
         #   `required=False` 表示这一轮压根没要求输出状态块（纯聊天 / 卡没声明状态栏），
@@ -1175,7 +1177,10 @@ def stream_reply(
     except BaseException:
         # 调用中途失败：把已经生成的部分**保留下来**（用户至少看到了那些字），
         # 然后让异常继续往上抛，由接口层发 error 事件
-        if buffer:
+        # ★ 判据是"正文**或思考**有东西就留"（2026-10-13 改）：
+        #   推理模型常常先想很久、正文一个字都还没吐 —— 只看 buffer 的话，
+        #   这一轮会什么都不存，用户回来看到"自己那句话孤零零摆着"，思考一起没了。
+        if buffer or reasoning:
             _keep_partial(db, session, turn, "".join(buffer), reasoning, usage, started)
         else:
             touch_session(db, session)
@@ -1203,7 +1208,8 @@ def stream_reply(
             "usage": usage.to_dict() if usage else None,
             "reasoning_preview": "".join(reasoning)[:200],
         }
-        if buffer:
+        # ★ 同上：只想着、还没写正文也要留（否则用户看到的是"什么都没有"）
+        if buffer or reasoning:
             _keep_partial(db, session, turn, content, reasoning, usage, started)
         else:
             touch_session(db, session)
@@ -1282,6 +1288,21 @@ def stream_reply(
     }
 
 
+def should_store_reasoning(db: Session, session: NarrativeSession) -> bool:
+    """这条会话的模型配置**是否要把思考过程落库**（用户 2026-10-13 加的开关，默认开）。
+
+    ★ 判据放在"唯一的落库点"里自动生效，而不是让四个调用方各传一次：
+      漏传一个就会出现"这个入口存了、那个入口没存"的不一致 ——
+      而那正是这个项目最反对的"同一份数据两个口径"。
+    ★ 取不到配置时**默认开**：这是用户要的默认行为，而且思考丢了比多存一点更难补救。
+    """
+    provider_id = getattr(session, "llm_provider_id", None)
+    if provider_id is None:
+        return True
+    row = db.get(LLMProvider, provider_id)
+    return bool(getattr(row, "store_reasoning", True))
+
+
 def _interrupted_reasoning(reasoning_text: str) -> str | None:
     """被中断的那一轮，思考过程也要如实标注"到这里就断了"。
 
@@ -1296,6 +1317,30 @@ def _interrupted_reasoning(reasoning_text: str) -> str | None:
     if not text:
         return None
     return text + "\n\n……（本轮被中断：以上是中断前收到的全部思考）"
+
+
+#: 正文一个字都还没写出来、但思考已经有一堆时，用来当正文的那句占位。
+#  ★ 为什么需要占位，而不是"正文为空就整条不存"：
+#    推理模型**经常先想很久**（实测思考能占输出的 80% 以上），此时用户切走/中断，
+#    如果按"没正文就不存"，他回来看到的还是**自己那句话孤零零摆着** ——
+#    思考过程（他明确要看的东西）也跟着一起没了。
+#    用户 2026-10-13 报的正是这个："思考过程被中断没有提示你说的标注，
+#    又变成了孤零零的用户的最后一句话"。
+_ONLY_THINKING_PLACEHOLDER = "（这一轮只来得及思考，正文还没写出来）"
+
+
+def _interrupted_content(body: str, reasoning_text: str) -> str | None:
+    """中断时该往 `content` 里存什么：有正文存正文、只有思考就存占位、都没有就 None。
+
+    ★ 为什么"都没有"要返回 None：一个字都没产生时**不硬造空回复**，
+      界面会给「让 AI 写这条走向」的重试入口 —— 那才是那种情况下的"告诉用户"。
+    """
+    text = (body or "").strip()
+    if text:
+        return text + "\n\n……（回复中断）"
+    if (reasoning_text or "").strip():
+        return _ONLY_THINKING_PLACEHOLDER + "\n\n……（回复中断）"
+    return None
 
 
 def keep_interrupted_reply(
@@ -1337,14 +1382,15 @@ def keep_interrupted_reply(
     if str(last_role or "") == "assistant":
         return None  # 已经有回复落库了（生成器那边先存了），不能变成同一句话两条回复
     body = text.rstrip()
-    if not body:
-        return None  # 一个字都没写出来：不硬造一条空回复，界面会给重试入口
+    content = _interrupted_content(body, reasoning_text)
+    if content is None:
+        return None  # 正文和思考都一个字没有：不硬造空回复，界面会给重试入口
     return save_assistant_reply(
         db,
         session,
-        content=body + "\n\n……（回复中断）",
+        content=content,
         model_name=model_name,
-        token_count=estimate_tokens(body),
+        token_count=estimate_tokens(content),
         latency_ms=None,
         notes=notes,
         reasoning=_interrupted_reasoning(reasoning_text),
@@ -1379,7 +1425,10 @@ def _keep_partial(
     )
     if str(last_role or "") == "assistant":
         return
-    text = content + "\n\n……（回复中断）"
+    content = _interrupted_content(content, "".join(reasoning))
+    if content is None:
+        return  # 正文与思考都空：交给上层（界面会给重试入口）
+    text = content
     try:
         save_assistant_reply(
             db,

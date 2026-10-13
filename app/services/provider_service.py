@@ -165,6 +165,8 @@ def create_provider(db: Session, user_id: int, payload) -> LLMProvider:
             db, user_id, getattr(payload, "fallback_provider_id", None), self_id=None
         ),
         stream_enabled=bool(getattr(payload, "stream_enabled", True)),
+        # 用户 2026-10-13 要求：思考过程是否落库（默认开）
+        store_reasoning=bool(getattr(payload, "store_reasoning", True)),
         is_default=payload.is_default,
         is_active=payload.is_active,
     )
@@ -238,6 +240,8 @@ def update_provider(db: Session, user_id: int, provider_id: int, payload) -> LLM
         )
     if payload.stream_enabled is not None:
         row.stream_enabled = payload.stream_enabled
+    if getattr(payload, "store_reasoning", None) is not None:
+        row.store_reasoning = payload.store_reasoning
     if payload.is_default is not None:
         if payload.is_default:
             _clear_other_defaults(db, user_id, keep_id=row.id)
@@ -350,6 +354,8 @@ def serialize_provider(row: LLMProvider) -> dict:
         "is_active": row.is_active,
         "fallback_provider_id": row.fallback_provider_id,
         "stream_enabled": bool(row.stream_enabled),
+        # ★ 用 getattr 兜底：老库在自动补列之前读到的对象可能没有这个属性
+        "store_reasoning": bool(getattr(row, "store_reasoning", True)),
         "last_tested_at": row.last_tested_at,
         "last_test_ok": row.last_test_ok,
         "last_test_message": row.last_test_message,

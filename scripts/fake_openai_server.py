@@ -68,6 +68,8 @@ FAKE_ENGLISH_REPLY = (
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     delay: float = 0.12
+    #: 见 --reasoning：先推这段思考再推正文（默认空 = 不推）
+    reasoning: str = ""
 
     # ---------------- 路由 ----------------
     def do_GET(self) -> None:  # noqa: N802
@@ -163,6 +165,27 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         # 逐字推送。每个字一个包，这正是真实厂商流式返回的形态。
+        # ★ `--reasoning`（默认关）：先推一段**思考过程**（reasoning_content），
+        #   再推正文 —— 用于验收"思考过程落库/不落库"与"只想着、正文还没写就中断"
+        #   这两条路径（真模型才有思考，假模型默认不推，避免影响别的用例）。
+        if self.reasoning:
+            for char in self.reasoning:
+                send(
+                    {
+                        "id": "chatcmpl-fake",
+                        "object": "chat.completion.chunk",
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"reasoning_content": char},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                )
+                time.sleep(self.delay)
+
         for char in reply:
             send(
                 {
@@ -213,9 +236,16 @@ def main() -> None:
         default=0.12,
         help="每个字符之间的间隔秒数（调大更容易肉眼看出打字机效果）",
     )
+    parser.add_argument(
+        "--reasoning",
+        default="",
+        help="★ 先推这段思考过程（reasoning_content）再推正文；默认空 = 不推。"
+        "用于验收「思考过程落库/不落库」与「只想着、正文还没写就中断」两条路径。",
+    )
     args = parser.parse_args()
 
     Handler.delay = max(0.0, args.delay)
+    Handler.reasoning = args.reasoning
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"假 OpenAI 服务已启动: http://{args.host}:{args.port}/v1  (delay={Handler.delay}s)")
     print("在控制台里把 Base URL 填成上面这个地址、模型名填 fake-model 即可。")

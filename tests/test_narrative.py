@@ -1173,6 +1173,93 @@ def test_frontend_exposes_the_reasoning_panel() -> None:
     assert "var(--" in block, "折叠开关的样式要走主题变量"
 
 
+def test_interrupt_with_only_reasoning_still_saves_something(
+    client: TestClient, user: dict
+) -> None:
+    """★ 用户 2026-10-13 报的 bug：**推理模型先想很久、正文一个字还没吐**时切走。
+
+    表现是"思考过程被中断没有提示标注，又变成了孤零零的用户的最后一句话"。
+    根因：落库判据写的是"正文为空就不存"（`if not body: return None`），
+    而推理模型恰恰经常长时间只吐思考 —— 于是正文空、整条不存，
+    用户已经看到的思考也跟着一起没了。
+    现在必须留一条：正文用占位、思考带自己的中断标注。
+    """
+    from app.db.models import NarrativeSession as _S
+
+    card = make_card(client, user)
+    provider = make_provider(client, user)
+    session = make_session(client, user, card["id"], provider["id"])
+    with session_scope() as db:
+        engine.save_user_message(db, db.get(_S, session["id"]), "难题")
+
+    with session_scope() as db:
+        saved = engine.keep_interrupted_reply(
+            db, session["id"], text="", reasoning_text="我想了很久…", model_name="m"
+        )
+        assert saved is not None, "只想着、没正文，也必须留下东西（否则用户又看到一片空白）"
+        assert "只来得及思考" in saved.content, "正文该是一句如实的占位说明"
+        assert "（回复中断）" in saved.content
+        assert saved.reasoning and "我想了很久…" in saved.reasoning
+        assert "中断" in saved.reasoning
+
+    # 正文与思考**都**空时仍然不硬造（界面会给「让 AI 写这条走向」重试入口）
+    other = make_session(client, user, card["id"], provider["id"])
+    with session_scope() as db:
+        engine.save_user_message(db, db.get(_S, other["id"]), "再来")
+    with session_scope() as db:
+        assert engine.keep_interrupted_reply(db, other["id"], text="", reasoning_text="") is None
+
+
+def test_store_reasoning_switch_controls_persistence(client: TestClient, user: dict) -> None:
+    """★ 模型配置里的「思考过程输出」开关（默认开，用户 2026-10-13 要求）。
+
+    开 = 思考随回复落库（界面可折叠回看）；关 = 回到以前的样子
+    （**只在流式时显示一眼**、不落库）。★ 关键：关掉只是不存，
+    流式那条 `done` 事件里**照样要有**思考 —— 否则"之前的观感"都没了。
+    """
+    from app.llm.schema import StreamChunk as Chunk
+
+    original = FakeAdapter.stream_chat
+
+    def stream_with_reasoning(self, request):
+        yield Chunk(reasoning_delta="我在想…")
+        yield Chunk(delta="正文")
+        yield Chunk(finish_reason="stop", usage=TokenUsage(total_tokens=7))
+
+    FakeAdapter.stream_chat = stream_with_reasoning
+    try:
+        # ① 默认（不传这个字段）= 开 → 思考落库
+        card = make_card(client, user)
+        provider = make_provider(client, user)
+        assert provider["store_reasoning"] is True, "默认必须是开"
+        session = make_session(client, user, card["id"], provider["id"])
+        client.get(
+            f"{BASE}/{session['id']}/stream", params={"content": "问"}, headers=user["headers"]
+        )
+        detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+        assert detail["messages"][-1]["reasoning"] == "我在想…", "开着的时候要落库"
+
+        # ② 关掉 → 不落库，但流式事件里照样有思考
+        client.patch(
+            f"{PROVIDERS}/{provider['id']}",
+            json={"store_reasoning": False},
+            headers=user["headers"],
+        )
+        card2 = make_card(client, user)
+        session2 = make_session(client, user, card2["id"], provider["id"])
+        response = client.get(
+            f"{BASE}/{session2['id']}/stream", params={"content": "问"}, headers=user["headers"]
+        )
+        events = parse_sse(response.text)
+        assert dict(events)["done"]["reasoning"] == "我在想…", (
+            "关掉只影响'存不存'，流式期间的思考照样要发给前端（那才是以前的样子）"
+        )
+        detail2 = client.get(f"{BASE}/{session2['id']}", headers=user["headers"]).json()["data"]
+        assert detail2["messages"][-1]["reasoning"] is None, "关掉之后不许落库"
+    finally:
+        FakeAdapter.stream_chat = original
+
+
 def test_stream_reports_error_event_instead_of_silent_break(
     client: TestClient, user: dict
 ) -> None:

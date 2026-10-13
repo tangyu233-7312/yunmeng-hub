@@ -543,6 +543,22 @@ function openForm(root, existing) {
           这时开关的显示效果相同，属于上游行为，不是本控制台的问题（我们没法替上游保证）。
         </div>
         <div class="mt8">
+          ${checkboxField(
+            '思考过程输出（默认开启）',
+            'store_reasoning',
+            existing?.store_reasoning ?? true,
+          )}
+          <div class="hint">
+            ★ 只对**推理模型**有意义（普通模型不返回思考）。它与上面的「思考强度」是两件事：
+            那个决定**要不要向模型要思考**，这个只决定**要不要把思考存下来**。<br />
+            开：思考随回复一起落库，会话里每条回复上方会出现「💭 思考过程（N 字）」，
+            点一下展开 —— 这是用来对比<strong>换个提示词预设以后模型的思考变了没有</strong>
+            （预设会改思考链路，有的直接杀掉原生思考）。<br />
+            关：回到以前的样子，思考**只在生成过程中显示一眼**，不落库、刷新就没了。<br />
+            <span class="faint">关掉的现实理由：推理模型的思考常占输出的 80% 以上，落库会让消息表明显变大。</span>
+          </div>
+        </div>
+        <div class="mt8">
           <label class="field" style="display:block">
             <span>备用模型</span>
             <select name="fallback_provider_id" id="fallback-select">
@@ -675,6 +691,8 @@ function openForm(root, existing) {
       // ★ 每次都提交当前值：空串 = 解绑备用模型（后端用 model_fields_set 区分
       //   "传了 null"与"没传"，所以这里必须显式给 null，否则永远取消不掉）
       stream_enabled: v.stream_enabled,
+      // ★ 思考过程是否落库（默认开）：每次都提交当前值，与 stream_enabled 同理
+      store_reasoning: v.store_reasoning,
       fallback_provider_id: v.fallback_provider_id ? Number(v.fallback_provider_id) : null,
     };
     // 编辑时：留空表示"不修改密钥"，所以不把空串塞进去
