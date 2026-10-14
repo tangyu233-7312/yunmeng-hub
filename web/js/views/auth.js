@@ -99,24 +99,41 @@ export function renderAuth(root, { onLoggedIn }) {
       const label = which === 'mysql' ? 'MySQL 数据库'
         : which === 'sqlite' ? '本机文件（SQLite）' : '';
       if (!label) return;
-      const where = which === 'sqlite' ? '应用数据目录下的 <code>data/app.sqlite3</code>'
+      // ★★ 同一份前端会跑在**两种环境**里，而"怎么切回去"不一样，
+      //    所以必须分开说 —— 说错任何一边，用户都会按着找却找不到：
+      //    · **Electron 桌面壳**：窗口顶部的「数据」菜单里就有
+      //      「切换存储方式（本机文件 ↔ MySQL）…」（见 desktop/src/main.js 的 buildMenu）；
+      //    · **浏览器直接打开 /console/**：那个菜单**不存在**（它属于桌面壳），
+      //      只能改 .env 再重启后端。
+      //
+      //    ★ 我在这里犯过一次错（记在 docs/pitfalls.md §48）：
+      //      只在 `web/` 与 `app/` 里搜索、**漏了 `desktop/`**，于是把那个
+      //      真实存在的菜单判成"不存在的入口"，还顺手删掉了桌面端的正确指引。
+      //      教训：搜索范围要覆盖所有相关目录，宁可多搜一遍。
+      //
+      //    判据沿用 about.js / diagnostics.js 的既有做法（UA 里的 Electron），
+      //    不依赖 preload —— `window.yunmengSetup` 只在设置页可用。
+      const inDesktop = /Electron\/[\d.]+/.test(navigator.userAgent || '');
+      const where = which === 'sqlite'
+        ? (inDesktop
+          ? '桌面版的应用数据目录 <code>%APPDATA%\\云梦枢\\data\\</code>'
+          : '后端数据目录下的 <code>data/app.sqlite3</code>')
         : '你配置的 MySQL 实例';
-      // ★ 这里必须写**真实存在的切换方式**（改 .env + 重启）。
-      //   以前写的是"菜单「数据 → 切换存储方式…」可以切回去" —— 那个菜单
-      //   **在界面上根本不存在**，用户按着找只会更困惑（用户实测反馈：
-      //   "web 端并没有选择数据库的选项，只是提示选择了什么数据库"）。
-      //   指向一个不存在的入口，比不说更糟：他会以为自己漏看了某处。
-      //   ★ 真实机制见 app/core/config.py（HNE_DB_BACKEND；未设且填了
-      //     HNE_MYSQL_* 时推断为 mysql）与 docs/overview.md「快速上手」。
+      const switchHint = inDesktop
+        ? '在窗口顶部的「数据」菜单里点<b>切换存储方式（本机文件 ↔ MySQL）…</b>'
+        : '改项目根目录 <code>.env</code> 里的 <code>HNE_DB_BACKEND</code>'
+          + '（<code>sqlite</code> = 本机文件；<code>mysql</code> = MySQL，另需填好'
+          + ' <code>HNE_MYSQL_*</code>），存盘后<b>重启后端</b>生效';
       box.innerHTML = `
         <span class="auth-storage-tag">当前存储：${label}</span>
         <div class="auth-storage-hint">
-          ${where}。★ 两种存储是<b>两个互相独立的库</b>，数据与<b>账号都不互通</b> ——
-          如果你在用另一种存储时的账号在这里登录不上，多半是因为现在连的是另一个库。
-          切换方式：改项目根目录 <code>.env</code> 里的 <code>HNE_DB_BACKEND</code>
-          （<code>sqlite</code> = 本机文件；<code>mysql</code> = MySQL，另需填好
-          <code>HNE_MYSQL_*</code>），存盘后<b>重启后端</b>生效。
-          也可以在这里直接<b>注册</b>一个新账号。
+          ${where}。★ 登录不上通常是因为<b>看的不是同一份数据</b>，两种情形：
+          <br>① 换过存储方式（本机文件 ↔ MySQL）—— 那是<b>两个互相独立的库</b>，
+            数据与账号都不互通。${switchHint}。
+          <br>② <b>桌面版与浏览器是两套数据</b>：打包安装的桌面版把数据存在
+            <code>%APPDATA%\\云梦枢\\</code>，浏览器访问的是后端启动目录那一份，
+            两者账号同样不互通。${inDesktop ? '' : '（从桌面版切过来的话，回桌面版里登录即可。）'}
+          <br>也可以在这里直接<b>注册</b>一个新账号。
         </div>`;
       box.classList.remove('hidden');
     } catch {

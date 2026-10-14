@@ -46,28 +46,45 @@ def test_login_page_tells_which_storage_is_in_use() -> None:
     assert "MySQL 数据库" in src and "本机文件（SQLite）" in src
     assert "不互通" in src, "必须明确说清两边的数据与账号都不互通"
 
-    # ★★ 而且"怎么切回去"必须是**真实存在的机制**。
+    # ★★ "怎么切回去"必须**按运行环境分别给**，两边都要对。
     #
-    #   这条以前写的是 `assert "切换存储方式" in src` —— 它会因为一句
-    #   **指向不存在的菜单**的文案而通过（原文："菜单「数据 → 切换存储方式…
-    #   可以切回去"，而那个菜单在界面上根本不存在）。
-    #   用户实测反馈："web 端并没有选择数据库的选项，只是提示选择了什么数据库"。
+    #   ==================== 这条守着的两段历史 ====================
+    #   ① 最早写的是"菜单「数据 → 切换存储方式…」可以切回去"，
+    #      但**浏览器里没有那个菜单**（它属于 Electron 桌面壳）——
+    #      用户实测反馈："web 端并没有选择数据库的选项，只是提示选择了什么数据库"。
+    #   ② 我随后据"那个菜单不存在"把它删掉、只留 .env 那条路 ——
+    #      **删错了**：那个菜单在桌面版里**真实存在**
+    #      （desktop/src/main.js 的 buildMenu：「数据 → 切换存储方式（本机文件 ↔ MySQL）…」）。
+    #      根因是我的**搜索范围漏了 `desktop/`**，只搜了 web/ 与 app/。
     #
-    #   ⇒ 断言要盯"说的是不是真的"，不是"有没有提到这件事"。
-    #   ★ 但必须只看**用户可见的那段文案**（box.innerHTML 的模板串）：
-    #     第一版写成 `"菜单" not in src`（全文件），结果被我自己的**注释**
-    #     （解释当年那个坏文案）绊倒 —— 断言的对象选错了，就会假失败。
-    start = src.index("box.innerHTML = `")
-    end = src.index("`;", start)
-    visible = src[start:end]
-    assert "HNE_DB_BACKEND" in visible, (
-        "必须告诉用户真实的切换开关是 .env 里的 HNE_DB_BACKEND，"
-        "而不是一个界面上不存在的菜单"
+    #   ⇒ 正确的形态是**分支**：桌面壳给菜单（最省事），浏览器给 .env，
+    #     并且判据要用既有的 Electron 探测（UA），不依赖 preload。
+    #   ⇒ 断言也要**按分支**查：只看整段会两边都测不准。
+    assert "inDesktop" in src, "要按运行环境分支给切换方式（桌面壳 vs 浏览器）"
+    assert "/Electron\\/[\\d.]+/" in src, (
+        "桌面壳的判据要沿用 about.js / diagnostics.js 的 UA 探测（Electron）"
     )
-    assert "重启" in visible, "切换存储要重启后端才生效，这句话不能省"
-    assert "菜单" not in visible, (
-        "不许指向界面上不存在的菜单入口 —— 用户会以为自己漏看了某处"
+
+    # 桌面分支：必须给出那个真实存在的菜单
+    d_start = src.index("? '在窗口顶部的「数据」菜单里")
+    desktop_branch = src[d_start : src.index("\n", d_start)]
+    assert "切换存储方式" in desktop_branch and "菜单" in desktop_branch, (
+        "桌面壳里要指向真实存在的「数据 → 切换存储方式…」菜单"
+        "（desktop/src/main.js 的 buildMenu）"
     )
+
+    # 浏览器分支：**不许**提菜单（那里没有），必须给 .env + 重启
+    b_start = src.index(": '改项目根目录 <code>.env</code>")
+    b_end = src.index(";", src.index("重启后端</b>生效", b_start))
+    browser_branch = src[b_start:b_end]
+    assert "HNE_DB_BACKEND" in browser_branch, "浏览器里必须给出 .env 的开关"
+    assert "重启" in browser_branch, "切换存储要重启后端才生效，这句不能省"
+    assert "菜单" not in browser_branch, (
+        "浏览器里没有那个菜单 —— 在这条分支里提菜单就是指向不存在的入口"
+    )
+
+    # 还要说明"桌面版与浏览器是两套数据"（用户实际踩到的那个坑）
+    assert "桌面版与浏览器" in src, "要说明桌面版与浏览器的数据是两套、账号不互通"
 
 
 def test_login_page_storage_hint_never_blocks_login() -> None:
