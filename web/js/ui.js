@@ -131,11 +131,14 @@ export function confirmDialog({
   message,
   confirmText = '确定',
   danger = false,
+  // ★ 某些确认框的内容较长（例如"换存储路径会看到空库"要写清后果），
+  //   窄框里会挤成一团。默认仍是 narrow，与既有调用方行为一致。
+  width = 'narrow',
 } = {}) {
   return new Promise((resolve) => {
     const m = modal({
       title,
-      width: 'narrow',
+      width,
       bodyHTML: `<div>${esc(message)}</div>`,
       footHTML: `
         <button class="btn sec" data-cancel>取消</button>

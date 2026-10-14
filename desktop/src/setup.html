@@ -157,6 +157,11 @@
         <div class="grid" id="secret-grid"></div>
       </fieldset>
 
+      <fieldset>
+        <legend>数据目录（可以留空）</legend>
+        <div class="grid" id="datadir-grid"></div>
+      </fieldset>
+
       <details>
         <summary>高级选项（一般不用改）</summary>
         <div class="grid" id="advanced-grid"></div>
@@ -225,6 +230,7 @@
     mysqlGrid: document.getElementById('mysql-grid'),
     mysqlFieldset: document.getElementById('mysql-fieldset'),
     secretGrid: document.getElementById('secret-grid'),
+    dataDirGrid: document.getElementById('datadir-grid'),
     advancedGrid: document.getElementById('advanced-grid'),
     status: document.getElementById('status'),
     test: document.getElementById('btn-test'),
@@ -568,6 +574,9 @@
       if (field.advanced) buildField(field, el.advancedGrid);
       else if (field.key === 'HNE_SECRET_KEY' || field.key === 'HNE_API_KEY_ENCRYPTION_KEY') buildField(field, el.secretGrid);
       else if (field.key === 'HNE_DB_BACKEND') buildField(field, el.storageGrid);
+      // ★ 数据目录与存储方式无关（两种后端都用它），所以**不能**落进 mysqlGrid ——
+      //   那一组在选「本机文件」时整组隐藏，用户就再也填不到它了。
+      else if (field.dirOnly) buildField(field, el.dataDirGrid);
       else buildField(field, el.mysqlGrid);
     }
 

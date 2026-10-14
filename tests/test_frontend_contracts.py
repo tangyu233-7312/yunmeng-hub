@@ -66,25 +66,122 @@ def test_login_page_tells_which_storage_is_in_use() -> None:
     )
 
     # 桌面分支：必须给出那个真实存在的菜单
-    d_start = src.index("? '在窗口顶部的「数据」菜单里")
-    desktop_branch = src[d_start : src.index("\n", d_start)]
-    assert "切换存储方式" in desktop_branch and "菜单" in desktop_branch, (
+    assert "「数据 → 切换存储方式…」" in src, (
         "桌面壳里要指向真实存在的「数据 → 切换存储方式…」菜单"
         "（desktop/src/main.js 的 buildMenu）"
     )
 
-    # 浏览器分支：**不许**提菜单（那里没有），必须给 .env + 重启
-    b_start = src.index(": '改项目根目录 <code>.env</code>")
-    b_end = src.index(";", src.index("重启后端</b>生效", b_start))
-    browser_branch = src[b_start:b_end]
-    assert "HNE_DB_BACKEND" in browser_branch, "浏览器里必须给出 .env 的开关"
-    assert "重启" in browser_branch, "切换存储要重启后端才生效，这句不能省"
+    # 浏览器分支：**不许**提菜单（那里没有），要指向**真实存在**的入口。
+    #
+    #   ★ 这一条改过两次，每次都是"指向了不存在的东西"：
+    #     ① 最早指"菜单「数据 → 切换存储方式…」" —— 浏览器里没有那个菜单；
+    #     ② 中间改成"自己去改 .env 并重启" —— 指向的是**文件路径**，
+    #        用户得自己找到文件、还得会重启服务（门槛过高，用户实测反馈过）；
+    #     ③ 现在：浏览器端真的有了「存储设置」页（web/js/views/storage.js +
+    #        index.html 的 data-route="storage"），所以这里指它，
+    #        并且断言"它确实存在" —— 否则又是一句指向空气的文案。
+    b_start = src.index("const howToSwitch = inDesktop")
+    # ★ 只取**浏览器那一条分支**：从 `: '` 开始切。
+    #   第一版整段取，把桌面分支的"顶层菜单…"也算了进去，于是假失败
+    #   （断言"浏览器分支不许提菜单"，实际读到的是桌面分支的文案）。
+    b_branch_start = src.index(": '", b_start)
+    browser_branch = src[b_branch_start : src.index("box.innerHTML", b_start)]
+    assert "存储设置" in browser_branch, "浏览器里要指向真实存在的「存储设置」页"
     assert "菜单" not in browser_branch, (
         "浏览器里没有那个菜单 —— 在这条分支里提菜单就是指向不存在的入口"
     )
 
-    # 还要说明"桌面版与浏览器是两套数据"（用户实际踩到的那个坑）
-    assert "桌面版与浏览器" in src, "要说明桌面版与浏览器的数据是两套、账号不互通"
+    # ★ 而且那个入口必须真的存在（导航项 + 路由注册 + 视图文件），
+    #   否则文案就是空头支票。这一条把"文案"与"实现"钉在一起。
+    index_html = _read(REPO / "web" / "index.html")
+    app_js = _read(REPO / "web" / "js" / "app.js")
+    assert 'data-route="storage"' in index_html, "导航里要有「存储设置」这一项"
+    assert "renderStorage" in app_js and "storage:" in app_js, "路由表里要注册 storage"
+    assert (REPO / "web" / "js" / "views" / "storage.js").is_file(), "视图文件要存在"
+
+
+def test_login_page_has_its_own_storage_entry() -> None:
+    """★★★ 登录页必须**自己**有一个「存储设置」入口（不能只指顶栏导航）。
+
+    ==================== 这条守着我刚犯的一个错 ====================
+    上一版我在登录页写了"点顶部导航的「存储设置」"，而顶栏是
+    `topbar.hidden = !loggedIn` —— **登录后才存在**。于是那句文案指向了
+    用户当时根本看不到的东西（和 pitfalls §48 是同一类错误）。
+
+    更糟的是它形成了一个**死锁**：用户的真实困境是"登录不上，因为连错了库"，
+    而那正是他需要这个入口的时刻；要登录才看得到的入口，在这种时刻毫无用处。
+
+    所以判据分三层：
+      ① 登录页模板里必须有那个按钮；
+      ② 它必须真的绑定到一个打开弹窗的动作；
+      ③ 后端那个接口必须**不要求登录**（否则按钮点了也是 401，等于没修）。
+    """
+    src = _read(AUTH_JS)
+    assert 'id="btn-storage"' in src, "登录页要有「存储设置…」按钮"
+    assert "openStorageDialog" in src, "按钮要真的打开存储设置弹窗（不能只是个摆设）"
+
+    # 文案不许再指向"顶部导航"（那是登录后才有的）
+    assert "点顶部导航的" not in src, (
+        "登录页文案不能指向顶栏导航 —— 顶栏是登录后才显示的（app.js 的 showChrome）"
+    )
+
+    # ③ 后端接口必须允许匿名访问 —— 与上面那条前端文案是**同一个决定**的两面，
+    #    任何一边单独改回去都会让"登不上时自救"这条路径重新断掉。
+    api_src = _read(REPO / "app" / "api" / "v1" / "storage.py")
+    assert "CurrentUser" not in api_src, (
+        "存储接口一旦重新要求登录，登录页那个按钮就变成 401 的死路 —— "
+        "它必须保持登录前可用（改用本机来源 + Host 校验 + 自定义头三道闸）"
+    )
+    assert "_guard(" in api_src, "三道闸必须还在（去掉登录不等于不设防）"
+
+    # ★★ 卡片正文必须**按当前后端分支**，不能写成环境无关的恒真断言。
+    #
+    #   ==================== 这条守着一个写错过的恒真说法 ====================
+    #   早先这里一律写"桌面版与浏览器是两套数据、账号不互通"。
+    #   实测（两端 .env 对比 + 库内密文解密）证明那句**不成立**：
+    #   两端都指向同一个 MySQL 实例与库名时，账号与会话**就是互通的**，
+    #   说成"两套"会把用户误导去重新注册一个账号。
+    #   ⇒ 正确形态：MySQL 分支说"同一份数据（同实例同库名时互通）"，
+    #     SQLite 分支才说"各有一份、天然不互通"。
+    sharing_start = src.index("const sharing = which === 'mysql'")
+    sharing_block = src[sharing_start : src.index("const howToSwitch", sharing_start)]
+    assert "同一份数据" in sharing_block, (
+        "MySQL 是服务端：两端连同一实例与库名时，必须说成**同一份数据**（账号互通）"
+    )
+    assert "各有一份" in sharing_block, (
+        "本机文件（SQLite）才是各端一份 —— 这条分支不能说成'也是同一份'"
+    )
+    assert "不互通" in sharing_block, (
+        "但要写清**什么情况下**才不互通（连的实例/库名不同、或各指一个本地文件）"
+    )
+    assert "两套数据" not in sharing_block, (
+        "渲染给用户的那段不能出现'两套数据' —— 这句在共享 MySQL 时是错的"
+        "（注释里作为历史叙述可以留，所以这里只查渲染文本所在的这一段）"
+    )
+
+    # ★★ 登录页必须**短**：技术细节不许再堆回来。
+    #
+    #   ==================== 这条守着一个"塞太满"的教训 ====================
+    #   上一版把三件事（共享机制 / 向量库路径 / 怎么切）全塞进这张卡片，
+    #   用户看到的是一大段技术说明、还带着 `HNE_CHROMA_PERSIST_DIR` 这种内部键名，
+    #   结论是"门槛是不是有点高，能不能说简单点"。
+    #   ⇒ 判据：登录页**渲染出来的那段**不许出现内部键名，只回答
+    #     "我现在用的是什么 + 去哪改"。★ 只查 `box.innerHTML` 里那个模板
+    #     （注释里作为历史叙述提到键名是允许的，否则等于禁止我写下这段教训）。
+    tpl_start = src.index("box.innerHTML = `", src.index("const howToSwitch"))
+    hint_block = src[tpl_start : src.index("box.classList.remove", tpl_start)]
+    for forbidden in ("HNE_CHROMA_PERSIST_DIR", "HNE_DB_BACKEND", "HNE_MYSQL_"):
+        assert forbidden not in hint_block, (
+            f"登录页提示里不该出现内部键名 {forbidden} —— 细节放到「存储设置」/「关于」页"
+        )
+    # 细节挪走之后，仍然要留下"去哪改"这一步（否则用户又不知道点哪里）。
+    # ★ 渲染模板里是 `${howToSwitch}` 插值，所以判据落在**两条分支的取值**上，
+    #   而不是模板字面量本身（第一版在模板里找"存储设置"，必然找不到）。
+    assert "${howToSwitch}" in hint_block, "模板里要真的把『去哪改』渲染出来"
+    branch_block = src[src.index("const howToSwitch"):tpl_start]
+    assert "存储设置" in branch_block and "切换存储方式" in branch_block, (
+        "两条分支各自给出真实存在的入口（浏览器→存储设置页；桌面壳→数据菜单）"
+    )
 
 
 def test_login_page_storage_hint_never_blocks_login() -> None:
@@ -95,10 +192,12 @@ def test_login_page_storage_hint_never_blocks_login() -> None:
       后者在 HTML 里先出现一次，从那里切片会把逻辑段切掉一半（第一版就这么错了）。
     """
     src = _read(AUTH_JS)
-    # ★ 从 IIFE 开头切到下一个函数边界（`tabs.forEach`）—— 锚点要包含 `try {`。
-    #   第一版从 `fetch('/health'` 开始切，而 `try {` 在它**之前**，于是假失败。
-    start = src.index("(async () => {\n    const box = $('#auth-storage-note', root);")
-    end = src.index("tabs.forEach", start)
+    # ★ 锚点是那个**具名函数**（`refreshStorageNote`）到下一个边界。
+    #   第一版锚在 `(async () => {` 上 —— 后来为了让"保存后能重刷提示"把它
+    #   改成具名函数，锚点就失效了（ValueError）。锚点要选**稳定的语义边界**，
+    #   而不是当时那种写法。
+    start = src.index("async function refreshStorageNote()")
+    end = src.index("refreshStorageNote();", start)
     block = src[start:end]
     assert "try {" in block and "catch" in block, "取 /health 必须包在 try/catch 里"
     # catch 里不许 toastErr（那会在登录页弹一个与登录无关的红条）

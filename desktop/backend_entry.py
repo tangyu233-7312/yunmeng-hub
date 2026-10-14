@@ -134,6 +134,10 @@ def configure_environment(args: argparse.Namespace) -> dict[str, str]:
             print(f"[backend] 配置来源 {env_file}（不存在或没有可读的键，沿用环境变量/默认值）",
                   flush=True)
 
+    # ★★ 用户有没有**显式**设过数据根 —— 必须在任何 set_env 之前取，
+    #   否则后面读到的是我们自己刚写进去的值（条件会恒真/恒假，又是静默失效）。
+    user_set_data_root = bool(os.environ.get("HNE_DATA_DIR", "").strip())
+
     if args.data_dir:
         # ★★ 这里有一个**名字与语义的坑**，是本轮打包验收实测抓到的：
         #
@@ -150,14 +154,47 @@ def configure_environment(args: argparse.Namespace) -> dict[str, str]:
         #   当契约来验的时候才会发现。
         #
         #   修法：把 `--data-dir` 明确解释成"userData 下的数据目录"，数据根取它的父级。
+        #
+        # ★★ 2026-10-14 补：这一组必须**尊重用户在 `.env` 里的显式选择**。
+        #   原来用 `set_env()` 无条件覆盖，于是"向导/`.env` 里填了数据目录"会被
+        #   壳传进来的 `--data-dir` **静默盖掉** —— 用户改了、界面也保存成功了，
+        #   实际却还用旧位置，且**不报任何错**（本项目最怕的那类失效）。
+        #   现在改成：`.env`/进程环境里已经有的值**优先**（上面 `_load_env_file`
+        #   已按 setdefault 读进 os.environ），没有才用 `--data-dir` 推出来的默认值。
+        #   这与 `databaseEnvDefaults`（desktop/src/backend-config.js）的逐键规则一致：
+        #   用户显式设过的不碰，其余才给默认。
         data_dir = Path(args.data_dir).resolve()
         data_root = data_dir.parent
-        set_env("HNE_DATA_DIR", str(data_root))
-        # 向量库实体（长期记忆）—— 显式给出，不依赖后端拼相对路径
-        set_env("HNE_CHROMA_PERSIST_DIR", str(data_dir / "chroma"))
+        user_data_root = os.environ.get("HNE_DATA_DIR", "").strip()
+        if not user_data_root:
+            set_env("HNE_DATA_DIR", str(data_root))
+        else:
+            applied["HNE_DATA_DIR(沿用用户配置)"] = user_data_root
+        # ★★ 派生路径（向量库 / 日志）的默认值必须跟着**生效的数据根**走。
+        #   这里踩过一个会静默放错地方的问题：用户把 `HNE_DATA_DIR` 改到 D 盘后，
+        #   若仍按壳传进来的 `<userData>\data\chroma` 去给向量库默认值，
+        #   就会出现"库在一个盘、长期记忆在另一个盘"——功能上能跑、不报错，
+        #   但用户搬数据时只会搬走一半。
+        #   规则：
+        #     · 用户显式写过该项 → 一切照旧（原样保留）；
+        #     · 用户改过数据根、但没写该项 → **不注入**，让后端按
+        #       `<数据根>/data/chroma`、`<数据根>/data/logs` 自己推（config.py 的默认值
+        #       就是相对的 `./data/chroma` / `./data/logs`，以数据根为基准）；
+        #     · 用户没动数据根（桌面版默认路径）→ 维持原来的显式注入，行为一字不变。
+        if not os.environ.get("HNE_CHROMA_PERSIST_DIR", "").strip():
+            if not user_data_root:
+                set_env("HNE_CHROMA_PERSIST_DIR", str(data_dir / "chroma"))
+            # else：交给后端按新的数据根推导，别在这里写死旧路径
+        else:
+            applied["HNE_CHROMA_PERSIST_DIR(沿用用户配置)"] = os.environ["HNE_CHROMA_PERSIST_DIR"]
 
     if args.log_dir:
-        set_env("HNE_LOG_DIR", str(Path(args.log_dir).resolve()))
+        # ★ 同样尊重用户显式配置（否则"我的日志怎么不在这"会变成又一个静默失效）；
+        #   用户改过数据根时也不写死，交给后端按新数据根推导。
+        #   ★ 这里用 `user_set_data_root`（在任何 set_env 之前取的），
+        #     不能现读 `os.environ` —— 上面刚把默认值写进去，读出来恒为真。
+        if not os.environ.get("HNE_LOG_DIR", "").strip() and not user_set_data_root:
+            set_env("HNE_LOG_DIR", str(Path(args.log_dir).resolve()))
 
     if args.host:
         set_env("HNE_HOST", args.host)

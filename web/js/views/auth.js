@@ -4,6 +4,9 @@
 
 import { auth } from 'hne/api';
 import { $, mount, toastErr, toastOk } from 'hne/ui';
+// ★ 登录页也要能改存储（"登录不上是因为连错了库"这条必须能当场自救），
+//   所以直接复用「存储设置」页那一份实现，不另写一套表单。
+import { openStorageDialog } from 'hne/storage';
 
 export function renderAuth(root, { onLoggedIn }) {
   mount(
@@ -27,6 +30,13 @@ export function renderAuth(root, { onLoggedIn }) {
              账号都不互通，切过去就得在新库里重新注册。
              这一块把"你现在连的是哪个库"直接写在登录页上，让那种误会不再发生。 -->
         <div id="auth-storage-note" class="auth-storage-note hidden"></div>
+
+        <!-- ★★ 「存储设置」入口 —— **登录前**必须也能打开。
+             用户的真实困境是"登录不上，因为连错了库"：那时他还没有令牌，
+             进不去顶栏那个入口。所以按钮放在这里，且它能直接改存储。 -->
+        <div class="mt14 center">
+          <button type="button" class="ghost-btn" id="btn-storage">存储设置…</button>
+        </div>
 
         <div class="auth-tabs">
           <button data-tab="login" class="active">登录</button>
@@ -87,7 +97,9 @@ export function renderAuth(root, { onLoggedIn }) {
   //
   //   ★ 失败就**静默隐藏**：这段提示只是"锦上添花"，绝不能让 /health 探不通
   //     影响到登录本身（登录用的是另一个请求）。
-  (async () => {
+  // ★ 抽成一个具名函数（而不是立即执行的匿名 IIFE）：因为**保存存储之后要重刷它** ——
+  //   否则用户刚把库从 MySQL 切到本机文件，这句提示还写着"当前存储：MySQL"。
+  async function refreshStorageNote() {
     const box = $('#auth-storage-note', root);
     if (!box) return;
     try {
@@ -119,27 +131,68 @@ export function renderAuth(root, { onLoggedIn }) {
           ? '桌面版的应用数据目录 <code>%APPDATA%\\云梦枢\\data\\</code>'
           : '后端数据目录下的 <code>data/app.sqlite3</code>')
         : '你配置的 MySQL 实例';
-      const switchHint = inDesktop
-        ? '在窗口顶部的「数据」菜单里点<b>切换存储方式（本机文件 ↔ MySQL）…</b>'
-        : '改项目根目录 <code>.env</code> 里的 <code>HNE_DB_BACKEND</code>'
-          + '（<code>sqlite</code> = 本机文件；<code>mysql</code> = MySQL，另需填好'
-          + ' <code>HNE_MYSQL_*</code>），存盘后<b>重启后端</b>生效';
+
+      // ★★ 卡片正文必须按**当前后端**分两种说法。
+      //
+      //   ==================== 这条守着一个我写错过的恒真断言 ====================
+      //   早先这里一律写"**桌面版与浏览器是两套数据**、账号不互通"。
+      //   那句话只在"两端没指向同一份库"时才成立：
+      //     · MySQL 是**服务端** —— 桌面版与浏览器只要连同一个实例、同一个库名，
+      //       看到的**就是同一份数据**，账号与会话都互通；
+      //       说成"两套"会把用户误导去重新注册一个账号。
+      //     · 本机文件（SQLite）才是**各端一份**，天然不互通。
+      //   ⇒ 判据就是 `which`（已经从 /health 拿到），不要写成环境无关的一句话。
+      const sharing = which === 'mysql'
+        ? '桌面版连的是<b>同一份数据</b>，账号通用。'
+        : '它是<b>本地文件</b>：桌面版与浏览器<b>各有一份</b>，账号不互通。';
+
+      // ★★ 这一段是**压缩过的**，别再往里堆技术细节。
+      //
+      //   教训：第一版把三件事（共享机制 / 向量库路径 / 怎么切）全塞进登录页，
+      //   用户看到的是"一大段技术说明，还带着 HNE_CHROMA_PERSIST_DIR 这种键名"，
+      //   既看不懂、也不知道该点哪里。登录页只该回答一件事：**我现在用的是哪种存储**。
+      //   细节与操作入口都移到「关于」与「存储设置」页（那里有上下文、能放表格）。
+      //
+      //   ★ 浏览器端**指向真实存在的入口**（导航里的「存储设置」），
+      //     桌面壳里则指向它自己的菜单 —— 两边入口不同，说错就是指向不存在的地方
+      //     （这个错本项目犯过，见 docs/pitfalls.md §48）。
+      const howToSwitch = inDesktop
+        ? '想换存储方式？顶部菜单「数据 → 切换存储方式…」。'
+        : '想换存储方式？点下面的<b>「存储设置…」</b>按钮。';
+
       box.innerHTML = `
         <span class="auth-storage-tag">当前存储：${label}</span>
         <div class="auth-storage-hint">
-          ${where}。★ 登录不上通常是因为<b>看的不是同一份数据</b>，两种情形：
-          <br>① 换过存储方式（本机文件 ↔ MySQL）—— 那是<b>两个互相独立的库</b>，
-            数据与账号都不互通。${switchHint}。
-          <br>② <b>桌面版与浏览器是两套数据</b>：打包安装的桌面版把数据存在
-            <code>%APPDATA%\\云梦枢\\</code>，浏览器访问的是后端启动目录那一份，
-            两者账号同样不互通。${inDesktop ? '' : '（从桌面版切过来的话，回桌面版里登录即可。）'}
-          <br>也可以在这里直接<b>注册</b>一个新账号。
+          ${where}。${sharing}
+          <br>${howToSwitch}
         </div>`;
       box.classList.remove('hidden');
     } catch {
       /* 探不到就什么都不显示：这段只是提示，不该影响登录 */
     }
-  })();
+  }
+
+  refreshStorageNote();
+
+  // ★★ 登录页上的「存储设置…」按钮（**登录前**可用）。
+  //
+  //   为什么放在这里而不是只放顶栏：用户的真实困境是
+  //   "**登录不上**，因为连错了库" —— 那时他还没登录、顶栏是隐藏的
+  //   （见 app.js 的 showChrome：`topbar.hidden = !loggedIn`），
+  //   只放顶栏等于"要登得上才能修登不上"。
+  //
+  //   ★ 保存成功后要**重刷那段提示**：否则用户刚切完库，
+  //     上面还写着"当前存储：MySQL 数据库"，自相矛盾。
+  const storageBtn = $('#btn-storage', root);
+  if (storageBtn) {
+    storageBtn.addEventListener('click', () => {
+      openStorageDialog({
+        onSaved: () => {
+          refreshStorageNote();
+        },
+      });
+    });
+  }
 
   tabs.forEach((tab) => {
     tab.addEventListener('click', () => {

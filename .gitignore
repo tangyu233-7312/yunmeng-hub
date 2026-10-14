@@ -74,6 +74,19 @@ data/exports/
 #   密钥绝不能进版本库，所以整个目录忽略掉。
 .pytest-data/
 
+# ★★ 运行时自动生成的本机密钥 / 路径历史（**绝不进版本库**）。
+#   `config/` 是"数据根目录"下的配置层，后端会自动往里写：
+#     · `config/.secrets.env`            —— JWT 密钥 + Fernet 密钥（泄露=可伪造登录/解 API Key）
+#     · `config/sqlite-path-history.json` —— 存储设置用过的本机路径（**含用户名与盘符**）
+#
+#   ★ 实测踩到（就是加"路径历史"功能那轮）：这个目录**当时没被忽略**，
+#     于是 `git status` 里直接躺着一个未跟踪的 `config/`，
+#     里面是本机绝对路径 —— 一次 `git add -A` 就会把它推上公开仓库。
+#     它没匹配上面任何一条：不是 .env、不是 *.sqlite3、也不是 .pytest-data/。
+#   ★ 只忽略根目录这一层（带前导斜杠）：`desktop/` 等子目录里如果有同名的
+#     源码级 config/ 不该被连带忽略（同 build/ 那条的教训）。
+/config/
+
 # 探针/脚本跑出来的报告与截图（随时可重新生成，不必进版本库）
 # ★ 用通配而不是逐个列文件名：以前是逐个列的，于是**每次新增一个脚本产出就要回来补一行**，
 #   漏掉的那些（benchmark_report / token_accuracy_report / ui_nebula_*.png …）
@@ -109,6 +122,16 @@ docs/ai-session-rules.md
 *.bundle
 
 # ---------- 本地/个人产物（绝不进公开仓库）----------
+# ★ 用户自己写的**本机启动脚本**：里面写着本机绝对路径
+#   （`cd E:\VSCode\hetero-narrative-engine` + `.\.venv\Scripts\python.exe …`），
+#   属于"这台机器怎么跑"而不是"这个项目是什么"。docs/dev-notes 里早就把这
+#   列为待办隐患：它们一直以未跟踪状态出现在 `git status` 里，
+#   谁图省事跑一次 `git add -A` 就会把本机路径推上公开仓库。
+#   ★ 这两个名字是中文，gitignore 支持，但要**逐行写清楚**（不用通配，
+#     免得哪天误伤真要提交的同名文件）。
+启动方式.txt
+启动程序.bat
+
 # ★ .dsh-drop/ 是"丢给 AI 的文件"暂存目录（截图、设计稿等个人痕迹），
 #   2026-10-03 审计发现有文件**已经被跟踪过**：已 git rm --cached 取消跟踪
 #   （磁盘文件保留，备份在仓库外的 hetero-narrative-engine-backup-*/）。

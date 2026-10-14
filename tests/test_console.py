@@ -201,8 +201,11 @@ def test_console_module_urls_are_versioned(client: TestClient) -> None:
         # ★ 加进来时这条断言果然先红了 —— 它拦住了"新增模块忘了登记 importmap"
         #   （那会让页面白屏），说明这条守卫生效。
         "hne/diagnostics",
-        "hne/about",
-    }
+         "hne/about",
+         # 第三十一轮新增：「存储设置」页（浏览器端也能换数据库）。
+         # ★ 又一次被这条断言拦下 —— 它就是在守"新增模块必须登记 importmap"。
+         "hne/storage",
+     }
     versions = set()
     for bare, url in imports.items():
         assert bare.startswith("hne/"), bare

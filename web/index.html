@@ -43,7 +43,8 @@
         "hne/chat": "/console/js/views/chat.js?v=__WEB_VERSION__",
         "hne/plugins": "/console/js/views/plugins.js?v=__WEB_VERSION__",
         "hne/providers": "/console/js/views/providers.js?v=__WEB_VERSION__",
-        "hne/presets": "/console/js/views/presets.js?v=__WEB_VERSION__"
+        "hne/presets": "/console/js/views/presets.js?v=__WEB_VERSION__",
+        "hne/storage": "/console/js/views/storage.js?v=__WEB_VERSION__"
       }
     }
   </script>
@@ -87,6 +88,10 @@
       <button class="nav-item" data-route="cards">角色卡</button>
       <button class="nav-item" data-route="books">世界书</button>
       <button class="nav-item" data-route="plugins">插件</button>
+      <!-- ★ 「存储设置」= 浏览器端的"切换存储方式"。
+           之前只有桌面壳有那个菜单，浏览器端只能自己找 .env 改 —— 用户实测反馈过
+           "web 端并没有选择数据库的选项"。放在导航里是为了**能被找到**。 -->
+      <button class="nav-item" data-route="storage">存储设置</button>
     </nav>
 
     <div class="topbar-right">

@@ -103,8 +103,15 @@ test('★ 用户自己设过 HNE_DATA_DIR 时不覆盖它（逐键判断）', ()
     baseEnv: {},
   });
   assert.equal(env.HNE_DATA_DIR, undefined);
-  // 数据目录由用户定，但库文件路径我们仍可以给（在他自己的目录下）
-  assert.equal(env.HNE_SQLITE_PATH, path.join('C:/userData', 'data', 'app.sqlite3'));
+  // ★★ `HNE_SQLITE_PATH` 也必须**一起不注入**。
+  //   原来这条期望的是 `C:/userData/data/app.sqlite3`（即"壳的目录"），
+  //   但那样会造出**裂脑**：用户把数据根指到 E 盘后，
+  //     库文件仍在 C:/userData（因为被显式注入了绝对路径），
+  //     而向量库/密钥/日志却在 E:/my-own-data（它们跟数据根走）。
+  //   用户搬家时只会搬走一半，而且**不报任何错**。
+  //   不注入的话，后端会按 `<数据根>/data/app.sqlite3` 自己推 —— 全部落在 E 盘。
+  assert.equal(env.HNE_SQLITE_PATH, undefined,
+    '用户自己定了数据根时，库文件路径要交给后端按该数据根推导，不能按壳的目录注入');
 });
 
 test('★ 真实进程环境里的显式设置同样优先（临时用环境变量试一个值不会被悄悄忽略）', () => {

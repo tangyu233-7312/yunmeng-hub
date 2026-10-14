@@ -1457,6 +1457,11 @@ function registerIpc() {
         // ★ 只有选了 MySQL 才需要填、才参与校验的字段（见 setup.html 的
         //   syncDatabaseFields 与 setup-config.js 的 validateValues）。
         dbOnly: Boolean(f.dbOnly),
+        // ★★ 与存储方式**无关**、但需要单独分组的字段（目前只有「数据目录」）。
+        //   必须在 IPC 契约里显式带出去：`buildField` 的分组判断读的就是它，
+        //   漏了它就会掉进 mysqlGrid、被"选本机文件时整组隐藏"连累。
+        //   （同类教训见下面 `generatable` 那段：函数/新属性过不了 IPC 边界。）
+        dirOnly: Boolean(f.dirOnly),
         default: f.default,
         // ★★ 这里踩过一个真 bug（用户实测抓到）：第一版发的是
         //   `generate: typeof f.generate === 'function' ? f.key : null` —— 字符串，

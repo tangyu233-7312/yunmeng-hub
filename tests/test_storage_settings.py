@@ -1,0 +1,661 @@
+"""存储设置（`app/services/storage_service.py` + `/system/storage` 接口）的测试。
+
+==================== 为什么这个文件必须很严格 ====================
+这是本项目**唯一会回写配置文件**的功能。`.env` 里同时躺着：
+    HNE_SECRET_KEY、HNE_API_KEY_ENCRYPTION_KEY、各种用户手写的配置……
+一旦写坏，最坏的后果不是"配置丢了"，而是**Fernet 密钥被清掉 →
+用户所有已保存的模型 API Key 永远解不开**（那是不可恢复的数据损坏）。
+
+所以这里盯死四件事：
+  1. **只动白名单里的键** —— 别的键、注释、空行都要一字不动；
+  2. **口令留空 = 不要动它**（绝不能覆盖成空）；
+  3. **切走时把另一套连接信息留成注释**，否则用户切不回来；
+  4. **被环境变量钉住的键要拒绝写入**，而不是"写了但静默无效"。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.core.exceptions import BadRequestError
+from app.services import storage_service
+
+# ------------------------------------------------------------------
+#  夹具：把"生效的配置文件"指到临时目录
+# ------------------------------------------------------------------
+@pytest.fixture()
+def env_file(tmp_path: Path, monkeypatch) -> Path:
+    """一份独立的 `.env`，并让 service 认定"生效的就是它"。
+
+    ★ 必须显式设置：`env_file_path()` 默认是仓库根那份**真实配置**，
+      不隔离的话测试会去改开发者的真实 `.env`（不可接受）。
+    """
+    target = tmp_path / "config" / ".env"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HNE_ENV_FILE", str(target))
+    # 覆盖会被"钉住"检查命中的键（它们可能来自宿主环境/仓库 .env）
+    for key in storage_service.WRITABLE_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    return target
+
+
+def _write(env_file: Path, text: str) -> None:
+    env_file.write_text(text, encoding="utf-8")
+
+
+def _read(env_file: Path) -> str:
+    return env_file.read_text(encoding="utf-8")
+
+
+BASE_CONFIG = """\
+# 一份带注释、带密钥的用户配置
+HNE_DB_BACKEND=sqlite
+HNE_SECRET_KEY=keep-this-secret-key-0123456789-abcdefghijklmnop
+HNE_API_KEY_ENCRYPTION_KEY=KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=
+
+# 用户自己加的（向导不认识，更要一字不动）
+HNE_LOG_LEVEL=DEBUG
+"""
+
+
+# ==================================================================
+#  1. 白名单：绝不碰别的键
+# ==================================================================
+def test_只改白名单里的键_密钥与用户手写的配置一字不动(env_file):
+    _write(env_file, BASE_CONFIG)
+
+    storage_service.write_config({
+        "HNE_DB_BACKEND": "sqlite",
+        "HNE_SQLITE_PATH": "D:/data/app.sqlite3",
+        # ★ 这些用例关注的是"白名单/备份/复核"，不是"换路径预警"，
+        #   而 D:/data 是个不存在的空位置 ⇒ 会（正确地）被空库守卫拦下。
+        #   所以显式带上确认标记，让用例回到它原本要测的东西。
+        "confirm_empty": True,
+    })
+
+    text = _read(env_file)
+    # ★ 最关键的两条：密钥绝不能被抹掉
+    assert "HNE_SECRET_KEY=keep-this-secret-key-0123456789-abcdefghijklmnop" in text, (
+        "★ SECRET_KEY 被改动了 —— 这会让所有登录态失效"
+    )
+    assert "HNE_API_KEY_ENCRYPTION_KEY=KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=" in text, (
+        "★★ Fernet 密钥被改动了 —— 这会让用户所有已保存的 API Key 永远解不开"
+    )
+    # 用户手写的、向导不认识的键也要保留
+    assert "HNE_LOG_LEVEL=DEBUG" in text, "用户手写的键不该被吞掉"
+    # 注释也要在（整份重写最容易把注释全丢了）
+    assert "# 一份带注释、带密钥的用户配置" in text, "注释不该被抹掉"
+    # 目标键真的改了
+    assert "HNE_SQLITE_PATH=D:/data/app.sqlite3" in text
+
+
+def test_不在白名单里的键会被忽略_而不是写进文件(env_file):
+    _write(env_file, BASE_CONFIG)
+    storage_service.write_config({
+        "HNE_DB_BACKEND": "sqlite",
+        # ★ 恶意/误传：想改密钥与日志级别
+        "HNE_SECRET_KEY": "hacked",
+        "HNE_API_KEY_ENCRYPTION_KEY": "hacked",
+        "HNE_LOG_LEVEL": "ERROR",
+    })
+    text = _read(env_file)
+    assert "hacked" not in text, "白名单外的键绝不能被写进文件"
+    assert "HNE_LOG_LEVEL=DEBUG" in text, "白名单外的键保持原样"
+
+
+# ==================================================================
+#  2. 口令留空 = 不要动它
+# ==================================================================
+def test_切到_mysql_时口令留空_沿用已存的那份(env_file):
+    """★ 这条守着"切换一下就把口令弄丢"那个真实事故。
+
+    切换页**故意不回传口令**（少一份泄露风险），所以提交上来的口令是空的。
+    若照直写下去，口令列会变成空 —— 用户下次想切回 MySQL 就连不上，
+    而他不可能记得那串自动生成的随机口令。
+    """
+    _write(env_file, "HNE_DB_BACKEND=sqlite\nHNE_MYSQL_PASSWORD=OldRandomPassw0rd\n")
+
+    storage_service.write_config({
+        "HNE_DB_BACKEND": "mysql",
+        "HNE_MYSQL_HOST": "127.0.0.1",
+        "HNE_MYSQL_USER": "narrative_app",
+        "HNE_MYSQL_DB": "narrative_engine",
+        "HNE_MYSQL_PASSWORD": "",  # ★ 页面不回传口令
+    })
+
+    text = _read(env_file)
+    assert "HNE_MYSQL_PASSWORD=OldRandomPassw0rd" in text, (
+        "口令留空时必须沿用已存值，绝不能被清空"
+    )
+
+
+def test_用户真的填了新口令_以他填的为准(env_file):
+    _write(env_file, "HNE_DB_BACKEND=sqlite\n")
+    storage_service.write_config({
+        "HNE_DB_BACKEND": "mysql",
+        "HNE_MYSQL_HOST": "127.0.0.1",
+        "HNE_MYSQL_USER": "u",
+        "HNE_MYSQL_DB": "d",
+        "HNE_MYSQL_PASSWORD": "NewPass",
+    })
+    assert "HNE_MYSQL_PASSWORD=NewPass" in _read(env_file)
+
+
+# ==================================================================
+#  3. 切走时留注释（能切回来）
+# ==================================================================
+def test_切到_sqlite_时_mysql_连接信息留成注释而不是删除(env_file):
+    _write(env_file, (
+        "HNE_DB_BACKEND=mysql\n"
+        "HNE_MYSQL_HOST=127.0.0.1\n"
+        "HNE_MYSQL_USER=narrative_app\n"
+        "HNE_MYSQL_PASSWORD=AutoGeneratedRandomPw12\n"
+        "HNE_MYSQL_DB=narrative_engine\n"
+    ))
+
+    storage_service.write_config({"HNE_DB_BACKEND": "sqlite"})
+    text = _read(env_file)
+
+    # 值还在（只是被注释掉了）
+    assert "AutoGeneratedRandomPw12" in text, (
+        "★ 切走后必须留住 MySQL 口令（注释形式），否则用户切不回来"
+    )
+    # 但**不能再有生效的** MySQL 行，否则后端可能据此推断成 mysql
+    active = [ln for ln in text.splitlines()
+              if ln.strip() and not ln.strip().startswith("#")]
+    assert not any(ln.startswith("HNE_MYSQL_") for ln in active), (
+        "留的是注释，不该有生效的 HNE_MYSQL_* 行"
+    )
+    assert any(ln.strip().startswith("# HNE_MYSQL_PASSWORD=") for ln in text.splitlines())
+
+
+def test_切到_mysql_时_sqlite_路径不写进文件(env_file):
+    """反向：切到 mysql 时，本机文件路径不该生效（免得两边都配着让人困惑）。"""
+    _write(env_file, "HNE_DB_BACKEND=sqlite\nHNE_SQLITE_PATH=D:/old.sqlite3\n")
+    storage_service.write_config({
+        "HNE_DB_BACKEND": "mysql",
+        "HNE_MYSQL_HOST": "127.0.0.1",
+        "HNE_MYSQL_USER": "u",
+        "HNE_MYSQL_DB": "d",
+        "HNE_MYSQL_PASSWORD": "p",
+    })
+    active = [ln for ln in _read(env_file).splitlines()
+              if ln.strip() and not ln.strip().startswith("#")]
+    assert not any(ln.startswith("HNE_SQLITE_PATH=") for ln in active), (
+        "切到 mysql 后不该留着生效的 HNE_SQLITE_PATH"
+    )
+
+
+def test_切到_mysql_时_DB_BACKEND_这个开关必须真的被改写(env_file):
+    """★★ 回归：这条是真实探针抓到的，当时的单测**没覆盖**。
+
+    `HNE_DB_BACKEND` 是"我现在用哪种存储"的开关。第一版 `_owned_keys()`
+    漏了它 —— 于是切到 MySQL 时其它键都写进去了、**这个开关却没动**，
+    文件里仍是 `HNE_DB_BACKEND=sqlite`。用户重启后还在用本机文件，
+    而界面全程提示"保存成功"：**保存成功、提示成功、只有数据落点没变**，
+    是最难自查的一类失效。
+    """
+    _write(env_file, "HNE_DB_BACKEND=sqlite\n")
+    storage_service.write_config({
+        "HNE_DB_BACKEND": "mysql",
+        "HNE_MYSQL_HOST": "127.0.0.1",
+        "HNE_MYSQL_USER": "u",
+        "HNE_MYSQL_DB": "d",
+        "HNE_MYSQL_PASSWORD": "p",
+    })
+    parsed = storage_service.parse_env_text(_read(env_file))
+    assert parsed["HNE_DB_BACKEND"] == "mysql", (
+        "切到 mysql 后，HNE_DB_BACKEND 开关必须一起被改写 —— 否则切换等于没切"
+    )
+
+
+def test_切回_sqlite_时_DB_BACKEND_开关同样要被改写(env_file):
+    """反方向也要验：否则"切回去"同样会静默失败。"""
+    _write(env_file, (
+        "HNE_DB_BACKEND=mysql\nHNE_MYSQL_HOST=127.0.0.1\n"
+        "HNE_MYSQL_USER=u\nHNE_MYSQL_DB=d\nHNE_MYSQL_PASSWORD=p\n"
+    ))
+    storage_service.write_config({"HNE_DB_BACKEND": "sqlite"})
+    parsed = storage_service.parse_env_text(_read(env_file))
+    assert parsed["HNE_DB_BACKEND"] == "sqlite", "切回本机文件时开关也要改"
+
+
+# ==================================================================
+#  4. 被环境变量钉住 → 必须拒绝，而不是静默无效
+# ==================================================================
+def test_被环境变量钉住的键_拒绝写入并说明原因(env_file, monkeypatch):
+    """★ 静默失效是本项目最怕的失效类型。
+
+    取值优先级是「环境变量 > .env」，所以若键已在真实环境里，
+    改 `.env` 不会生效 —— 这时必须**当场报错**，不能让用户以为改成功了。
+    """
+    _write(env_file, "HNE_DB_BACKEND=sqlite\n")
+    monkeypatch.setenv("HNE_DB_BACKEND", "mysql")
+
+    with pytest.raises(BadRequestError) as excinfo:
+        storage_service.write_config({"HNE_DB_BACKEND": "sqlite"})
+
+    detail = excinfo.value.detail or {}
+    assert "HNE_DB_BACKEND" in detail.get("pinned", []), (
+        "要把『是哪个键被钉住』如实报出来，用户才知道去改哪里"
+    )
+    # 而且**不能**已经把文件改了
+    assert _read(env_file) == "HNE_DB_BACKEND=sqlite\n", "被钉住时应中止，不写文件"
+
+
+# ==================================================================
+#  5. 校验
+# ==================================================================
+def test_选_mysql_时必填项缺失会被拦下(env_file):
+    _write(env_file, "HNE_DB_BACKEND=sqlite\n")
+    with pytest.raises(BadRequestError) as excinfo:
+        storage_service.write_config({"HNE_DB_BACKEND": "mysql", "HNE_MYSQL_HOST": ""})
+    errors = (excinfo.value.detail or {}).get("errors", {})
+    assert "HNE_MYSQL_HOST" in errors
+
+
+def test_选_sqlite_时不校验_mysql_字段(env_file):
+    """★ 否则默认的零配置会被"口令没填"这种无关错误拦住。"""
+    _write(env_file, "")
+    result = storage_service.write_config({"HNE_DB_BACKEND": "sqlite"})
+    assert result["backend"] == "sqlite"
+
+
+def test_端口越界会被拦下(env_file):
+    _write(env_file, "")
+    with pytest.raises(BadRequestError):
+        storage_service.write_config({
+            "HNE_DB_BACKEND": "mysql",
+            "HNE_MYSQL_HOST": "h", "HNE_MYSQL_USER": "u", "HNE_MYSQL_DB": "d",
+            "HNE_MYSQL_PORT": "70000",
+        })
+
+
+# ==================================================================
+#  6. 写入的可靠性：备份 + 复核
+# ==================================================================
+def test_写入前会备份原文件(env_file):
+    _write(env_file, BASE_CONFIG)
+    result = storage_service.write_config({
+        "HNE_DB_BACKEND": "sqlite", "HNE_SQLITE_PATH": "E:/new.sqlite3",
+        "confirm_empty": True,
+    })
+    backup = Path(result["backup"])
+    assert backup.is_file(), "要留一份 .bak，用户改坏了能自己还原"
+    assert backup.read_text(encoding="utf-8") == BASE_CONFIG, "备份应等于改动前的内容"
+
+
+def test_写入后会读回来复核(env_file):
+    """★ 只信"我写过了"而不复核，正是"看起来对、实际没落地"的来源。"""
+    _write(env_file, "")
+    result = storage_service.write_config({
+        "HNE_DB_BACKEND": "sqlite", "HNE_SQLITE_PATH": "E:/x.sqlite3",
+        "confirm_empty": True,
+    })
+    parsed = storage_service.parse_env_text(_read(env_file))
+    assert parsed["HNE_SQLITE_PATH"] == "E:/x.sqlite3"
+    assert "HNE_SQLITE_PATH" in result["changed"]
+
+
+def test_带空格的值会被加引号并能原样读回(env_file):
+    _write(env_file, "")
+    storage_service.write_config({
+        "HNE_DB_BACKEND": "sqlite",
+        "HNE_SQLITE_PATH": "D:/My Data/app.sqlite3",
+        "confirm_empty": True,
+    })
+    parsed = storage_service.parse_env_text(_read(env_file))
+    assert parsed["HNE_SQLITE_PATH"] == "D:/My Data/app.sqlite3"
+
+
+# ==================================================================
+#  7. 读取状态：不泄露口令
+# ==================================================================
+def test_读取状态时不回传口令内容(env_file):
+    _write(env_file, "HNE_DB_BACKEND=mysql\nHNE_MYSQL_PASSWORD=SuperSecret123\n")
+    state = storage_service.read_state()
+    dumped = str(state)
+    assert "SuperSecret123" not in dumped, (
+        "★ 读接口绝不能把口令回传给页面（与桌面端 preload 的做法一致）"
+    )
+    assert state["secret_set"]["HNE_MYSQL_PASSWORD"] is True, "但要如实说「它已经设过」"
+
+
+def test_读取状态会标出每个键的来源(env_file, monkeypatch):
+    _write(env_file, "HNE_DB_BACKEND=sqlite\nHNE_MYSQL_HOST=from-file\n")
+    monkeypatch.setenv("HNE_MYSQL_USER", "from-env")
+    state = storage_service.read_state()
+    assert state["sources"]["HNE_MYSQL_HOST"] == "file"
+    assert state["sources"]["HNE_MYSQL_USER"] == "env"
+    assert state["sources"]["HNE_MYSQL_PASSWORD"] == "default"
+
+
+# ==================================================================
+#  8. 接口层：**登录前可用** + 三道闸（本机来源 / Host / 自定义头）
+# ==================================================================
+@pytest.fixture()
+def client():
+    """来源地址设成**本机**、Host 也是本机名的 TestClient。
+
+    ★ 必须显式给 `client=`：TestClient 的默认来源是 `testclient`（不是本机），
+      而存储接口会核对来源地址 ⇒ 不设的话所有用例都会被 403 挡住，
+      看起来像"接口坏了"，其实是测试环境不真实。
+    ★ `Host` 也必须自己给：TestClient 默认发 `Host: testserver`，
+      而防 DNS rebinding 那道闸只认本机名 —— 同理，不设就会全红。
+    """
+    from app.main import app
+
+    return TestClient(app, client=("127.0.0.1", 51000), headers={"Host": "127.0.0.1"})
+
+
+@pytest.fixture()
+def remote_client():
+    """来源地址是**局域网**的 TestClient（用于验证拦截）。"""
+    from app.main import app
+
+    return TestClient(app, client=("192.168.1.50", 51000), headers={"Host": "127.0.0.1"})
+
+
+def _login(c: TestClient, username: str = "storagetest") -> dict[str, str]:
+    """注册新账号（已存在则忽略）后登录，返回请求头。
+
+    ★ 注册接口**只返回用户资料、不返回令牌**（实测确认：data 里没有 access_token），
+      所以必须再显式登录一次取令牌 —— 第一版直接取 data.access_token 报了 KeyError。
+    ★ 存储接口本身**不需要**登录，这里只为"带不带令牌都一样"的对照。
+    """
+    c.post("/api/v1/auth/register", json={
+        "username": username, "email": f"{username}@example.com", "password": "Passw0rd123",
+    })
+    login = c.post("/api/v1/auth/login", json={
+        "username": username, "password": "Passw0rd123",
+    })
+    assert login.status_code == 200, login.text
+    token = login.json()["data"]["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+#: 存储接口要求的自定义头（见 app/api/v1/storage.py 的 _guard）
+_HDR = {"X-HNE-Storage": "1", "Host": "127.0.0.1"}
+
+
+def test_存储接口_未登录也能读_因为登不上时正需要它自救(client):
+    """★★ 这一条是**本轮的核心契约**：登录前必须可用。
+
+    第一版要求登录，于是修不了它本该修的问题：
+      用户的困境是"**登录不上**，因为连错了库" ——
+      而登录不上就拿不到令牌，进不去这个接口 ⇒ **死锁**。
+    （桌面壳的「切换存储方式」菜单一直是登录前可用的，这里对齐它。）
+    """
+    resp = client.get("/api/v1/system/storage", headers=_HDR)
+    assert resp.status_code == 200, (
+        f"登录前必须能读存储状态，否则登不上时无路可走：{resp.status_code} {resp.text}"
+    )
+    assert resp.json()["data"]["backend"] in ("sqlite", "mysql")
+
+
+def test_存储接口_带令牌访问结果一致(client):
+    """带不带令牌都该成功（它压根不读身份）。"""
+    anon = client.get("/api/v1/system/storage", headers=_HDR)
+    authed = client.get("/api/v1/system/storage", headers={**_HDR, **_login(client)})
+    assert anon.status_code == 200 and authed.status_code == 200
+    assert anon.json()["data"]["backend"] == authed.json()["data"]["backend"]
+
+
+def test_缺少自定义头会被拒(client):
+    """★ 自定义头是**无登录**之后的主要闸门之一。
+
+    带自定义头的跨源请求必须先发预检，而 CORS 白名单里没有攻击者的源 ⇒
+    恶意页面根本发不出这个请求（详见 storage.py 顶部第 3 条）。
+    """
+    resp = client.get("/api/v1/system/storage")  # 故意不带 X-HNE-Storage
+    assert resp.status_code == 403, f"缺自定义头应当被拒，实际 {resp.status_code}"
+    assert resp.json()["detail"]["reason"] == "missing_header"
+
+
+def test_非本机来源会被拒(remote_client):
+    """★ 这个接口能改数据库配置，不该被局域网里任何人调用。
+
+    做法：把 TestClient 的来源地址设成局域网地址，确认返回 **403**
+    —— 而不是"反正服务只监听 127.0.0.1，所以不必判"（用户可能改 HOST 或挂反代）。
+    """
+    resp = remote_client.get("/api/v1/system/storage", headers=_HDR)
+    assert resp.status_code == 403, f"远程来源应当被拒，实际 {resp.status_code}：{resp.text}"
+    assert resp.json()["detail"]["reason"] == "not_local"
+
+
+def test_Host_头不是本机名会被拒(client):
+    """★★ 防 **DNS rebinding**。
+
+    攻击者把 `evil.com` 解析到 127.0.0.1，浏览器就把它当**同源**、
+    不受 CORS 约束，于是能直接读写这个接口。那种请求的 `Host` 是 `evil.com`，
+    本机正常访问则是 127.0.0.1 / localhost —— 这条检查就是拦它。
+    """
+    resp = client.get(
+        "/api/v1/system/storage",
+        headers={**_HDR, "Host": "evil.example.com"},
+    )
+    assert resp.status_code == 403, f"伪造 Host 应当被拒，实际 {resp.status_code}：{resp.text}"
+    assert resp.json()["detail"]["reason"] == "bad_host"
+
+
+def test_Host_带端口号的正常访问不受影响(client):
+    """本机访问常带端口（127.0.0.1:8000），这条别被自己的检查误伤。"""
+    resp = client.get(
+        "/api/v1/system/storage",
+        headers={**_HDR, "Host": "127.0.0.1:8000"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_localhost_也允许(client):
+    resp = client.get(
+        "/api/v1/system/storage",
+        headers={**_HDR, "Host": "localhost:8000"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+# ==================================================================
+#  9. 换「本机文件路径」的预警（用户真实踩过的坑，方案 A）
+# ==================================================================
+def _make_sqlite(path: Path, *, with_user: bool = True) -> None:
+    """造一个像样的 SQLite 库（可选带一个账号），用于体检断言。"""
+    import sqlite3
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
+        if with_user:
+            conn.execute("INSERT INTO users (username) VALUES ('someone')")
+        conn.execute("CREATE TABLE narrative_sessions (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_体检_不存在的路径会被标成_warn(tmp_path):
+    """★ 这一条守着用户**真实踩过的坑**：换到空位置后登录不上。
+
+    他的原话是"你改我密码了？还是把我文件换位置了？" ——
+    而真相只是**新路径下什么都没有**。所以体检必须能识别出来。
+    """
+    info = storage_service.inspect_sqlite(str(tmp_path / "nope" / "app.sqlite3"))
+    assert info["exists"] is False
+    assert info["level"] == "warn"
+    assert info["warning"], "必须给出可读的警告文案（界面要显示给用户）"
+
+
+def test_体检_有账号的库会被标成_ok(tmp_path):
+    db = tmp_path / "real.sqlite3"
+    _make_sqlite(db, with_user=True)
+    info = storage_service.inspect_sqlite(str(db))
+    assert info["level"] == "ok", info
+    assert info["user_count"] == 1
+    assert "someone" in info["usernames"]
+
+
+def test_体检_空库会被标成_warn(tmp_path):
+    """文件在、有表、但一个账号都没有 —— 换过去同样登不上。"""
+    db = tmp_path / "empty.sqlite3"
+    _make_sqlite(db, with_user=False)
+    info = storage_service.inspect_sqlite(str(db))
+    assert info["level"] == "warn"
+    assert info["user_count"] == 0
+
+
+def test_体检_只读不会建出新文件(tmp_path):
+    """★ 体检必须是**纯读**的。
+
+    否则"只是让用户看一眼路径"就会凭空造出一个空 sqlite 文件，
+    而那个空文件会让"文件存在"的判断在后续环节产生误导。
+    """
+    target = tmp_path / "should-not-exist" / "app.sqlite3"
+    storage_service.inspect_sqlite(str(target))
+    assert not target.exists(), "体检不该创建任何文件"
+
+
+def test_换到空路径_后端会先拒绝并要求确认(env_file, tmp_path):
+    """★★ 方案 A 的后端半边：没有 `confirm_empty` 时必须**拦住**。
+
+    这是防"绕过界面直接调接口"的兜底 —— 界面那边会先弹警告，
+    但接口本身不能假设调用方是善良的。
+    """
+    _write(env_file, "HNE_DB_BACKEND=sqlite\nHNE_SQLITE_PATH=D:/old.sqlite3\n")
+    target = tmp_path / "brand-new.sqlite3"      # 不存在
+
+    with pytest.raises(BadRequestError) as excinfo:
+        storage_service.write_config({
+            "HNE_DB_BACKEND": "sqlite",
+            "HNE_SQLITE_PATH": str(target),
+        })
+    detail = excinfo.value.detail or {}
+    assert detail.get("needs_confirm") is True, "要能让前端识别出'这里需要二次确认'"
+    assert detail.get("target", {}).get("level") == "warn"
+    # 而且**不能**已经把文件改了
+    assert "D:/old.sqlite3" in _read(env_file), "被拦下时不该改动配置"
+
+
+def test_换到空路径_带上确认标记就放行(env_file, tmp_path):
+    """用户看过警告、明确点了"仍然要换"之后，要能真的保存成功。"""
+    _write(env_file, "HNE_DB_BACKEND=sqlite\nHNE_SQLITE_PATH=D:/old.sqlite3\n")
+    target = tmp_path / "confirmed.sqlite3"
+
+    result = storage_service.write_config({
+        "HNE_DB_BACKEND": "sqlite",
+        "HNE_SQLITE_PATH": str(target),
+        "confirm_empty": True,
+    })
+    assert result["backend"] == "sqlite"
+    parsed = storage_service.parse_env_text(_read(env_file))
+    assert parsed["HNE_SQLITE_PATH"].replace("\\", "/") == str(target).replace("\\", "/")
+
+
+def test_换成有账号的库_不需要确认(env_file, tmp_path):
+    """目标里**确实有账号**时不该弹警告（否则每次都会吓用户一跳）。"""
+    good = tmp_path / "good.sqlite3"
+    _make_sqlite(good, with_user=True)
+    _write(env_file, "HNE_DB_BACKEND=sqlite\nHNE_SQLITE_PATH=D:/old.sqlite3\n")
+    result = storage_service.write_config({
+        "HNE_DB_BACKEND": "sqlite",
+        "HNE_SQLITE_PATH": str(good),
+    })
+    assert "HNE_SQLITE_PATH" in result["changed"]
+
+
+# ==================================================================
+#  10. 路径历史（用户要求：留住最近 2~3 条，方便回头找旧数据）
+# ==================================================================
+def test_路径历史_换一次后旧路径仍能看到(env_file, tmp_path, monkeypatch):
+    """★★ 这一条直接对应"我原来的文件去哪了"。
+
+    换路径时**旧的那条必须被记下来** —— 否则用户改完就再也看不到
+    原来那份在哪，于是只能怀疑"你把我的文件换位置了"。
+    """
+    # 历史文件落在这个临时数据根下（不碰真实数据目录）
+    monkeypatch.setenv("HNE_DATA_DIR", str(tmp_path / "root"))
+
+    old = str(tmp_path / "old.sqlite3")
+    _write(env_file, f"HNE_DB_BACKEND=sqlite\nHNE_SQLITE_PATH={old}\n")
+
+    storage_service.write_config({
+        "HNE_DB_BACKEND": "sqlite",
+        "HNE_SQLITE_PATH": str(tmp_path / "new.sqlite3"),
+        "confirm_empty": True,
+    })
+
+    paths = [i["path"] for i in storage_service.read_history()]
+    assert old in paths, (
+        f"换过之后旧路径必须还在历史里（用户要靠它找回原数据），实际 {paths}"
+    )
+
+
+def test_路径历史_最多只留3条(env_file, tmp_path, monkeypatch):
+    """按用户要求：只留最近的 2~3 条，不能无限堆积。
+
+    ★ 断言的是"数量上限"与"最新的在最前"，**不是**"最早那条还在" ——
+      连换多次时更早的自然会被挤出去，这是设计如此（用户明确说 2~3 条即可）。
+    """
+    monkeypatch.setenv("HNE_DATA_DIR", str(tmp_path / "root"))
+    _write(env_file, f"HNE_DB_BACKEND=sqlite\nHNE_SQLITE_PATH={tmp_path / 'p0.sqlite3'}\n")
+
+    for i in range(1, 6):
+        storage_service.write_config({
+            "HNE_DB_BACKEND": "sqlite",
+            "HNE_SQLITE_PATH": str(tmp_path / f"p{i}.sqlite3"),
+            "confirm_empty": True,
+        })
+
+    items = storage_service.read_history()
+    assert storage_service.HISTORY_LIMIT == 3
+    assert len(items) <= 3, f"最多 3 条，实际 {len(items)}"
+    assert items[0]["path"].endswith("p5.sqlite3"), (
+        f"最新用过的那条要在最前（用户最可能找它），实际 {items[0]['path']}"
+    )
+
+
+def test_路径历史_每条附带体检信息(env_file, tmp_path, monkeypatch):
+    """历史里要能看出"那条路径现在还有没有数据"，而不只是一个路径字符串。"""
+    monkeypatch.setenv("HNE_DATA_DIR", str(tmp_path / "root"))
+    good = tmp_path / "hasuser.sqlite3"
+    _make_sqlite(good, with_user=True)
+    _write(env_file, f"HNE_DB_BACKEND=sqlite\nHNE_SQLITE_PATH={good}\n")
+
+    # read_state 会把**当前在用的**那条纳入历史
+    state = storage_service.read_state()
+    items = state["sqlite_history"]
+    assert items, "当前在用的路径应当在历史里"
+    hit = next((i for i in items if i["path"] == str(good)), None)
+    assert hit is not None and hit["user_count"] == 1 and hit["exists"] is True
+
+
+def test_路径历史_文件损坏也不影响保存(env_file, tmp_path, monkeypatch):
+    """历史只是便利功能：它读坏了**绝不能**连累保存本身。"""
+    monkeypatch.setenv("HNE_DATA_DIR", str(tmp_path / "root"))
+    hist = tmp_path / "root" / "config" / "sqlite-path-history.json"
+    hist.parent.mkdir(parents=True, exist_ok=True)
+    hist.write_text("这不是 JSON{{{", encoding="utf-8")
+
+    _write(env_file, "HNE_DB_BACKEND=sqlite\n")
+    result = storage_service.write_config({
+        "HNE_DB_BACKEND": "sqlite",
+        "HNE_SQLITE_PATH": str(tmp_path / "x.sqlite3"),
+        "confirm_empty": True,
+    })
+    assert result["env_file"], "历史文件损坏时保存仍必须成功"
+
+
+def test_读取状态里带当前本机文件的体检(env_file, tmp_path):
+    """界面要靠它显示"当前这份里有什么"。"""
+    good = tmp_path / "cur.sqlite3"
+    _make_sqlite(good, with_user=True)
+    _write(env_file, f"HNE_DB_BACKEND=sqlite\nHNE_SQLITE_PATH={good}\n")
+    state = storage_service.read_state()
+    assert state["current_sqlite"] is not None
+    assert state["current_sqlite"]["user_count"] == 1
+
+

@@ -248,7 +248,11 @@ function databaseEnvDefaults(options) {
   const backend = explicitBackend || (hasMysqlConfig ? 'mysql' : 'sqlite');
 
   if (!explicitBackend && !hasMysqlConfig) out.HNE_DB_BACKEND = 'sqlite';
-  if (backend === 'sqlite' && !userSet('HNE_SQLITE_PATH')) {
+  // ★★ `HNE_SQLITE_PATH` 也要**跟着数据根走**：用户显式改过 `HNE_DATA_DIR` 时，
+  //   绝不能再按壳的默认根去注入一个绝对路径 —— 那会让"库文件"留在旧位置，
+  //   而向量库/密钥去了新位置（用户只会发现"我的数据怎么只搬走一半"）。
+  //   不注入的话，后端会按 `<数据根>/data/app.sqlite3` 自己推（见 config.py 的 sqlite_file）。
+  if (backend === 'sqlite' && !userSet('HNE_SQLITE_PATH') && !userSet('HNE_DATA_DIR')) {
     out.HNE_SQLITE_PATH = path.join(String(options.dataDir), 'data', 'app.sqlite3');
   }
   return out;

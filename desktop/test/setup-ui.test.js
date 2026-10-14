@@ -72,8 +72,41 @@ test('setup.html：提示文字里提到的按钮，代码里真的会创建它'
 });
 
 // ------------------------------------------------------------------
-//  "小眼睛"与复制（用户提的需求：随机生成的长串看不见，想核对/抄走）
+//  「数据目录」（HNE_DATA_DIR）的三方契约
 // ------------------------------------------------------------------
+test('★★ 数据目录：IPC 契约里必须带 dirOnly（否则会掉进 MySQL 组被隐藏）', () => {
+  // 这条守着"又一个过不了 IPC 边界的属性"：
+  //   setup.html 靠 `field.dirOnly` 决定把「数据目录」放进哪个分组，
+  //   而 main.js 的 buildSetupFields 是**白名单式**地把字段发给页面的 ——
+  //   漏掉 dirOnly，页面拿到 undefined，字段就会落进 mysqlGrid，
+  //   于是选「本机文件」（默认！）时整组隐藏，用户根本填不到它。
+  //   （同类教训：`generate` 曾经因为函数过不了 IPC 而让按钮永远不出现。）
+  const body = main.slice(main.indexOf('function buildSetupFields'));
+  assert.match(body, /dirOnly: Boolean\(f\.dirOnly\)/,
+    'main.js 必须把 dirOnly 放进发给页面的字段对象里');
+});
+
+test('★★ 数据目录：页面必须把它放进独立分组，不能落进 mysqlGrid', () => {
+  const lines = codeLines(html);
+  assert.ok(
+    lines.some((l) => /field\.dirOnly.*el\.dataDirGrid/.test(l)),
+    '页面要有 `field.dirOnly → el.dataDirGrid` 的分支',
+  );
+  // ★ 顺序也要对：dirOnly 的判断必须在 `else buildField(field, el.mysqlGrid)` 之前，
+  //   否则永远轮不到它（else 链是先到先得）。
+  const dirIdx = lines.findIndex((l) => /field\.dirOnly/.test(l));
+  const mysqlIdx = lines.findIndex((l) => /else buildField\(field, el\.mysqlGrid\)/.test(l));
+  assert.ok(dirIdx > 0 && mysqlIdx > 0 && dirIdx < mysqlIdx,
+    'dirOnly 分支要排在 mysqlGrid 兜底分支**之前**，否则它永远不会生效');
+});
+
+test('★★ 数据目录：页面真的有一个 datadir-grid 容器', () => {
+  assert.match(html, /id="datadir-grid"/, '要有承载它的容器，否则 buildField 无处可放');
+  assert.match(html, /dataDirGrid: document\.getElementById\('datadir-grid'\)/,
+    'el 映射里要挂上它');
+});
+
+
 test('setup.html：密码框有「小眼睛」，可切换明文/圆点', () => {
   const lines = codeLines(html);
   assert.ok(lines.some((l) => /if \(field\.secret\)/.test(l)), '只有密码框才该有眼睛');

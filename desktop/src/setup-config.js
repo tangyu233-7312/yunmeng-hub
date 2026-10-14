@@ -93,6 +93,25 @@ const SETUP_FIELDS = Object.freeze([
     dbOnly: true,
   },
   {
+    // ★ 数据目录：让用户自己选"数据放哪"（挪到 D 盘 / 移动硬盘 / 同步盘）。
+    //   它是**数据根**：后端会在它下面拼 `data/app.sqlite3`（本机文件）、
+    //   `data/chroma`（长期记忆）、`config/.secrets.env`（自动生成的密钥）、`data/logs`。
+    //   ★ 为什么留空 = 用默认：打包版的默认是 Electron 的 userData
+    //     （`%APPDATA%\云梦枢`），对绝大多数用户就是对的；
+    //     只有"想把数据放到别处"的人需要填。
+    //   ★ 与 `dbDirOnly` 的区别：这一项与存储方式**无关**（两种后端都用它），
+    //     所以不能被 `syncDatabaseFields` 藏进 MySQL 那组，单独一个分组。
+    key: 'HNE_DATA_DIR',
+    label: '数据目录（留空 = 用默认位置）',
+    hint: '数据（本机文件数据库、长期记忆向量库、自动生成的密钥、日志）都放在这个目录下。'
+      + '留空就用默认位置（应用数据目录，卸载重装不丢）。'
+      + '★ 想让浏览器端与桌面版共用同一份数据，就把这边和那边指成同一个目录；'
+      + '★ 换成新目录后数据**不会自动搬家**，要自己把旧目录里的数据拷过去。',
+    placeholder: '例如 D:\\云梦枢数据',
+    required: false,
+    dirOnly: true,
+  },
+  {
     key: 'HNE_SECRET_KEY',
     label: '登录令牌签名密钥（可留空）',
     hint: '留空 = 后端首次运行时自动生成并保存在应用数据目录，重启后沿用。'
@@ -386,10 +405,29 @@ function renderEnvFile(values, existingText = '', existing = null) {
     if (field.key === 'HNE_DB_BACKEND') continue; // 上面已经写过
     // ★ 非当前后端的字段整组跳过（选 sqlite 就不写 MySQL 的任何键）
     if (field.dbOnly && backend !== 'mysql') continue;
+    // ★ `HNE_DATA_DIR` 由下面的「数据目录」小节单独处理（它需要一段说明注释），
+    //   否则这里会先写一遍、又和下面重复。
+    if (field.dirOnly) continue;
     const value = String(values[field.key] ?? '').trim();
     if (!value) continue; // 留空 = 不写这个键（让后端用它自己的默认值）
     lines.push(`# ${field.label}${field.hint ? `：${field.hint}` : ''}`);
     lines.push(`${field.key}=${quoteIfNeeded(value)}`);
+  }
+
+  // ★★ 「数据目录」单独成节。
+  //   为什么特殊对待：填了它等于**改变了全部数据的落点**（库文件、向量库、密钥、日志），
+  //   而"改完不搬家"是用户最容易踩的坑 —— 必须在生成的文件里就把话写清楚，
+  //   而不是只写在向导界面上（用户以后只会打开这个文件看）。
+  const dataDirValue = String(values.HNE_DATA_DIR ?? '').trim();
+  if (dataDirValue) {
+    lines.push(
+      '',
+      '# ---------------------- 数据目录（用户指定）----------------------',
+      '# ★ 数据根：后端会在它下面拼 data/app.sqlite3（本机文件库）、data/chroma（长期记忆）、',
+      '#   config/.secrets.env（自动生成的密钥）、data/logs（日志）。',
+      '# ★ 换成新目录不会自动搬家 —— 旧目录里的数据要自己拷过来。',
+      `HNE_DATA_DIR=${quoteIfNeeded(dataDirValue)}`,
+    );
   }
 
   // ★★ 切走时**把另一套存储的连接信息留下来（写成注释）**。

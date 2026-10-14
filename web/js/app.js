@@ -21,6 +21,7 @@ import { renderChat } from 'hne/chat';
 import { renderProviders } from 'hne/providers';
 import { applyPluginTheme, renderPlugins } from 'hne/plugins';
 import { renderPresets } from 'hne/presets';
+import { renderStorage } from 'hne/storage';
 
 const view = document.getElementById('view');
 
@@ -37,6 +38,9 @@ const ROUTES = {
   plugins: { title: '插件', render: renderPlugins },
   // 叙事会话（对话界面）。renderChat 支持 ctx.sessionId，方便从别处跳进某个会话。
   chat: { title: '叙事会话', render: (root, ctx) => renderChat(root, { ...ctx }) },
+  // ★ 存储设置：浏览器端也能换数据库（此前只能自己找 .env 改）。
+  //   ★ 注意它**不能自己重启后端** —— 保存后要用户手动重启，页面里已写明。
+  storage: { title: '存储设置', render: renderStorage },
 };
 
 // ★ 默认落在「叙事会话」页：页面的价值最终体现在这里（顶栏也把它排在第一位）。

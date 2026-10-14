@@ -106,6 +106,8 @@ export function showAbout() {
       <div id="about-rows" class="about-rows">
         <div class="small faint">正在读取环境信息…</div>
       </div>
+      <!-- 存储的技术细节放这里（登录页只留一行"当前存储"） -->
+      <div id="about-storage-notes"></div>
       <div class="small faint mt8" style="line-height:1.7">
         ★ 「复制诊断信息」只会复制<b>版本 / 路径 / 出错的那几条请求</b>，
         <b>不包含</b>你的对话内容、角色卡或任何密钥 —— 可以直接贴给别人看。
@@ -141,9 +143,57 @@ export function showAbout() {
       row('技术栈', esc(interfaceLine())),
       row('当前存储', esc(storage)),
       paths,
+      row('长期记忆', env?.chroma_dir
+        ? `<code class="about-path" data-copy="${esc(env.chroma_dir)}">${esc(env.chroma_dir)}</code>`
+        : '<span class="faint">读取失败</span>'),
       row('开源地址', `<a href="${esc(REPO_URL)}" target="_blank" rel="noreferrer">${esc(REPO_URL)}</a>`),
       healthError ? row('提示', `<span class="faint">${esc(healthError)}</span>`) : '',
     ].join('');
+
+    // ★★ 存储的**细节**放在这里（登录页只留一行"当前存储"）。
+    //
+    //   为什么挪过来：登录页那张卡片原本塞了共享机制 + 向量库路径 + 切换方法，
+    //   用户看完的反馈是"门槛是不是有点高，能不能说简单点"。
+    //   而这一页有充足空间摆表格、也能带上"两种环境各自怎么改"，是它该待的地方。
+    renderStorageNotes(env);
+  }
+
+  /**
+   * 把"两种存储的关系 + 怎么改"写清楚。
+   *
+   * ★ 这里必须**按运行环境分支**（浏览器 / 桌面壳）：
+   *   桌面壳有「数据」菜单能一键切，浏览器没有 —— 说错任何一边，
+   *   用户都会按着找却找不到（本项目犯过，见 docs/pitfalls.md §48）。
+   */
+  function renderStorageNotes(env) {
+    const box = m.root.querySelector('#about-storage-notes');
+    if (!box) return;
+    if (!env) {
+      box.innerHTML = '';
+      return;
+    }
+    const inDesktop = /Electron\/[\d.]+/.test(navigator.userAgent || '');
+    const isMysql = env.backend === 'mysql';
+
+    const sharing = isMysql
+      ? '它跑在<b>服务端</b>：桌面版与浏览器只要连<b>同一个实例与库名</b>，'
+        + '看到的就是<b>同一份数据</b>（账号、会话互通）；连的实例或库名不同就不互通。'
+      : '它是<b>本地文件</b>：桌面版与浏览器<b>各有一份</b>，天然不互通。';
+
+    const how = inDesktop
+      ? '想换存储方式：顶部菜单「<b>数据 → 切换存储方式…</b>」，改完会自动重启后端。'
+      : '想换存储方式：点顶部导航的「<b>存储设置</b>」。'
+        + '★ 浏览器无法替你重启后端，保存后要手动重启一次才生效。';
+
+    box.innerHTML = `
+      <div class="small faint mt8" style="line-height:1.8">
+        <b>关于存储</b><br>
+        ${sharing}<br>
+        <b>长期记忆（向量库）是本地文件</b>，与数据库<b>分开存放</b> ——
+        所以会出现"账号通了、记忆却各记各的"。想共用就让两端指向同一个
+        <code>HNE_CHROMA_PERSIST_DIR</code>。<br>
+        ${how}
+      </div>`;
   }
 
   let cachedEnv = null;

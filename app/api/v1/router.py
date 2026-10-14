@@ -30,6 +30,7 @@ from app.api.v1 import (
     plugins,
     prompt_presets,
     providers,
+    storage,
     system,
     world_books,
 )
@@ -76,3 +77,8 @@ api_router.include_router(plugins.router, prefix="/plugins", tags=["插件"])
 # 注意：这个模块里有一个 SSE 流式端点（async def），
 # 是本项目第一个「异步接口 + 同步数据库」的组合，写法见 narrative.py 顶部说明。
 api_router.include_router(narrative.router, prefix="/narrative", tags=["叙事会话"])
+
+# ---------------- 存储设置（需登录 + **仅本机**）----------------
+# ★ 这是本项目唯一会**回写 .env** 的接口，所以除了登录还额外限制来源地址。
+#   放最后注册，与其它路由互不影响。
+api_router.include_router(storage.router, prefix="/system", tags=["存储设置"])

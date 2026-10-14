@@ -42,6 +42,14 @@ os.environ.setdefault("HNE_DB_BACKEND", "sqlite")
 # 显式给出库文件路径：这样"测试用的库"与"开发者平时用的库"物理上就是两个文件
 os.environ.setdefault("HNE_SQLITE_PATH", str(TEST_DATA_DIR / "data" / "pytest.sqlite3"))
 
+# ★★ 向量库也必须显式隔离，**不能只靠 HNE_DATA_DIR**。
+#   原因：`.env` 里 `HNE_CHROMA_PERSIST_DIR` 允许写**绝对路径**（为了让浏览器端与
+#   桌面端共用同一份长期记忆，见 .env 的注释），而绝对路径会**绕过数据根** ——
+#   于是只设 HNE_DATA_DIR 的话，测试会直接读写**开发者真实的长期记忆库**：
+#   跑一次测试就可能往用户的向量库里塞进一批测试记忆（甚至被清理逻辑删掉）。
+#   这是实测确认过的：模拟测试环境后 chroma_dir 仍指向 %APPDATA%\云梦枢\data\chroma。
+os.environ.setdefault("HNE_CHROMA_PERSIST_DIR", str(TEST_DATA_DIR / "data" / "chroma"))
+
 # 日志降噪：测试期间不写 DEBUG 噪音（pytest.ini 也设了 log_level，这里管的是 loguru）
 os.environ.setdefault("HNE_LOG_LEVEL", "WARNING")
 

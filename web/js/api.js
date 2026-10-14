@@ -130,6 +130,13 @@ export async function request(method, path, opts = {}) {
   const bearer = token !== undefined ? token : session.token;
   if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
+  // ★ 「存储设置」接口要求一个自定义头（后端见 app/api/v1/storage.py 的 _guard）。
+  //   为什么要有它：那个接口**不需要登录**（登录不上时正是要用它的时候），
+  //   所以后端换用"自定义头"当闸门 —— 带自定义头的跨源请求必须先过预检，
+  //   而 CORS 白名单里没有攻击者的源 ⇒ 恶意页面根本发不出这个请求。
+  //   ★ 在**这一处**统一加，而不是让调用方各自记得加：
+  //     漏加的表现是 403，而 403 很容易被当成"接口坏了"去查半天。
+  if (path.startsWith('/system/storage')) headers['X-HNE-Storage'] = '1';
 
   const init = { method, headers };
   if (body !== undefined) init.body = JSON.stringify(body);
