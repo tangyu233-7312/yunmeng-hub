@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    叙事会话视图（对话界面 + SSE 流式打字机）
 
    ==================== 为什么不用 EventSource？====================
@@ -306,6 +306,10 @@ function bindStatic(root, signal) {
       if (act === 'translate') return openTranslateDialog(root, signal);
       if (act === 'toggle-translation') return toggleTranslation(btn);
       if (act === 'translate-msg') return translateOneMessage(root, btn);
+      // ★ 预设美化（酒馆正则的显示层）：按需向后端要这条消息渲染后的样子。
+      //   实测单条美化能到 74 KB（预设内联 CSS），所以**不能**随消息列表一起发，
+      //   只能点一次算一次。算出来的 HTML 只在 iframe 沙箱里画，不落库。
+      if (act === 'regex-view') return showRegexView(root, btn);
       // ★ VN 舞台开关：只改"看的方式"，不落库（所以是本地开关，不发请求）。
       //   切换后重画面板即可 —— 舞台数据（该显示哪张立绘）是后端算好的。
       if (act === 'vn-stage') {
@@ -904,6 +908,15 @@ function messageActions(m, opts = {}) {
         `title="删掉这句话以及它之后的全部内容">撤回</button>`,
     );
   } else if (m.role === 'assistant') {
+    // ★ 预设美化（酒馆正则的显示层）：只有在**生效预设确实带显示层正则**时才给入口
+    //   —— 规则由后端算（state.detail.regex_view.display_count），前端只读，
+    //   否则会出现"按钮点了没反应"（后端没脚本可跑）。
+    if (state.detail?.regex_view?.display_count > 0) {
+      buttons.push(
+        `<button class="btn link small" data-act="regex-view" ` +
+          `title="按提示词预设自带的显示层正则渲染这条消息（酒馆的「美化」：状态栏 / 选项框 / 思考折叠）。只改显示，不改数据">✨ 美化</button>`,
+      );
+    }
     buttons.push(
       `<button class="btn link small" data-act="regen" ` +
         `title="用同一句话让模型重新写一遍（会删掉这条回复之后的内容，但不会多出发言）">重新生成</button>`,
@@ -2129,6 +2142,78 @@ function clearTranslating(bubble) {
   if (!bubble) return;
   bubble.classList.remove('translating');
   bubble.querySelector('.tr-hint')?.remove();
+}
+
+/**
+ * 逐条翻译：把**这一条**消息译成面板里设定的目标语言（开场白也可以）。
+ *
+ * ★ 不走 autoReload、只改这一条气泡：整页重渲染会 abort 当前 view signal，
+ *   把用户正在看的滚动位置和展开状态全打断（本项目的已知坑）。
+ * ★ 后端会把"跳过/失败"的原因放在响应壳的 message 里（例如"这条看起来已经是简体中文"），
+ *   这里必须如实弹出来 —— 点了没反应是最糟的体验。
+ * ★ 两份文本都留在 DOM 里（`dataset.altText`），切换仍是纯前端。
+ */
+
+/* ==================================================================
+   预设美化（酒馆正则的显示层）：按需向后端要"渲染后的样子"
+   ==================================================================
+   为什么要按需：实测单条美化能到 74 KB（预设每条正则都内联一段 <style>），
+   消息列表最多 200 条 ⇒ 随列表返回就是 ~14 MB，首屏会被拖垮。
+   后端只在这一刻算这一条，算完就丢（不落库、不改数据）。
+
+   ★ 渲染走已有的 mountRich：它在**无 allow-scripts 的 iframe** 里画，
+     并且先过 sanitizeHtml 白名单 —— 所以预设里带 <script> 也不会执行。
+     这与「绝不执行第三方 JS」是同一条红线。
+   ================================================================== */
+async function showRegexView(root, btn) {
+  const bubble = btn.closest('.msg');
+  const id = Number(bubble?.dataset.id);
+  const sessionId = state.sessionId;
+  if (!bubble || !id || !sessionId) return;
+
+  const body = bubble.querySelector('.msg-body');
+  if (!body) return;
+  // 已经渲染过就切回原文（按钮当开关用，避免"点一次就回不去"）
+  if (body.dataset.regexView === '1') {
+    body.dataset.regexView = '';
+    // 直接还原成"纯文本的原文"：mountRich 会在 body 里建 iframe/分段控件，
+    // 整体重置 innerHTML 比逐个删干净（漏一个就会留下半截卡片）。
+    body.innerHTML = esc(bubble.dataset.regexRaw ?? '');
+    btn.textContent = '✨ 美化';
+    return;
+  }
+
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = '渲染中…';
+  try {
+    // ★ 用 getRaw：`api.get` 只返回 data，而这里还要 envelope.message
+    //   （后端会说明"跑了几条、有没有没执行成功的"），不能丢。
+    const envelope = await api.getRaw(
+      `/narrative/sessions/${sessionId}/messages/${id}/regex-view`,
+    );
+    const data = envelope?.data || {};
+    const html = String(data.html || '');
+    if (!html) {
+      // 后端说"没有可渲染的" ⇒ 不假装成功，把原因说出来
+      toastErr(envelope?.message || '这条消息没有可渲染的美化结果');
+      return;
+    }
+    // 记住原文，供"切回原文"用（数据库里本来就是原文，这里只是本地还原）
+    bubble.dataset.regexRaw = String(data.raw || body.textContent || '');
+    body.dataset.regexView = '1';
+    mountRich(body, html, {
+      char: state.detail?.character_card?.name || '',
+      user: authSession.user?.username || '',
+    });
+    btn.textContent = '↩ 原文';
+    if (envelope?.message) toastOk(envelope.message);
+  } catch (err) {
+    toastErr(err?.toDisplay ? err.toDisplay() : String(err));
+    btn.textContent = originalLabel;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /**

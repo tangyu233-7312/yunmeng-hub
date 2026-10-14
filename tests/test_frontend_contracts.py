@@ -209,3 +209,104 @@ def test_stage_override_and_default_stay_two_directions() -> None:
         "顶栏按钮不该改全局默认，也不该清掉覆盖本身（它就是来设覆盖的）"
     )
 
+
+# ==================================================================
+#  预设美化（酒馆正则的显示层）：接线契约
+# ==================================================================
+def test_regex_view_button_only_shown_when_backend_says_so() -> None:
+    """★ 「✨ 美化」按钮必须**由后端字段**决定显不显示。
+
+    ==================== 这条守着什么 ====================
+    这个按钮点了会去后端跑预设自带的显示层正则。如果无条件显示，
+    遇到"预设里没有显示层正则"的会话就会**点了没反应**（后端如实回
+    「没有可用的显示层正则」）—— 用户会以为功能坏了。
+
+    所以判据只能来自后端算好的 `regex_view.display_count`（它解析了
+    extensions 才知道有几条显示层脚本），前端**不许自己猜**。
+    """
+    src = _read(CHAT_JS)
+    # ★ 不能借用 `_handler_block`：那个 helper 是为"事件监听器块"写的
+    #   （它切到 `{ signal },` 收尾），而这段在 `messageActions` 函数里。
+    #   这里按函数体切：从函数签名到下一个顶层函数。
+    start = src.index("function messageActions(")
+    block = src[start : src.index("\nfunction ", start + 10)]
+    assert "data-act=\"regex-view\"" in block, "按钮要带 data-act 让分发器能接住"
+    assert "display_count" in block, "条件必须读后端给的 display_count"
+    # 不许用"有没有预设"之类的本地推测来替代后端判据
+    assert "prompt_preset" not in block, (
+        "不能拿「有没有绑定预设」当判据 —— 预设有正则与没正则是两回事"
+    )
+
+
+def test_regex_view_renders_in_sandbox_and_can_go_back() -> None:
+    """★ 美化结果必须走 `mountRich`（无 allow-scripts 的 iframe 沙箱），且能切回原文。
+
+    两条硬要求：
+      · 渲染走 mountRich —— 预设产出的 HTML 里**可能带 `<script>`**
+        （实测那份预设就有），只有沙箱能保证它不执行（红线：绝不执行第三方 JS）；
+      · 能切回原文 —— 否则用户点一下"美化"就再也看不到模型原话了。
+    """
+    src = _read(CHAT_JS)
+    start = src.index("async function showRegexView(")
+    block = src[start : src.index("\nasync function ", start + 10)]
+    assert "mountRich(" in block, "必须走沙箱渲染，不能直接 innerHTML 插预设给的 HTML"
+    assert "regexRaw" in block, "要记下原文，供切回原文"
+    assert "regex-view" in block, "要调后端那个按需接口"
+    # 幂等/可回退：再点一次要还原
+    assert "dataset.regexView" in block, "要有个状态位支持『再点一次切回原文』"
+
+
+def test_regex_view_handler_is_wired_into_dispatcher() -> None:
+    """★ 接线检查：按钮的 data-act 必须在事件分发器里有对应分支。
+
+    "写了按钮但没接分发"是本项目吃过好几次的亏（改了 A 忘了改 B），
+    静态读源码就能抓住。
+    """
+    src = _read(CHAT_JS)
+    assert "act === 'regex-view'" in src, "分发器里缺少 regex-view 分支"
+    assert "showRegexView(" in src, "要真的调到处理函数"
+
+
+def test_regex_view_endpoint_path_matches_backend() -> None:
+    """前后端路径必须逐字对得上（前端拼的 URL 与后端注册的路由）。"""
+    src = _read(CHAT_JS)
+    assert "/regex-view`" in src, "前端请求的路径要以 /regex-view 结尾"
+    backend = (REPO / "app" / "api" / "v1" / "narrative.py").read_text(encoding="utf-8")
+    assert '"/sessions/{session_id}/messages/{message_id}/regex-view"' in backend, (
+        "后端要注册同名路由，否则前端 404"
+    )
+
+
+def test_each_message_action_function_is_defined_once_with_its_own_body() -> None:
+    """★ 每个消息级处理函数只能定义一次，且**注释不能被留下当孤儿**。
+
+    ==================== 这条守住一次真实的编辑事故 ====================
+    我插入 `showRegexView` 时，锚点选了 `async function translateOneMessage(`
+    这一行，于是新函数被塞进了 `translateOneMessage` 的 **JSDoc 与函数体之间**：
+      · 那段 JSDoc 变成了孤儿（挂在 `showRegexView` 上面，说的却是翻译的事）；
+      · `translateOneMessage` 的定义与函数体被拆开重组成两个函数（后面那个
+        没有 try/catch 的调用 `showTranslating`、前一个没有定义）。
+    语法检查**发现不了**（JS 是宽松的：没有声明的调用要到运行时才报），
+    只有"函数定义出现两次"这种静态特征能抓住。
+    """
+    src = _read(CHAT_JS)
+    import re as _re
+
+    for name in ("showRegexView", "translateOneMessage", "copyMessage", "toggleTranslation"):
+        # ★ 用整行匹配 `[async] function NAME(`：不能简单地数两次子串
+        #   —— `"async function X("` 里本身就含有 `"function X("`，会数成 2
+        #   （第一版就是这么假失败的）。
+        hits = len(
+            _re.findall(rf"^(?:async\s+)?function\s+{_re.escape(name)}\s*\(", src, _re.M)
+        )
+        assert hits == 1, f"{name} 应当只定义一次，实际 {hits} 次（可能被插入的代码拆开了）"
+    # 翻译那条路径的独有调用必须留在 translateOneMessage 里
+    start = src.index("async function translateOneMessage(")
+    rest = src[start + 10 :]
+    nxt = rest.find("\nasync function ")
+    end = start + 10 + nxt if nxt != -1 else len(src)
+    block = src[start:end]
+    assert "showTranslating(" in block, "translateOneMessage 的函数体被搬走了"
+    assert "/translate`" in block, "translateOneMessage 里必须调它自己的接口"
+    assert "regex-view" not in block, "美化那段不该混进 translateOneMessage"
+

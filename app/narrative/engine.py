@@ -56,9 +56,11 @@ from app.narrative import anchors as anchors_mod
 from app.narrative import dice as dice_mod
 from app.narrative import memory as memory_mod
 from app.narrative import plugin_runtime
+from app.narrative import presets
 from app.narrative import retrieval as retrieval_mod
 from app.narrative import state as state_mod
 from app.narrative import summary as summary_mod
+from app.narrative import tavern_regex
 from app.narrative import translate as translate_mod
 from app.narrative import world_book_scanner
 from app.narrative.prompt_builder import PromptPlan, build_prompt
@@ -339,6 +341,23 @@ def build_session_prompt(
     #   只改这一份"发给模型的内容"，不动数据库、不动界面显示。
     #   放在这里而不是各条路径里 —— 对话与「查看提示词」预览自动保持一致。
     plugin_runtime.apply_to_plan(prompt, plugins)
+
+    # ★ 酒馆预设自带的正则脚本（extensions.regex_scripts），同一个位置、同一个理由。
+    #   它做的主要事情是"把模型输出里的协议标签从历史中剥掉"，
+    #   不剥的话历史里堆满 <dream_body> 这类标签，模型会越来越倾向模仿标签格式。
+    #   ★ 顺序放在插件**之后**：插件是用户在本系统里自己装的、语义是"我的规则优先"；
+    #     预设自带的是外部素材，让它后跑（若反过来，插件的结果会被预设的清洗再改一遍）。
+    if preset is not None or preset_config is not None:
+        cfg = preset_config
+        if cfg is None and preset is not None:
+            cfg = presets.from_config(getattr(preset, "config", None) or {})
+        raw_ext = getattr(cfg, "raw_extensions", None) if cfg is not None else None
+        if raw_ext:
+            tavern_regex.apply_to_plan(
+                prompt,
+                raw_ext,
+                on_error=prompt.warnings.append,
+            )
 
     # 旧结构继续给出（stats 与界面读的是它），但数值来自融合后的结果：
     #   entries = 真正入选的世界书条目；matched = 关键词通道的候选总数。

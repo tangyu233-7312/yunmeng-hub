@@ -265,6 +265,16 @@ class SessionDetail(BaseModel):
         "{id, name, from: builtin|builtin_factory, min_reply_chars}。"
         "null 表示用户把它删掉了（删除是删，不会自动重建）。",
     )
+    regex_view: dict[str, Any] | None = Field(
+        default=None,
+        description="★ 生效预设自带的正则脚本状态（界面据此决定显不显示「看美化」入口）："
+        "{preset_id, total, enabled, display_count, prompt_count, unwired[], "
+        "unsupported[], has_timeout_engine}。"
+        "`display_count` 是**显示层**脚本条数（0 = 没什么可美化的，界面不给按钮）；"
+        "`prompt_count` 那些只影响发给模型的内容（界面不变，但用户该知道它们在跑）；"
+        "`unwired` 是作用于本系统还没接钩子的位置、因此**不会生效**的脚本；"
+        "null = 这份预设没有正则脚本（界面完全不显示相关入口）。",
+    )
     rolling_summary: str | None = None
     summary_coverage: dict[str, int] | None = Field(
         default=None,

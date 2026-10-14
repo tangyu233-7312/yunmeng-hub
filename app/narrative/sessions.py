@@ -26,6 +26,7 @@ from app.core.exceptions import BadRequestError, NotFoundError
 from app.narrative import branch as branch_mod
 from app.narrative import dice as dice_mod
 from app.narrative import plugin_runtime
+from app.narrative import presets
 from app.narrative import state as state_mod
 from app.narrative import state_schema as state_schema_mod
 from app.narrative import streaming
@@ -420,6 +421,145 @@ def _memory_summary_state(session: Any, messages: list[Any]) -> dict[str, Any]:
     }
 
 
+# ==================================================================
+#  酒馆正则：显示层（markdownOnly 那批）按需渲染
+# ==================================================================
+def regex_display_html(
+    db: Session,
+    session: NarrativeSession,
+    message: Any,
+    *,
+    depth: int | None = None,
+) -> tuple[str, str, str]:
+    """把一条消息按预设的**显示层正则**渲染成 HTML 卡片（酒馆的"美化"）。
+
+    ==================== 为什么是"按需"而不是随列表返回 ====================
+    实测这份预设的美化脚本把一条 422 字符的消息变成 **74,137 字符**
+    —— 因为每条脚本都内联一大段 `<style>`（膨胀 176 倍）。
+    200 条消息就是 ~14 MB，随列表一起返回会把接口拖垮、也会让首屏卡住。
+
+    ★ 而且这与酒馆本身一致：`markdownOnly` 的脚本是在**渲染那一刻**跑的，
+      **不改存下来的数据**。本系统把"存"和"看"分得更清楚：
+      数据库里永远是模型原话，界面要看清干净/美化过的样子时才来算。
+
+    ==================== 只跑显示层 ====================
+    这里 `is_markdown=True`，所以命中的是 `markdownOnly` 与"两个都开"的脚本；
+    `promptOnly` 的（剥标签那批）**不会**跑 —— 它们改的是发给模型的内容，
+    由装配层负责（`tavern_regex.apply_to_plan`）。
+
+    返回 `(正文HTML, 思考HTML, 说明)`。正文 HTML 为空表示"没有可渲染的美化结果"
+    （界面保持原样显示）；说明用于界面如实告知（例如"这份预设没有显示层脚本"）。
+    """
+    from app.narrative import tavern_regex
+
+    row = _effective_preset_row(db, session)
+    if row is None:
+        return "", "", "这条会话没有生效的提示词预设，没有可用的显示层正则。"
+    cfg = presets.from_config(getattr(row, "config", None) or {})
+    extensions = getattr(cfg, "raw_extensions", None) or {}
+    scripts = tavern_regex.load_scripts(extensions)
+    if not scripts:
+        return "", "", "这份预设里没有正则脚本，界面保持原样。"
+
+    body = str(getattr(message, "content", "") or "")
+    if not body.strip():
+        return "", "", "这条消息是空的，没什么可渲染的。"
+
+    placement = (
+        tavern_regex.PLACEMENT_USER_INPUT
+        if str(getattr(message, "role", "")) == "user"
+        else tavern_regex.PLACEMENT_AI_OUTPUT
+    )
+    html, stats = tavern_regex.apply_to_text(
+        body,
+        extensions,
+        placement=placement,
+        is_markdown=True,
+        depth=depth,
+    )
+    # 思考过程也过一遍（预设里有针对 REASONING 的美化/折叠）
+    reasoning = str(getattr(message, "reasoning", "") or "")
+    reasoning_html = ""
+    if reasoning:
+        reasoning_html, _ = tavern_regex.apply_to_text(
+            reasoning,
+            extensions,
+            placement=tavern_regex.PLACEMENT_REASONING,
+            is_markdown=True,
+            depth=depth,
+        )
+
+    if stats.replacements:
+        note = f"跑了 {stats.scripts_run} 条显示层正则，替换 {stats.replacements} 处"
+    else:
+        note = "这份预设的显示层正则没有匹配到这条消息（看起来就是原样）"
+    if stats.errors:
+        note += "；部分正则没能执行：" + "；".join(stats.errors[:3])
+    return html, reasoning_html, note
+
+
+def _effective_preset_row(db: Session, session: NarrativeSession) -> Any:
+    """取这条会话**实际生效**的预设行（会话绑定 > 全局默认）。
+
+    ★ 必须与装配时用的是同一份，否则"界面美化的样子"与"实际发出去的内容"
+      来自两套规则，用户会看到自相矛盾的结果。
+    """
+    if session.prompt_preset_id:
+        row = db.get(PromptPreset, session.prompt_preset_id)
+        if row is not None:
+            return row
+    return db.scalar(
+        select(PromptPreset).where(
+            PromptPreset.user_id == session.user_id,
+            PromptPreset.is_active.is_(True),
+        )
+    )
+
+
+def _regex_view_state(row: Any) -> dict[str, Any] | None:
+    """这份预设的显示层正则能不能用（界面据此决定显不显示「看美化」入口）。
+
+    ★ 逐项如实报告，而不是只给一个 bool：
+      · `display_count`  —— 显示层脚本条数（0 = 没有可美化的，界面不该给按钮）
+      · `prompt_count`   —— 只发送层的条数（那些**不**影响界面，但用户该知道它们在跑）
+      · `unwired`        —— 作用于我们没接钩子的 placement 的脚本（不生效，要说出来）
+      · `unsupported`    —— 支持不了的（如 substituteRegex≠0）
+    """
+    from app.narrative import tavern_regex
+
+    if row is None:
+        return None
+    cfg = presets.from_config(getattr(row, "config", None) or {})
+    extensions = getattr(cfg, "raw_extensions", None) or {}
+    scripts = tavern_regex.load_scripts(extensions)
+    if not scripts:
+        return None
+
+    enabled = [s for s in scripts if not s.disabled]
+    # 显示层 = 会跑在"渲染成 HTML"那一遍的脚本（markdownOnly，含两个都开的）。
+    # 只看它是否作用于我们能渲染的两类：模型输出 / 思考过程。
+    display = [
+        s
+        for s in enabled
+        if s.markdown_only
+        and (
+            tavern_regex.PLACEMENT_AI_OUTPUT in s.placement
+            or tavern_regex.PLACEMENT_REASONING in s.placement
+        )
+    ]
+    prompt_only = [s for s in enabled if s.prompt_only and not s.markdown_only]
+    return {
+        "preset_id": getattr(row, "id", None),
+        "total": len(scripts),
+        "enabled": len(enabled),
+        "display_count": len(display),
+        "prompt_count": len(prompt_only),
+        "unwired": tavern_regex.describe_unwired_placements(scripts),
+        "unsupported": tavern_regex.describe_unsupported(scripts),
+        "has_timeout_engine": tavern_regex.HAS_TIMEOUT_ENGINE,
+    }
+
+
 def translate_state(db: Session, session: NarrativeSession, messages: list[Any]) -> dict[str, Any]:
     """给「翻译」面板用的状态（**不触发任何模型调用**）。
 
@@ -528,8 +668,10 @@ def serialize_detail(
         )
     )
     # ★ 这两条分支以前写重了（两个分支结果一模一样），这里合成一条。
+    effective_row = None
     if bound is not None:
         effective = {**bound, "from": "session"}
+        effective_row = db.get(PromptPreset, session.prompt_preset_id)
     elif active is not None:
         effective = {
             "id": active.id,
@@ -537,6 +679,13 @@ def serialize_detail(
             "source": active.source_format,
             "from": "global_default",
         }
+        effective_row = active
+
+    # ---------------- 预设自带的正则脚本：界面要不要给「看美化」入口 ----------------
+    # ★ 为什么由**后端**算：判据是"这份预设里有没有显示层脚本"，
+    #   而这个判断要解析 extensions（1 MB 级别），不能让前端自己猜。
+    #   前端只读这个字段决定显不显示按钮，规则只有一份。
+    regex_view = _regex_view_state(effective_row)
 
     # ---------------- 内置守卫规则（永远是"追加"，所以单独报一份）----------------
     # ★ 为什么不混进 effective_preset：
@@ -602,6 +751,7 @@ def serialize_detail(
         provider=provider,
         prompt_preset=bound,
         effective_preset=effective,
+        regex_view=regex_view,
         builtin_guard=builtin_guard,
         rolling_summary=session.rolling_summary,
         # ★ 覆盖区间（第 X~Y 轮）：界面据此说明"这份前情提要管到哪儿"
@@ -990,6 +1140,35 @@ def get_owned_message(db: Session, session: NarrativeSession, message_id: int) -
             "消息不存在", detail={"message_id": message_id, "session_id": session.id}
         )
     return row
+
+
+def depth_of_message(
+    db: Session, session: NarrativeSession, message: Message
+) -> int:
+    """这条消息的"深度"：**它后面还有几条非 system 消息**（最后一条 = 0）。
+
+    ★ 口径与酒馆一致（script.js:4504 `coreChat.length - index - 1`），
+      也与 `tavern_regex.apply_to_plan` 里算 depth 的方式一致。
+      两者必须一致，否则"装配时跑的正则"与"界面看到的美化"会按不同深度判断，
+      出现"同一条消息在两个地方表现不同"的怪现象。
+
+    ★ 为什么用 count 而不是把整个列表读出来：一条长会话可能有几千条，
+      为了算一个下标去全量加载不值得。
+    ★ 只数 **非 system** 消息：酒馆的深度是在 `coreChat`（已滤掉 system）上算的
+      （script.js:4496 `chat.filter(x => !x.is_system)`）。
+      把 system 也算进来的话，深度会整体偏大，`minDepth`/`maxDepth` 那几条
+      正则就会在错误的层数上生效。
+    """
+    later = db.scalar(
+        select(func.count())
+        .select_from(Message)
+        .where(
+            Message.session_id == session.id,
+            Message.id > message.id,
+            Message.role != "system",
+        )
+    ) or 0
+    return int(later)
 
 
 def _recalculate_stats(db: Session, session: NarrativeSession) -> None:

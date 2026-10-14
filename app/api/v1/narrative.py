@@ -674,6 +674,56 @@ def translate_message(
     )
 
 
+@router.get(
+    "/sessions/{session_id}/messages/{message_id}/regex-view",
+    summary="按预设的显示层正则渲染这条消息（酒馆的「美化」，按需算）",
+    response_model=ApiResponse[dict],
+)
+def regex_view_message(
+    session_id: int,
+    message_id: int,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ApiResponse[dict]:
+    """把一条消息按**生效预设**的显示层正则（`markdownOnly`）渲染成 HTML 卡片。
+
+    ==================== 为什么是独立接口、而不是塞进消息列表 ====================
+    实测那份预设的美化脚本把一条 422 字符的消息撑到 **74,137 字符**
+    （每条脚本内联一大段 `<style>`，膨胀 176 倍）。消息列表最多 200 条，
+    若随列表返回就是 ~14 MB —— 首屏会被拖垮。所以按需渲染。
+
+    ★ 这与酒馆一致：`markdownOnly` 的脚本本来就在**渲染那一刻**跑，不改存的数据。
+    ★ 界面拿到的 html 只用于"看"，**不落库**：数据库里永远是模型原话，
+      所以随时能切回原文，也不会因为改了预设而让历史内容悄悄变化。
+
+    ★ 安全：返回的 HTML 交给前端的 `mountRich` 渲染 —— 它在**无 allow-scripts 的
+      iframe** 里跑，且先过 `sanitizeHtml` 白名单（`<script>`/`<iframe>`/`<svg>`
+      等一律丢弃，属性只留排版类，`href/src` 一个都不留）。
+      所以预设里的 `<script>` 不会执行 —— 这是"绝不执行第三方代码"红线的延续。
+    """
+    from app.narrative import sessions as sessions_mod
+
+    session = session_service.get_owned_session(db, current_user.id, session_id)
+    message = sessions_mod.get_owned_message(db, session, message_id)
+    # 深度：按"这条消息在会话里后面还剩几条"算，与装配层的口径一致
+    depth = sessions_mod.depth_of_message(db, session, message)
+    html, reasoning_html, note = sessions_mod.regex_display_html(
+        db, session, message, depth=depth
+    )
+    return ApiResponse.ok(
+        {
+            "message_id": message_id,
+            "html": html,
+            "reasoning_html": reasoning_html,
+            # ★ 如实给出原始正文：界面的"源码视图"与"渲染视图"切换要用它，
+            #   也保证用户永远能拿回模型原话（正则改的是展示，不是数据）
+            "raw": str(getattr(message, "content", "") or ""),
+            "raw_reasoning": str(getattr(message, "reasoning", "") or ""),
+        },
+        message=note,
+    )
+
+
 @router.put(
     "/sessions/{session_id}/memory-summary/anchors",
     summary="保存记忆锚点（整份替换，最多 5 条 / 2000 字）",

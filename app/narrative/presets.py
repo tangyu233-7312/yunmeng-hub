@@ -1064,6 +1064,14 @@ def merge_configs(
     ★ 为什么需要它：内置守卫规则要"永远追加在用户预设之后"。
     ★ 采样参数以 **base 为准**（用户显式设的覆盖内置默认），
       但 `min_reply_chars` 这类只有内置预设才有的键会被带过来。
+    ★ `raw_extensions` **原样从 base 带过来**：它装着用户预设自带的正则脚本
+      （显示美化 + 剥协议标签）。守卫预设是系统内置的、没有 extensions。
+      ★ 这里踩过一次真实的坑：合并时漏掉这个字段，于是
+        `resolve_preset()`（它**总是**会把守卫并进来）返回的 config 里
+        raw_extensions 恒为空 —— 结果 C 档的正则**一条都不会跑**，
+        而且不报任何错，表现成"功能做好了但看起来完全没效果"。
+        根因就是本函数只搬了 blocks/sampling/warnings 三个字段。
+      （守卫若有 extensions 也不该混进来：那不是用户预设的东西。）
     """
     if base is None:
         return extra
@@ -1087,6 +1095,7 @@ def merge_configs(
         sampling={**extra.sampling, **base.sampling},
         warnings=list(base.warnings) + list(extra.warnings),
         source_format=base.source_format,
+        raw_extensions=dict(base.raw_extensions or {}),
     )
 
 
