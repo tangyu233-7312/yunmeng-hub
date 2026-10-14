@@ -45,7 +45,29 @@ def test_login_page_tells_which_storage_is_in_use() -> None:
     # 两种存储都要有可读的名字，并且**明确写出"不互通"**
     assert "MySQL 数据库" in src and "本机文件（SQLite）" in src
     assert "不互通" in src, "必须明确说清两边的数据与账号都不互通"
-    assert "切换存储方式" in src, "要告诉用户怎么切回去"
+
+    # ★★ 而且"怎么切回去"必须是**真实存在的机制**。
+    #
+    #   这条以前写的是 `assert "切换存储方式" in src` —— 它会因为一句
+    #   **指向不存在的菜单**的文案而通过（原文："菜单「数据 → 切换存储方式…
+    #   可以切回去"，而那个菜单在界面上根本不存在）。
+    #   用户实测反馈："web 端并没有选择数据库的选项，只是提示选择了什么数据库"。
+    #
+    #   ⇒ 断言要盯"说的是不是真的"，不是"有没有提到这件事"。
+    #   ★ 但必须只看**用户可见的那段文案**（box.innerHTML 的模板串）：
+    #     第一版写成 `"菜单" not in src`（全文件），结果被我自己的**注释**
+    #     （解释当年那个坏文案）绊倒 —— 断言的对象选错了，就会假失败。
+    start = src.index("box.innerHTML = `")
+    end = src.index("`;", start)
+    visible = src[start:end]
+    assert "HNE_DB_BACKEND" in visible, (
+        "必须告诉用户真实的切换开关是 .env 里的 HNE_DB_BACKEND，"
+        "而不是一个界面上不存在的菜单"
+    )
+    assert "重启" in visible, "切换存储要重启后端才生效，这句话不能省"
+    assert "菜单" not in visible, (
+        "不许指向界面上不存在的菜单入口 —— 用户会以为自己漏看了某处"
+    )
 
 
 def test_login_page_storage_hint_never_blocks_login() -> None:

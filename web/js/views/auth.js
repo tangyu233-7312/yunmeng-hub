@@ -101,12 +101,22 @@ export function renderAuth(root, { onLoggedIn }) {
       if (!label) return;
       const where = which === 'sqlite' ? '应用数据目录下的 <code>data/app.sqlite3</code>'
         : '你配置的 MySQL 实例';
+      // ★ 这里必须写**真实存在的切换方式**（改 .env + 重启）。
+      //   以前写的是"菜单「数据 → 切换存储方式…」可以切回去" —— 那个菜单
+      //   **在界面上根本不存在**，用户按着找只会更困惑（用户实测反馈：
+      //   "web 端并没有选择数据库的选项，只是提示选择了什么数据库"）。
+      //   指向一个不存在的入口，比不说更糟：他会以为自己漏看了某处。
+      //   ★ 真实机制见 app/core/config.py（HNE_DB_BACKEND；未设且填了
+      //     HNE_MYSQL_* 时推断为 mysql）与 docs/overview.md「快速上手」。
       box.innerHTML = `
         <span class="auth-storage-tag">当前存储：${label}</span>
         <div class="auth-storage-hint">
           ${where}。★ 两种存储是<b>两个互相独立的库</b>，数据与<b>账号都不互通</b> ——
-          如果你在用 MySQL 时的账号在这里登录不上，多半是因为现在连的是另一个库：
-          菜单「数据 → 切换存储方式…」可以切回去；也可以在这里直接<b>注册</b>一个新账号。
+          如果你在用另一种存储时的账号在这里登录不上，多半是因为现在连的是另一个库。
+          切换方式：改项目根目录 <code>.env</code> 里的 <code>HNE_DB_BACKEND</code>
+          （<code>sqlite</code> = 本机文件；<code>mysql</code> = MySQL，另需填好
+          <code>HNE_MYSQL_*</code>），存盘后<b>重启后端</b>生效。
+          也可以在这里直接<b>注册</b>一个新账号。
         </div>`;
       box.classList.remove('hidden');
     } catch {

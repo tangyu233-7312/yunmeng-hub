@@ -695,6 +695,82 @@ def test_import_preserves_and_reports_extensions() -> None:
     assert "不会生效" in joined or "不会运行" in joined, "必须说清它们不生效"
 
 
+def test_unwired_regex_placements_are_actually_listed_not_promised() -> None:
+    """★ "不生效的正则会列出来"这件事必须**真的做**，不能只写在文案里。
+
+    ==================== 这条守着一个"空承诺" ====================
+    我上一轮写的文案是："作用于世界书、斜杠命令等位置的正则不会生效
+    （导入时会单独列出）。" —— 而代码里**根本没有任何地方列过它们**。
+    那份真实预设恰好没有世界书类脚本，于是那句话在这一屏上就是假的。
+    "承诺一个不存在的提示"与"说错能力范围"是同一类问题，只是更隐蔽：
+    用户会以为自己漏看了某处。
+
+    判据（两条都要）：
+      · 真有这类脚本时，**必须把它们列出来**（名字 + 作用于哪里）；
+      · 没有这类脚本时，**不许出现那句承诺**。
+    """
+    # ① 有世界书 / 斜杠命令脚本 → 必须列出来
+    raw = {
+        "prompts": [{"identifier": "a", "name": "块", "content": "正文"}],
+        "prompt_order": [
+            {"character_id": 100000, "order": [{"identifier": "a", "enabled": True}]}
+        ],
+        "extensions": {
+            "regex_scripts": [
+                {
+                    "scriptName": "世界书用",
+                    "findRegex": "/x/g",
+                    "replaceString": "y",
+                    "placement": [5],
+                    "disabled": False,
+                },
+                {
+                    "scriptName": "斜杠命令用",
+                    "findRegex": "/x/g",
+                    "replaceString": "y",
+                    "placement": [3],
+                    "disabled": False,
+                },
+                {
+                    "scriptName": "正常输出用",
+                    "findRegex": "/x/g",
+                    "replaceString": "y",
+                    "placement": [2],
+                    "disabled": False,
+                },
+            ]
+        },
+    }
+    joined = " ".join(presets.from_sillytavern(raw).warnings)
+    assert "世界书用" in joined, "作用于世界书的脚本必须**点名列出来**，不能只说'不会生效'"
+    assert "世界书" in joined, "要说清它作用于哪里"
+    assert "斜杠命令用" in joined, "作用于斜杠命令的同样要点名列出来"
+    assert "正常输出用" not in joined, "能生效的不该出现在'不会生效'清单里"
+
+    # ② 没有这类脚本 → 那句话不许出现（否则就是空承诺）
+    raw2 = {
+        "prompts": [{"identifier": "a", "name": "块", "content": "正文"}],
+        "prompt_order": [
+            {"character_id": 100000, "order": [{"identifier": "a", "enabled": True}]}
+        ],
+        "extensions": {
+            "regex_scripts": [
+                {
+                    "scriptName": "正常输出用",
+                    "findRegex": "/x/g",
+                    "replaceString": "y",
+                    "placement": [2],
+                    "disabled": False,
+                }
+            ]
+        },
+    }
+    joined2 = " ".join(presets.from_sillytavern(raw2).warnings)
+    assert "单独列出" not in joined2, (
+        "没有不生效的脚本时，不能留着'会单独列出'这种承诺 —— 那就是空话"
+    )
+
+
 def test_warnings_contain_no_markdown_emphasis() -> None:
     """★ 导入提醒里不能出现 `**加粗**` 这类 Markdown 标记。
 
@@ -703,6 +779,12 @@ def test_warnings_contain_no_markdown_emphasis() -> None:
     写 `**原样保留**` 的结果是用户看到一串字面量星号 —— 我在这次改动里
     就犯过这个错（正文注释里可以写 `**`，**用户可见的字符串里不行**）。
     这条用例把"用户可见文本"与"代码注释"的边界钉住。
+
+    ★★ 样例必须**把每一类提醒都触发出来**，否则漏掉的那条路上写了 `**`
+       也照样绿。第一版就少了一样：`regex_scripts` 没有 `placement`，
+       于是"作用于世界书、不生效"那条提醒根本不会生成 ——
+       而它恰好是新加的一段。变异测试当场证明了这个空转
+       （把 `**不会生效**` 塞回去，用例仍然通过）。
     """
     raw = {
         "prompts": [{"identifier": "a", "name": "块", "content": "{{setvar::x::1}}{{getvar::x}}"}],
@@ -710,10 +792,21 @@ def test_warnings_contain_no_markdown_emphasis() -> None:
             {"character_id": 100000, "order": [{"identifier": "a", "enabled": True}]},
         ],
         "extensions": {
-            "regex_scripts": [{"scriptName": "s", "findRegex": "/x/g", "replaceString": ""}],
+            "regex_scripts": [
+                {"scriptName": "s", "findRegex": "/x/g", "replaceString": ""},
+                # ★ 这一条让"不生效的正则会列出来"那段也被触发（见上）
+                {
+                    "scriptName": "wb",
+                    "findRegex": "/x/g",
+                    "replaceString": "",
+                    "placement": [5],
+                    "disabled": False,
+                },
+            ],
             "tavern_helper": {"scripts": [{"name": "h", "content": "1"}]},
         },
     }
     config = presets.from_sillytavern(raw)
+    assert config.warnings, "样例应当至少产出一条提醒（否则这条用例是空转的）"
     for w in config.warnings:
         assert "**" not in w, f"用户可见的提醒里混进了 Markdown 标记：{w!r}"

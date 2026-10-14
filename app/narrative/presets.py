@@ -612,6 +612,26 @@ def _classify(identifier: str, content: str, raw: dict[str, Any]) -> tuple[str, 
     return KIND_RULE, True
 
 
+def _unwired_placement_notes(scripts: list[Any]) -> list[str]:
+    """列出"作用于我们没接钩子的位置"的正则（它们**完全不生效**）。
+
+    ★ 为什么单独抽一个函数：导入提示与「会话详情」的 `regex_view.unwired`
+      必须给出**同一份答案**。两处各写一遍判断，迟早会说岔 ——
+      而"两个地方对同一件事说法不同"正是本项目最想避免的。
+      所以这里直接复用 `tavern_regex` 里那一份实现。
+
+    ★ 入参是**原始字典列表**（刚从 JSON 读进来的 extensions），
+      不是已编译对象 —— 导入这一步还没有编译过。
+    """
+    from app.narrative import tavern_regex
+
+    try:
+        parsed = [tavern_regex.RegexScript.from_dict(s) for s in scripts if isinstance(s, dict)]
+    except Exception:  # noqa: BLE001 - 解析失败不该让导入整个失败
+        return []
+    return tavern_regex.describe_unwired_placements(parsed)
+
+
 def _extension_notes(extensions: Any) -> list[str]:
     """如实说明酒馆预设里那些**我们跑不了**的扩展（正则脚本 / 酒馆助手 JS）。
 
@@ -638,9 +658,9 @@ def _extension_notes(extensions: Any) -> list[str]:
     if isinstance(regex_scripts, list) and regex_scripts:
         enabled = [s for s in regex_scripts if not (isinstance(s, dict) and s.get("disabled"))]
         size = len(json.dumps(regex_scripts, ensure_ascii=False))
-        # ★ 分层如实说明：这两句必须说准，因为**能不能生效**是要用户判断的事。
+        # ★ 分层如实说明：这几句必须说准，因为**能不能生效**是要用户判断的事。
         #   · 剥协议标签那批（promptOnly）在**发给模型前**自动生效；
-        #   · 美化那批（markdownOnly）在**界面渲染**时生效；我们在界面上默认就美化。
+        #   · 美化那批（markdownOnly）在**界面渲染**时生效；界面上默认就美化。
         #   以前这里写的是"本系统目前不会运行它们" —— C 档做完后那句话**已经不准了**，
         #   而"说错了能力范围"比"不说"更糟：用户会以为自己看到的就是原样。
         notes.append(
@@ -648,9 +668,24 @@ def _extension_notes(extensions: Any) -> list[str]:
             f"（启用 {len(enabled)} 条，约 {size:,} 字符）：它们负责把模型输出里的"
             "协议标签剥掉、以及把状态栏之类渲染成 HTML。本系统会跑其中作用于"
             "「模型输出 / 用户输入 / 思考过程」的那些 —— 剥标签的在发给模型前生效，"
-            "美化的在界面上生效（默认已开启，可逐条切回原文）；"
-            "作用于世界书、斜杠命令等位置的正则不会生效（导入时会单独列出）。"
+            "美化的在界面上生效（默认已开启，可逐条切回原文）。"
         )
+        # ★★ 这里**真的把不生效的列出来**，而不是写一句"导入时会单独列出"。
+        #   之前那句是**空承诺**：代码里根本没有任何地方列过它们，
+        #   而这份预设恰好没有世界书类脚本，于是那句话在这一屏上就是假的。
+        #   "承诺了不存在的提示"与"说错能力范围"是同一类问题，只是更隐蔽 ——
+        #   用户会以为自己漏看了某处。要么真做，要么不说，不能只许诺。
+        unwired = _unwired_placement_notes(enabled)
+        if unwired:
+            # ★ 注意：这里**不能写 Markdown 的 `**加粗**`** ——
+            #   导入弹窗只做 HTML 转义、不渲染 Markdown，星号会原样显示给用户。
+            #   `test_warnings_contain_no_markdown_emphasis` 钉着这条边界。
+            notes.append(
+                "其中这些正则不会生效（本系统没接对应位置的处理）："
+                + "；".join(unwired[:6])
+                + ("…" if len(unwired) > 6 else "")
+                + "。它们已原样保存，导出时一并还给你。"
+            )
 
     helper = extensions.get("tavern_helper")
     if isinstance(helper, dict):
