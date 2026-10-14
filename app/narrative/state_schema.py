@@ -124,11 +124,6 @@ def field_names(schema: dict[str, Any] | None) -> list[str]:
     return [str(f.get("name")) for f in schema["fields"]]
 
 
-def field_map(schema: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    if is_empty(schema):
-        return {}
-    return {str(f.get("name")): f for f in schema["fields"]}
-
 
 # ==================================================================
 #  解析 / 校验

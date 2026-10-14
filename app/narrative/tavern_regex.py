@@ -530,33 +530,6 @@ def describe_unwired_placements(scripts: list[RegexScript]) -> list[str]:
     return out
 
 
-#: 供调用方注入的宏替换函数（酒馆在替换串最后还会过一遍 `substituteParams`）。
-#: 默认不替换 —— 本系统没接这一步，宁可保持原样也不猜。
-Substituter = Callable[[str], str]
-
-
-def make_substituter(ctx: Any = None) -> Substituter:
-    """把本系统的宏替换包装成"替换串后处理"用的函数。
-
-    ★ 酒馆在 `runRegexScript` 的最后会执行 `substituteParams(replaceWithGroups)`
-      （engine.js:444），也就是**替换串里可以再写 `{{char}}` 之类的宏**。
-      本系统的等价物是 `presets.resolve_macros`，这里接上以保持语义。
-      没给 ctx 时退化成"原样返回"（宁可少做，也不猜）。
-    """
-    if ctx is None:
-        return lambda text: text
-    try:
-        from app.narrative.presets import resolve_macros
-
-        def _sub(text: str) -> str:
-            resolved, _unknown = resolve_macros(text, ctx)
-            return resolved
-
-        return _sub
-    except Exception:  # pragma: no cover - 只在循环导入等异常时
-        logger.warning("正则替换串的宏替换不可用，已按原样处理")
-        return lambda text: text
-
 
 # ==================================================================
 #  接进装配：把脚本作用到"即将发给模型"的那些消息上

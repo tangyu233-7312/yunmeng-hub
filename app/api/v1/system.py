@@ -19,49 +19,13 @@ from fastapi import APIRouter
 
 from app.api.deps import CurrentUser
 from app.core.config import data_root, get_settings
-from app.core.exceptions import ConfigurationError
 from app.db.chroma import check_vector_store, run_selftest
 from app.db.mysql import check_connection
-from app.llm import PROVIDER_TYPES, create_provider
+from app.llm import PROVIDER_TYPES
 from app.schemas.common import ApiResponse
 
 router = APIRouter()
 
-
-def _default_provider():
-    """用 .env 里配置的 DEFAULT_LLM_* 构造一个适配器，供诊断接口使用。
-
-    注意：这只是本地开发/演示用途。正式业务中的模型配置来自
-    llm_providers 表（每个用户各自配置），不会走这条路径。
-    """
-    settings = get_settings()
-    missing = [
-        name
-        for name, value in (
-            ("HNE_DEFAULT_LLM_BASE_URL", settings.DEFAULT_LLM_BASE_URL),
-            ("HNE_DEFAULT_LLM_API_KEY", settings.DEFAULT_LLM_API_KEY),
-            ("HNE_DEFAULT_LLM_MODEL", settings.DEFAULT_LLM_MODEL),
-        )
-        if not value
-    ]
-    if missing:
-        raise ConfigurationError(
-            "未配置默认模型，无法执行该诊断",
-            detail={
-                "missing": missing,
-                "suggestion": "请在 .env 中填写 HNE_DEFAULT_LLM_BASE_URL / API_KEY / MODEL",
-            },
-        )
-
-    return create_provider(
-        provider_type="openai_compatible",
-        base_url=settings.DEFAULT_LLM_BASE_URL,
-        api_key=settings.DEFAULT_LLM_API_KEY,
-        model_name=settings.DEFAULT_LLM_MODEL,
-        context_window=settings.DEFAULT_LLM_CONTEXT_WINDOW,
-        timeout=settings.LLM_REQUEST_TIMEOUT,
-        max_retries=1,
-    )
 
 
 # ==================================================================

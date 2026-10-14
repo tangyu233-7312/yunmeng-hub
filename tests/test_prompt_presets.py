@@ -28,6 +28,7 @@ from app.db.models import User
 from app.db.mysql import session_scope
 from app.llm.params import GenerationParams, compute_context_budget
 from app.llm.schema import ChatResult, StreamChunk, TokenUsage
+from app.narrative import presets
 from app.main import app
 from app.narrative import engine
 
@@ -699,13 +700,19 @@ def test_real_preset_import_if_file_present(client: TestClient, user: dict) -> N
     assert response.status_code == 201, response.text
     data = response.json()["data"]
 
-    assert data["block_count"] == 21
-    assert data["enabled_block_count"] == 20
-    assert data["sampling"]["temperature"] == 1.4
-    assert data["sampling"]["max_tokens"] == 8192
-    # 不支持的块要如实标注
-    unsupported = [b for b in data["blocks"] if not b["supported"]]
-    assert [b["identifier"] for b in unsupported] == ["personaDescription"]
+    # ★★ 期望值从文件自身推导，不写死数字。
+    #   这里原本写死 block_count=21 / enabled=20 / temperature=1.4 / max_tokens=8192，
+    #   全是**另一版文件**的数字；换成 119 块那份之后一启用就必然失败。
+    #   要守的是"导入不丢块、不谎报支持情况、与直接解析口径一致"。
+    prompt_ids = [p["identifier"] for p in raw["prompts"]]
+    imported_ids = [b["identifier"] for b in data["blocks"]]
+    assert imported_ids == prompt_ids, "导入不能丢块、也不能改顺序"
+    assert 0 < data["enabled_block_count"] <= len(prompt_ids)
+    # 采样参数直接来自文件（文件里写什么就该是什么）
+    assert float(data["sampling"]["temperature"]) == float(raw["temperature"])
+    # 不支持的块只能来自已知那份清单
+    unsupported = {b["identifier"] for b in data["blocks"] if not b["supported"]}
+    assert unsupported <= set(presets.UNSUPPORTED_BLOCKS)
 
 # ==================================================================
 #  内置守卫规则（身份认知 / 剧情不跑偏 / 输出长度）

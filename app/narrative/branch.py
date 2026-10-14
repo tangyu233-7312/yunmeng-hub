@@ -123,13 +123,6 @@ def group_sessions(db: Session, session: NarrativeSession) -> list[NarrativeSess
     return sorted(merged.values(), key=lambda r: (int(getattr(r, "branch_index", 0) or 0), r.id))
 
 
-def sibling_of(db: Session, session: NarrativeSession) -> NarrativeSession | None:
-    """同一组里的**另一条**线（没有就是 None）。两条线的场景下最多一条。"""
-    for row in group_sessions(db, session):
-        if row.id != session.id:
-            return row
-    return None
-
 
 def serialize_group(db: Session, session: NarrativeSession) -> dict[str, Any]:
     """给界面用的世界线组信息（切换器靠它渲染）。
@@ -529,13 +522,3 @@ def rename_line(
     return session
 
 
-def delete_line(db: Session, user_id: int, session_id: int) -> int:
-    """删除**这一条**世界线。
-
-    ★ 与"关闭分支模式"是两件事：
-      关闭只是收起入口，线还在；删除会连同它的消息一起删掉（不可逆）。
-      所以接口层必须先让用户确认，并且如实说明"另一条线不受影响"。
-    """
-    from app.narrative import sessions as session_service
-
-    return session_service.delete_session(db, user_id, session_id)

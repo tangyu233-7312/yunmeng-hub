@@ -398,22 +398,6 @@ def test_default_config_is_not_all_enabled() -> None:
 # ==================================================================
 #  真实文件的冒烟（存在才跑，不把用户机器上的路径写死进断言）
 # ==================================================================
-#: 真实预设里在 prompt_order 内的块（用于断言"顺序表 11 个"）
-_REAL_ORDER_IDS = frozenset(
-    {
-        "main",
-        "worldInfoBefore",
-        "charDescription",
-        "charPersonality",
-        "scenario",
-        "enhanceDefinitions",
-        "nsfw",
-        "worldInfoAfter",
-        "dialogueExamples",
-        "chatHistory",
-        "jailbreak",
-    }
-)
 
 
 def test_real_preset_file_if_present() -> None:
@@ -434,26 +418,54 @@ def test_real_preset_file_if_present() -> None:
     raw = json.loads(path.read_text(encoding="utf-8"))
     config = presets.from_sillytavern(raw)
 
-    assert len(config.blocks) == 21, "真实预设一共 21 个块"
-    # 顺序表里只有 11 个块，其余 10 个不在顺序表里。
-    # ★ 实测确认：不在顺序表 ≠ 被禁用 —— 它们默认仍然启用，
-    #   而且**全部是 pos=0**（写进系统提示词），不是深度注入。
-    in_order = [b for b in config.blocks if b.identifier in _REAL_ORDER_IDS]
-    assert len(in_order) == 11, "顺序表里 11 个块"
-    assert sum(1 for b in config.blocks if b.enabled) == 20, "20 个块启用、1 个禁用"
+    # ★★ 期望值一律**从文件自身推导**，不写死数字。
+    #
+    #   这里原本写死"一共 21 个块 / 顺序表 11 个 / 启用 20 个" —— 那是**针对某一版
+    #   文件**的结论。同一台机器换成另一份预设（119 块）之后，这个测试只要一启用
+    #   就必然失败，而它其实**没抓到任何真问题**（解析本身完全正确）。
+    #   它真正要守的是"不丢块、不擅自改启用状态、支持的宏要替换掉"，这些与文件版本无关。
+    prompt_ids = [p["identifier"] for p in raw["prompts"]]
+    assert [b.identifier for b in config.blocks] == prompt_ids, "块必须原样、按序保留"
 
-    # 真实文件里没有一个块是深度注入（pos 全为 0）—— 这修正了最初的误判
-    assert [b.identifier for b in config.blocks if b.depth_injected] == []
+    order_ids = [
+        item["identifier"]
+        for group in raw.get("prompt_order", [])
+        for item in group.get("order", [])
+    ]
+    block_ids = {b.identifier for b in config.blocks}
+    assert set(order_ids) <= block_ids, "顺序表引用到的块都要在结果里"
 
+    # 已知不支持的那份清单之外，不该有块被判成"不支持"
+    unsupported = {b.identifier for b in config.blocks if not b.supported}
+    assert unsupported <= set(presets.UNSUPPORTED_BLOCKS)
+
+    # 渲染：深度分组只应包含真正做深度注入的块（两处口径必须一致）
     result = presets.render_blocks(config, _request())
-    assert result.depth_groups() == {}
-    head_text = result.head()[0].content
-    # 那些 UUID 规则块的正文必须真的进了系统提示词
-    assert "Remember, you are not any AI" in head_text
-    # ★ 真实预设只用了 {{user}} / {{lastusermessage}} 两个宏，都在我们的支持清单里：
-    #   这既验证"支持的宏真的被替换了"，也说明**没有必要去猜**它用了什么别的语法。
-    assert "{{user}}" not in head_text, "支持的宏必须被替换掉"
+    depth_ids = {b.identifier for b in config.blocks if b.depth_injected}
+    for group in result.depth_groups().values():
+        assert {m.identifier for m in group} <= depth_ids
+
+    head = result.head()
+    assert head, "至少要渲染出一条系统提示词"
+    head_text = head[0].content
+    # ★ 支持的宏必须真的被替换掉（这条与文件版本无关，是行为）
+    assert "{{user}}" not in head_text
     assert "{{lastusermessage}}" not in head_text
+    # ★ 启用块的正文要真的进了系统提示词：取一段**不含宏的最长片段**来验，
+    #   这样既证明"内容进去了"，又不用把某一句具体的话写死。
+    longest = max(
+        (b for b in config.blocks if b.enabled and b.kind == "rule"),
+        key=lambda b: len(b.content),
+        default=None,
+    )
+    if longest is not None:
+        probe = ""
+        for chunk in longest.content.split("{{"):
+            head_part = chunk.split("}}")[-1]
+            if len(head_part.strip()) > len(probe):
+                probe = head_part.strip()
+        if len(probe) >= 20:
+            assert probe[:20] in head_text, "启用块的内容必须真的进系统提示词"
 
 
 # ==================================================================
