@@ -529,6 +529,12 @@ def export_preset(db: Session, user_id: int, preset_id: int) -> dict[str, Any]:
             ],
         }
     ]
+    # ★ 把导入时原样保管的 `extensions` 还回去（正则脚本 / 酒馆助手 JS）。
+    #   不还的话，"导入 → 导出"就是**有损**的：用户拿回酒馆会发现那 27 条正则
+    #   和 6 个助手脚本不见了。本模块承诺的是"来回搬不掉东西"。
+    #   我们没有解析过它，所以也不做任何改写 —— 原样写回。
+    if config.raw_extensions:
+        payload["extensions"] = dict(config.raw_extensions)
     return payload
 
 

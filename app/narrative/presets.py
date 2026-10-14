@@ -41,6 +41,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -104,6 +105,20 @@ BLOCK_LABELS: dict[str, str] = {
 
 #: 这些块本系统**还没有对应的内容源**，导入时要如实告知，不能假装支持
 UNSUPPORTED_BLOCKS: frozenset[str] = frozenset({BLOCK_PERSONA})
+
+#: ★ 酒馆在组装时**按名字硬插入**（不靠 `prompt_order`）的几个块。
+#  ==================== 为什么需要这份清单 ====================
+#  它们的 `injection_position` 是 null/0，却照样生效 —— 因为酒馆的
+#  `openai.js` 里写死了插入点：
+#      main               ← addToChatCompletion('main')
+#      nsfw / jailbreak   ← const systemPrompts = ['nsfw', 'jailbreak']
+#      enhanceDefinitions ← if (prompts.has('enhanceDefinitions'))
+#  ⇒ 一旦某个预设的 `prompt_order` 里没有它们，我们就会把它们追加到装配顺序
+#     **末尾**，而酒馆是插在**靠前**的位置。顺序会影响指令权重，所以要单独提醒。
+#  ★ 这份清单只用于"把话说准"，**不参与任何装配逻辑**（位置仍以 order_index 为准）。
+_HARDCODED_FIRST_BLOCKS: frozenset[str] = frozenset(
+    {"main", "nsfw", "jailbreak", "enhanceDefinitions"}
+)
 
 #: 酒馆里另有这些标记块，本系统没有对应能力。导入时**不丢**（保留在配置里方便回导），
 #: 但装配时跳过，并在预览里标注"本系统不支持"。
@@ -202,6 +217,11 @@ class MacroContext:
             "description": self.description,
             "personality": self.personality,
             "scenario": self.scenario,
+            # ★ `{{charIfNotGroup}}`：酒馆里"是群聊就给群名、不是就给角色名"
+            #   （script.js:2878-2895 getGroupValue）。本系统没有群聊概念，
+            #   所以它**恒等于角色名** —— 直接映射成 char 的值，
+            #   比"留个空串"或"报成不认识的宏"都更接近用户预期。
+            "charifnotgroup": self.char,
         }
 
 
@@ -234,6 +254,211 @@ def resolve_macros(text: str, ctx: MacroContext) -> tuple[str, list[str]]:
         return match.group(0)
 
     return _MACRO_RE.sub(_sub, text), unknown
+
+
+# ==================================================================
+#  ★ 酒馆变量宏（setvar / getvar / …）的静态解释器
+# ==================================================================
+# ★ 为什么不用正则、而要手写一个**花括号配对**的扫描器？
+#   因为变量的值里**可以再嵌宏**，而我们的真实数据里就有：
+#     「默认思维链」块的正文是一整个 setvar，它的值里嵌着
+#     {{getvar::sleep_var_thinking_level}}、{{getvar::sleep_dream_protocol}} 等。
+#   酒馆的宏正则（variables.js:241，`([^}]*)`）是**扁平的**、跨不过 `}`，
+#   但它默认启用的**新宏引擎**（power-user.js:302 experimental_macro_engine=true）
+#   用 CST 解析，参数里的嵌套宏会**先求值再交给 handler**
+#   （MacroCstWalker.js:426-428：`delayArgResolution` 未注册 → 求值嵌套参数）。
+#   ⇒ 所以"忠于酒馆"的做法是**配对扫描 + 递归求值**，而不是照抄那条扁平正则。
+#     （我第一版就是照抄了扁平正则 —— 跑真实数据才发现会截断，已改。）
+#
+# 局部 / 全局作用域分开存：酒馆里 `setvar` 是 per-chat、`setglobalvar` 是跨会话。
+# 本系统一次装配用不着区分，但分开存能保证 `getvar` 读不到 `setglobalvar` 写的值
+# （酒馆就是这个语义，混在一起会读出错的值）。
+_SET_MACROS = frozenset({"setvar", "setglobalvar"})
+_ADD_MACROS = frozenset({"addvar", "addglobalvar"})
+_INC_MACROS = frozenset({"incvar", "incglobalvar"})
+_DEC_MACROS = frozenset({"decvar", "decglobalvar"})
+_GET_MACROS = frozenset({"getvar", "getglobalvar"})
+_ALL_VAR_MACROS = _SET_MACROS | _ADD_MACROS | _INC_MACROS | _DEC_MACROS | _GET_MACROS
+
+#: `{{trim}}`：酒馆把它连同**周围的换行**一起吃掉（macros.js:633 的 preEnvMacros）。
+#: 顺序上它在变量宏**之后**（同一批 preEnvMacros 里 getVariableMacros 排在前面），
+#: 所以 setvar 被抹掉后留下的成片空行，正好由它收拾。
+_TRIM_RE = re.compile(r"(?:\r?\n)*\{\{\s*trim\s*\}\}(?:\r?\n)*", re.IGNORECASE)
+#: 老式尖括号写法 `<CHARIFNOTGROUP>`（macros.js:627，preEnvMacros 里的遗留宏）。
+_ANGLE_CHAR_IF_NOT_GROUP_RE = re.compile(r"<\s*CHARIFNOTGROUP\s*>", re.IGNORECASE)
+
+
+def _find_macro_end(text: str, start: int) -> int | None:
+    """从 `text[start:start+2] == '{{'` 起找**配对**的 `}}`，返回其后一位下标。
+
+    配对而不是找最近的 `}}`：因为值里嵌着 `{{getvar::…}}`，最近的那个 `}}`
+    只是内层的结尾。找不到配对时返回 None（交给调用方按普通文本处理，
+    绝不把半个宏吃掉）。
+    """
+    depth = 0
+    i = start
+    n = len(text)
+    while i < n - 1:
+        two = text[i : i + 2]
+        if two == "{{":
+            depth += 1
+            i += 2
+        elif two == "}}":
+            depth -= 1
+            i += 2
+            if depth == 0:
+                return i
+        else:
+            i += 1
+    return None
+
+
+def evaluate_variables(
+    blocks: list["PromptBlock"],
+) -> tuple[list["PromptBlock"], set[str], list[str]]:
+    """按装配顺序走一遍块，把 `setvar` / `getvar` / `trim` 解释成实际文本。
+
+    ==================== 这解决什么（用户 2026-10-14 的实际问题）====================
+    酒馆预设里那些"开关"（字数、思考强度、文风、人称）**不是靠改正文实现的**，
+    而是靠变量：
+
+        「变量初始化」块        {{setvar::sleep_var_zishu::400字}}
+        「写作模式」块          …输出字数应当满足 {{getvar::sleep_var_zishu}}…
+
+    本系统原先不认识这些宏，于是它们**原样留在提示词里** ——
+    实测那份真实预设装配出来，提示词里躺着 29 处 `{{setvar::` 与
+    15 处 `{{getvar::`（约 1,609 字符的字面量），模型看到的是乱码，
+    而"400 字 / 2000 token / 白话文风 / 第三人称"这些设置**全都没生效**。
+
+    ==================== 为什么能静态求值（而不是必须跑 JS）====================
+    酒馆用 JS 实现这些宏，但它们本身只是**顺序敏感的键值存取**：
+    `setvar` 写、`getvar` 读、都在同一次装配里、按块顺序发生。
+    实测那份预设满足"**先定义后读取**"（变量初始化在 idx=2，
+    消费者在 idx=9 / 84 / 108），所以按装配顺序过一遍就能算对，不需要 JS。
+
+    ==================== 一个"流水账"式的副作用 ====================
+    纯 setter 块（只写变量、自己不输出内容）解释完之后正文会变成**空字符串**
+    （酒馆同此：setvar 替换成 ''）。于是「变量初始化」「用户是user」这类块
+    会变成空块 —— 这不是 bug，正是它们的本意：**它们只负责设置开关**。
+    实测那份预设里 19 个启用块是这种纯 setter。
+    空块在 render_blocks 里会被记为"块内容为空"并跳过（不占提示词）。
+
+    ==================== 与酒馆的已知差异（如实写在这里）====================
+    1. **同一条文本里"先读后写"**：酒馆是"整条文本先跑完所有 setvar，
+       再跑所有 getvar"（macros.js:694 按宏类型逐轮 replace）。
+       本实现是**按出现顺序**左到右求值。差异只在
+       "同一个块里先 `getvar::x` 后来又 `setvar::x`"这种写法上 ——
+       真实数据里没有这种写法。真要完全对齐得改成"分轮次"求值，
+       但那会让嵌套宏的语义变得难以说明，所以这里选择"按出现顺序"，
+       并把它写明白。
+    2. **`addvar` / `incvar` / `decvar`** 按酒馆的语义实现在下面
+       （数值相加 / 字符串拼接 / 数组追加），但这三种本预设没用。
+
+    返回 `(改写后的块, 用到的变量名集合, 未解析的变量名列表)`。
+    **不改动传入的块**（返回新对象），避免调用方拿到被就地改过的预设。
+    """
+    local: dict[str, str] = {}
+    global_: dict[str, str] = {}
+    used: set[str] = set()
+    unresolved: list[str] = []
+
+    def _lookup(stores: dict, name: str, *, is_global: bool) -> str:
+        table = global_ if is_global else local
+        used.add(name)
+        if name in table:
+            return table[name]
+        if name not in unresolved:
+            unresolved.append(name)
+        return ""
+
+    def _apply(key: str, rest: str, resolve: Any) -> str:
+        """执行一个变量宏，返回它应当留在正文里的内容。"""
+        is_global = "global" in key
+
+        if key in _SET_MACROS or key in _ADD_MACROS:
+            name, sep, value = rest.partition("::")
+            name = name.strip()
+            if not name:
+                return ""
+            # ★ 先把值里的嵌套宏求值，再存 —— 与酒馆新引擎一致
+            #   （MacroCstWalker.js:427 先求值参数，再调 handler）。
+            value = resolve(value) if sep else ""
+            table = global_ if is_global else local
+            if key in _ADD_MACROS:
+                current = table.get(name, "")
+                try:
+                    merged = str(float(current) + float(value))
+                    # 整数值不要显示成 3.0（酒馆的 Number 相加也一样）
+                    merged = str(int(float(merged))) if float(merged).is_integer() else merged
+                except (TypeError, ValueError):
+                    merged = f"{current}{value}"
+                table[name] = merged
+            else:
+                table[name] = value
+            return ""
+
+        if key in _INC_MACROS or key in _DEC_MACROS:
+            name = rest.strip()
+            if not name:
+                return ""
+            table = global_ if is_global else local
+            try:
+                current = float(table.get(name, "") or 0)
+            except (TypeError, ValueError):
+                current = 0.0
+            new = current + (1 if key in _INC_MACROS else -1)
+            text_value = str(int(new)) if new.is_integer() else str(new)
+            table[name] = text_value
+            # 酒馆的 incvar/decvar **返回新值**（variables.js:196-210），不是空串
+            return text_value
+
+        if key in _GET_MACROS:
+            name = resolve(rest).strip() if "{{" in rest else rest.strip()
+            if not name:
+                return ""
+            return _lookup(global_ if is_global else local, name, is_global=is_global)
+
+        return rest
+
+    def _resolve(text: str) -> str:
+        """把一段文本里的变量宏全部解释掉（递归处理嵌套）。"""
+        if not text or "{{" not in text:
+            return text
+        out: list[str] = []
+        i = 0
+        n = len(text)
+        while i < n:
+            if text[i : i + 2] == "{{":
+                end = _find_macro_end(text, i)
+                # ★ `end > i` 这个条件不只是"保险"：它是**防死循环**的护栏。
+                #   如果 _find_macro_end 因为任何原因返回一个不前进的位置
+                #   （<= i），下面 `i = end` 就会原地踏步 → 装配时**整个请求挂住**。
+                #   提示词装配挂住的表现是"点发送没反应"，这种 bug 极难归因，
+                #   所以宁可在这里多一个判断，也不要让"理论上不会发生"当护身符。
+                if end is not None and end > i:
+                    inner = text[i + 2 : end - 2]
+                    name, sep, rest = inner.partition("::")
+                    key = name.strip().lower()
+                    if key in _ALL_VAR_MACROS:
+                        out.append(_apply(key, rest if sep else "", _resolve))
+                        i = end
+                        continue
+            out.append(text[i])
+            i += 1
+        return "".join(out)
+
+    out_blocks: list[PromptBlock] = []
+    for block in blocks:
+        content = block.content
+        if content and ("{{" in content or "<CHARIFNOTGROUP" in content.upper()):
+            content = _ANGLE_CHAR_IF_NOT_GROUP_RE.sub("{{charIfNotGroup}}", content)
+            content = _resolve(content)
+            # trim 放在变量之后（与酒馆 preEnvMacros 的顺序一致）
+            content = _TRIM_RE.sub("", content)
+        out_blocks.append(
+            replace(block, content=content) if content != block.content else block
+        )
+    return out_blocks, used, unresolved
 
 
 # ==================================================================
@@ -314,6 +539,29 @@ class PromptPresetConfig:
     warnings: list[str] = field(default_factory=list)
     source_format: str = "hne"
     """来源格式：hne（本系统导出）/ sillytavern（酒馆 completion preset）。"""
+    raw_extensions: dict[str, Any] = field(default_factory=dict)
+    """★ 酒馆预设里 `extensions` 那一整块，**原样留着、不解析也不执行**。
+
+    ==================== 为什么必须存（而且是原样存）====================
+    酒馆预设的 `extensions` 里装着两个我们**跑不了**的东西：
+      · `regex_scripts` —— 显示美化与"把协议标签从提示词里剥掉"的正则；
+      · `tavern_helper` —— 酒馆助手的 JS 脚本（本系统没有 JS 运行时，
+        这是 `plugin_service` 顶部写明的红线：绝不执行第三方代码）。
+
+    以前这两块是**一声不响地丢掉**的，而且 `to_dict()` 不序列化它们，
+    于是"导入 → 导出"之后**再也拿不回来**：用户删掉原始 JSON，那份预设里的
+    27 条正则就永久消失了（实测那份 1.36 MB 的文件只进库 5.1%）。
+
+    这与本模块开头写着的承诺直接矛盾 ——「绝不静默丢弃」、
+    「能**原样保真**地导入导出酒馆预设」。存下来之后：
+      · 导入 → 导出往返无损，用户可以拿回酒馆继续改；
+      · 将来若真去支持这些能力（正则分层、变量求值），**老数据直接受益**，
+        不必让用户重新导入一遍。
+
+    ★ 刻意**不**在这里做任何解释或归一化：这一块的语义属于酒馆，
+      我们只是保管。一旦开始"理解"它，就得跟着它的规范升级而改，
+      而我们对它的唯一承诺是"没弄丢"。
+    """
 
     def block_map(self) -> dict[str, PromptBlock]:
         return {b.identifier: b for b in self.blocks}
@@ -322,6 +570,7 @@ class PromptPresetConfig:
         return {
             "version": 1,
             "sampling": dict(self.sampling),
+            "raw_extensions": dict(self.raw_extensions),
             "blocks": [
                 {
                     "identifier": b.identifier,
@@ -361,6 +610,73 @@ def _classify(identifier: str, content: str, raw: dict[str, Any]) -> tuple[str, 
     if identifier in UNSUPPORTED_BLOCKS:
         return KIND_RULE, False
     return KIND_RULE, True
+
+
+def _extension_notes(extensions: Any) -> list[str]:
+    """如实说明酒馆预设里那些**我们跑不了**的扩展（正则脚本 / 酒馆助手 JS）。
+
+    ==================== 这段是为什么而写 ====================
+    用户 2026-10-14 问："导入预设时出现了忽略参数，你帮我看看是什么被忽略了、有什么用"。
+    查下来最要紧的发现不是"忽略了什么"，而是**有两块连提都没提**：
+    `extensions.regex_scripts`（27 条正则）与 `extensions.tavern_helper`
+    （6 个 JS 脚本，1.07 MB）在导入时凭空消失，界面上一个字都没有。
+
+    按本模块的原则（"凡是需要判断的地方，一律记进 warnings，绝不静默丢弃"），
+    这里把它们**逐项列出来并给出体积** —— 用户至少知道自己拿到手的是哪一部分。
+
+    ★ 只报**我们确实没有能力跑**的部分，并且把体积写出来：
+      体积是"这份预设有多少东西没生效"的最直观刻度。
+    ★ 不解释它们"干什么用"：那是酒馆的语义，我们没解析过，替它解释就是猜
+      （本项目在 pitfalls.md §23 吃过"按字面猜语义"的亏）。
+    """
+    if not isinstance(extensions, dict) or not extensions:
+        return []
+
+    notes: list[str] = []
+
+    regex_scripts = extensions.get("regex_scripts")
+    if isinstance(regex_scripts, list) and regex_scripts:
+        enabled = [s for s in regex_scripts if not (isinstance(s, dict) and s.get("disabled"))]
+        size = len(json.dumps(regex_scripts, ensure_ascii=False))
+        notes.append(
+            f"这份预设还带 {len(regex_scripts)} 条酒馆正则脚本"
+            f"（启用 {len(enabled)} 条，约 {size:,} 字符）：它们负责把模型输出里的"
+            "协议标签剥掉、以及把状态栏之类渲染成 HTML。"
+            "本系统目前不会运行它们，但已原样保存，导出时一并还给你。"
+        )
+
+    helper = extensions.get("tavern_helper")
+    if isinstance(helper, dict):
+        scripts = helper.get("scripts")
+        if isinstance(scripts, list) and scripts:
+            size = len(json.dumps(helper, ensure_ascii=False))
+            enabled = [s for s in scripts if not (isinstance(s, dict) and s.get("enabled") is False)]
+            notes.append(
+                f"这份预设还带 {len(scripts)} 个酒馆助手 JS 脚本"
+                f"（启用 {len(enabled)} 个，约 {size:,} 字符）：它们在酒馆里负责消息合并、"
+                "变量更新、格式补全等自动化。"
+                "本系统不执行第三方 JS（这是刻意的安全边界），因此这部分不会生效；"
+                "同样已原样保存，导出时一并还给你。"
+            )
+        variables = helper.get("variables")
+        if isinstance(variables, dict) and variables:
+            notes.append(
+                f"酒馆助手里还存着 {len(variables)} 个变量（属于那份 JS 的运行期状态），"
+                "已原样保存。"
+            )
+
+    other = [
+        k
+        for k in extensions
+        if k not in ("regex_scripts", "tavern_helper")
+    ]
+    if other:
+        notes.append(
+            "extensions 里还有这些本系统不认识的键（已原样保存、不做处理）："
+            + "、".join(sorted(other)[:10])
+            + ("…" if len(other) > 10 else "")
+        )
+    return notes
 
 
 def from_sillytavern(raw: dict[str, Any]) -> PromptPresetConfig:
@@ -416,13 +732,39 @@ def from_sillytavern(raw: dict[str, Any]) -> PromptPresetConfig:
 
     missing = [i for i in by_id if i not in order_ids]
     if missing:
-        # 酒馆里"没进顺序表"的块仍然会生效（按 injection_depth 注入），
+        # 酒馆里"没进顺序表"的块**仍然会生效**（它们不是靠顺序表定位的），
         # 所以不能丢：追加到顺序末尾，保持它们在 prompts 里的相对次序。
+        #
+        # ★ 措辞纠错（2026-10-14）：这里原先写的是"它们靠深度注入生效"——
+        #   **那是错的**，而且正是本项目 docs/pitfalls.md §23 记过的那个坑：
+        #   按字段名猜语义。核对酒馆源码（1.19.0）后的真实情况是：
+        #     · 深度注入的判据只有一个：`injection_position === 1`
+        #       （openai.js 的 absolutePrompts 过滤 + populationInjectionPrompts）；
+        #     · 而这些块在真实预设里 `injection_position` 是 **null/0**，
+        #       它们之所以生效，是因为酒馆在组装时**按名字硬插入**：
+        #         main        ← addToChatCompletion('main')
+        #         nsfw/jailbreak ← const systemPrompts = ['nsfw','jailbreak']
+        #         enhanceDefinitions ← if (prompts.has('enhanceDefinitions'))
+        #   ⇒ 所以只该陈述"事实"，不要替酒馆解释"为什么它生效"。
+        #
+        #   同时要如实说明差异：酒馆把 main 插在**靠前**的位置，我们统一追加到
+        #   装配顺序**末尾** —— 位置不同，效果就可能不同。宁可让用户看到这句，
+        #   也不要让他以为"导进来就一模一样了"。
         order_ids.extend(missing)
+        known_first = [i for i in missing if i in _HARDCODED_FIRST_BLOCKS]
         warnings.append(
-            f"有 {len(missing)} 个块不在酒馆的顺序表里（它们靠深度注入生效），"
-            "已追加到装配顺序末尾并保持启用。"
+            f"有 {len(missing)} 个块不在酒馆的顺序表里（酒馆里它们不是靠顺序表定位的，"
+            f"所以没丢），已追加到装配顺序末尾并保持启用：{'、'.join(missing[:8])}"
+            + ("…" if len(missing) > 8 else "")
         )
+        if known_first:
+            warnings.append(
+                "其中 "
+                + "、".join(known_first)
+                + " 在酒馆里是靠前插入的（按块名硬编码），"
+                "本系统统一按你看到的装配顺序排列，因此它们的位置与酒馆可能不同"
+                "（顺序会影响指令权重，必要时请手动上移）。"
+            )
 
     blocks: list[PromptBlock] = []
     unknown_macros: dict[str, list[str]] = {}
@@ -450,11 +792,30 @@ def from_sillytavern(raw: dict[str, Any]) -> PromptPresetConfig:
         )
         blocks.append(block)
 
-        # 记下每块用到的宏（预览界面要提示"这些宏会被替换/原样保留"）
-        if content:
-            _, unknown = resolve_macros(content, MacroContext())
-            if unknown:
-                unknown_macros[block.identifier] = unknown
+    # ---------- 2.2 变量宏与"还不认识的宏" ----------
+    # ★ 顺序很重要：**先**跑一遍变量解释（setvar/getvar/trim 现在支持了），
+    #   **再**看剩下哪些宏不认识。以前是直接扫原始正文，于是 setvar/getvar
+    #   被一律报成"不认识的宏" —— 现在它们能生效了，再报就是误报。
+    #   这里用的顺序与 render_blocks 一致（enabled + order_index），
+    #   所以"导入时说会不会生效"与"装配时实际怎样"是对得上的。
+    resolved_by_id: dict[str, str] = {}
+    enabled_blocks = sorted(
+        [b for b in blocks if b.enabled], key=lambda b: b.order_index
+    )
+    for original, evaluated in zip(
+        enabled_blocks, evaluate_variables(enabled_blocks)[0]
+    ):
+        resolved_by_id[original.identifier] = evaluated.content
+
+    for block in blocks:
+        if not block.enabled:
+            continue
+        text = resolved_by_id.get(block.identifier, block.content)
+        if not text:
+            continue
+        _, unknown = resolve_macros(text, MacroContext())
+        if unknown:
+            unknown_macros[block.identifier] = unknown
 
     unsupported = [b.identifier for b in blocks if not b.supported]
     if unsupported:
@@ -463,12 +824,26 @@ def from_sillytavern(raw: dict[str, Any]) -> PromptPresetConfig:
             + "、".join(unsupported)
         )
     if unknown_macros:
+        # ★ 不再截断（原先只列前 6 个块）。截断的代价是实打实的：
+        #   那份真实预设里 `charIfNotGroup` 恰好在第 7 个块之后，于是**从没露过面**，
+        #   用户看到的清单是残缺的，会以为"就这 6 个块有问题"。
+        #   列全的代价只是弹窗长一点 —— 宁可长，也不要给一份不完整的账。
         joined = "；".join(
-            f"{k}: {'、'.join(v)}" for k, v in list(unknown_macros.items())[:6]
+            f"{k}: {'、'.join(v)}" for k, v in unknown_macros.items()
         )
+        names = sorted({n for v in unknown_macros.values() for n in v})
         warnings.append(
-            f"检测到本系统不认识的宏变量（会在预览里原样保留，不会生效）：{joined}"
+            f"检测到本系统不认识的宏变量（会在提示词里原样保留、不会生效）：{joined}"
+            f"（共 {len(unknown_macros)} 个块 / {len(names)} 种：{'、'.join(names)}）"
         )
+
+    # ---------- 2.5 酒馆预设里"我们跑不了"的扩展 ----------
+    #  ★ 这一段是补上来的（2026-10-14）：`extensions` 里的正则脚本与酒馆助手 JS
+    #    以前是**一声不响地丢掉**的 —— 而本模块开头的承诺是"绝不静默丢弃"。
+    #    现在改成：原样存下来（见 raw_extensions）+ **明确告诉用户它是什么、多大**。
+    #    仍然要说清"本系统无法运行"，只是不要再说得含糊。
+    ext_warnings = _extension_notes(raw.get("extensions"))
+    warnings.extend(ext_warnings)
 
     # ---------- 3. 采样参数 ----------
     sampling: dict[str, Any] = {}
@@ -486,7 +861,7 @@ def from_sillytavern(raw: dict[str, Any]) -> PromptPresetConfig:
     passthrough = [k for k in sampling if PARAM_SUPPORT.get(k) == "passthrough"]
     if passthrough:
         warnings.append(
-            "这些参数是**本地推理引擎**参数，发给云端 OpenAI 兼容接口会被忽略："
+            "这些参数是本地推理引擎参数，发给云端 OpenAI 兼容接口会被忽略："
             + "、".join(sorted(passthrough))
             + "。本系统会照常保存，但不会假装它们生效。"
         )
@@ -496,6 +871,14 @@ def from_sillytavern(raw: dict[str, Any]) -> PromptPresetConfig:
         sampling=sampling,
         warnings=warnings,
         source_format="sillytavern",
+        # ★ 原样保管 `extensions`（正则脚本 + 酒馆助手 JS）。
+        #   我们不执行、不解释，但**绝不能丢** —— 见 PromptPresetConfig.raw_extensions
+        #   的说明。只接受 dict，避免把一堆无关的东西塞进库里。
+        raw_extensions=(
+            dict(raw.get("extensions"))
+            if isinstance(raw.get("extensions"), dict)
+            else {}
+        ),
     )
 
 
@@ -538,6 +921,12 @@ def from_config(raw: dict[str, Any] | None) -> PromptPresetConfig:
         sampling=dict(raw.get("sampling") or {}),
         warnings=list(raw.get("warnings") or []),
         source_format=str(raw.get("source_format") or "hne"),
+        # 从库里读回来时同样原样带上（老数据没有这个键 → 空 dict）
+        raw_extensions=(
+            dict(raw.get("raw_extensions"))
+            if isinstance(raw.get("raw_extensions"), dict)
+            else {}
+        ),
     )
 
 
@@ -853,8 +1242,19 @@ def render_blocks(config: PromptPresetConfig, req: RenderRequest) -> RenderResul
     """
     result = RenderResult()
     ctx = req.macro_context()
-    enabled = [b for b in config.blocks if b.enabled]
-    enabled.sort(key=lambda b: b.order_index)
+    # ★ 两个顺序都不能错：
+    #   1. **先按 order_index 排序，再解释变量** —— 变量是顺序敏感的
+    #      （setvar 必须发生在读它的 getvar 之前）。`config.blocks` 的存储顺序
+    #      通常已经有序，但用户在界面上拖动排序之后就不一定了，
+    #      所以这里必须显式排序，不能依赖"存进来就是有序的"。
+    #   2. **变量解释必须在宏替换之前**（resolve_macros 在下面的循环里逐块做）：
+    #      变量值本身可能含 `{{char}}` 之类的宏 —— 先把 `{{getvar::x}}` 换成值，
+    #      那值里的 `{{char}}` 才会在同一轮被替换掉。顺序反过来会留下
+    #      "值是有了、里面的宏没替换"的半成品。
+    enabled = sorted(
+        [b for b in config.blocks if b.enabled], key=lambda b: b.order_index
+    )
+    enabled = evaluate_variables(enabled)[0]
 
     head_parts: list[str] = []
     #: 世界书是否已经注入过（见下面「同一本世界书只注入一次」）

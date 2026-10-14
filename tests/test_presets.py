@@ -454,3 +454,266 @@ def test_real_preset_file_if_present() -> None:
     #   这既验证"支持的宏真的被替换了"，也说明**没有必要去猜**它用了什么别的语法。
     assert "{{user}}" not in head_text, "支持的宏必须被替换掉"
     assert "{{lastusermessage}}" not in head_text
+
+
+# ==================================================================
+#  ★ 酒馆变量宏（setvar / getvar / addvar / trim）：静默失效会被这里抓住
+# ==================================================================
+#  用户 2026-10-14 的真实反馈："导入预设时出现了忽略参数，是什么被忽略了？"
+#  查下来最要紧的一条：预设的"开关"（字数/思考强度/文风/人称）全靠变量驱动，
+#  而本系统原先不认识 setvar/getvar，于是它们**原样留在提示词里**，
+#  模型看到 1,609 字符的乱码，而那些设置一个都没生效。
+#
+#  ★ 这些用例的期望值**不是我自己想出来的**，是拿酒馆自己的引擎跑出来的
+#    （ST 1.19 默认启用新宏引擎 power-user.js:302；参数嵌套先求值见
+#     MacroCstWalker.js:426-428；trim 后处理见 MacroEngine.js:314）。
+#    先用真实预设逐块对了一遍，31 个启用块 0 差异，才把它固化成断言。
+
+
+def _var_config(blocks: list[tuple[str, str]]) -> presets.PromptPresetConfig:
+    """按顺序造一份带正文的预设（identifier/name 用不上，这里只关心正文）。"""
+    return presets.PromptPresetConfig(
+        blocks=[
+            presets.PromptBlock(
+                identifier=f"b{i}", name=f"块{i}", content=text, order_index=i
+            )
+            for i, text in enumerate(blocks)
+        ]
+    )
+
+
+def test_setvar_block_becomes_empty_and_getvar_reads_it() -> None:
+    """★ 最小闭环：定义变量的块变成空块，消费块拿到真值。
+
+    这是那份预设的"开关"机制：`变量初始化` 只负责 setvar（自己不留内容），
+    `写作模式` 用 getvar 把值取出来。
+    """
+    config = _var_config(
+        [
+            "{{setvar::zishu::400字}}",
+            "输出字数应当满足 {{getvar::zishu}}",
+        ]
+    )
+    result = presets.render_blocks(config, _request())
+    head = [m.content for m in result.head()]
+
+    # 纯 setter 块自己不产出内容（酒馆语义：setvar 替换成空串）
+    assert head[0] == "" or "zishu" not in head[0]
+    # 消费块里必须出现真正的值，不能残留字面量
+    joined = "\n".join(head)
+    assert "400字" in joined
+    assert "{{getvar" not in joined, "getvar 必须被替换，不能留在提示词里"
+    assert "{{setvar" not in joined, "setvar 必须被替换，不能留在提示词里"
+
+
+def test_nested_setvar_value_is_resolved_before_storing() -> None:
+    """★ 嵌套写法：值里的 `{{getvar::y}}` 必须**先求值再存**。
+
+    这是照酒馆新宏引擎来的（MacroCstWalker.js:426-428：参数里的嵌套宏先求值）。
+    我第一版用了扁平正则（`[^}]*`，照抄酒馆那条老正则），
+    结果遇到真实数据里「默认思维链」那种"整个块就是一个大 setvar、值里嵌 4 个
+    getvar"的写法会**截断**。这条用例就是钉住那个 bug 不再回来。
+    """
+    config = _var_config(
+        [
+            "{{setvar::inner::内层值}}",
+            "{{setvar::outer::外层[{{getvar::inner}}]}}",
+            "结果：{{getvar::outer}}",
+        ]
+    )
+    result = presets.render_blocks(config, _request())
+    joined = "\n".join(m.content for m in result.head())
+    assert "外层[内层值]" in joined, f"嵌套值没被正确求值：{joined!r}"
+    assert "{{" not in joined
+
+
+def test_addvar_appends_and_protocol_lists_accumulate() -> None:
+    """★ `addvar`：数值相加、非数值则字符串拼接（variables.js:136-164）。
+
+    真实预设用它**累加协议名**（三个块各 addvar 一次
+    `sleep_dream_protocol`，最后得到逗号分隔的清单）—— 这直接决定模型
+    被要求输出哪几种格式协议，错了就是"模型不按预设输出"。
+    """
+    config = _var_config(
+        [
+            "{{setvar::p::A}}",
+            "{{addvar::p::,B}}",
+            "{{addvar::p::,C}}",
+            "协议：{{getvar::p}}",
+            "{{setvar::n::1}}",
+            "{{addvar::n::2}}",
+            "数：{{getvar::n}}",
+        ]
+    )
+    result = presets.render_blocks(config, _request())
+    joined = "\n".join(m.content for m in result.head())
+    assert "协议：A,B,C" in joined, f"addvar 的拼接结果不对：{joined!r}"
+    assert "数：3" in joined, f"addvar 的数值相加不对：{joined!r}"
+
+
+def test_variables_are_order_sensitive_not_storage_order() -> None:
+    """★ 变量的读取必须按 **order_index**（而不是列表存储顺序）。
+
+    用户在界面上拖动排序之后，`config.blocks` 的顺序就可能与装配顺序不同。
+    如果先解释变量再排序，就会"读到还没定义的变量"→ 得到空串且**不报错**，
+    表现成"这个开关莫名其妙不生效"。
+    """
+    blocks = [
+        # 消费块在存储里排在前面，但 order_index=1（后执行）
+        presets.PromptBlock(
+            identifier="consumer",
+            name="消费",
+            content="值={{getvar::x}}",
+            order_index=1,
+        ),
+        presets.PromptBlock(
+            identifier="setter",
+            name="定义",
+            content="{{setvar::x::正确}}",
+            order_index=0,
+        ),
+    ]
+    result = presets.render_blocks(presets.PromptPresetConfig(blocks=blocks), _request())
+    joined = "\n".join(m.content for m in result.head())
+    assert "值=正确" in joined, f"没有按 order_index 求值：{joined!r}"
+
+
+def test_trim_swallows_surrounding_newlines() -> None:
+    """`{{trim}}` 连同**周围的换行**一起吃掉（MacroEngine.js:314 的原文正则）。
+
+    纯 setter 块被抹空后会留下成片空行，全靠 trim 收拾 ——
+    不然提示词里会多出一堆无意义的空白。
+    """
+    config = _var_config(["前\n\n\n{{setvar::a::1}}\n{{trim}}\n\n\n后"])
+    result = presets.render_blocks(config, _request())
+    joined = "\n".join(m.content for m in result.head()).strip()
+    assert "{{trim}}" not in joined, "trim 宏必须被处理掉"
+    assert joined.startswith("前") and joined.endswith("后")
+    assert "\n\n\n" not in joined, f"trim 没有吃掉周围空行：{joined!r}"
+
+
+def test_unresolved_variable_does_not_leak_literal_macro() -> None:
+    """读一个**从未定义**的变量 → 得到空串，而不是把 `{{getvar::x}}` 喂给模型。
+
+    ★ 这是一个刻意的取舍：留着字面量会把乱码喂给模型（正是要修的毛病），
+      换成空串 + 明确报告，至少模型收到的是一句干净的话。
+      同时它必须出现在 `unresolved` 里，让人能看见"这里少了东西"。
+    """
+    config = _var_config(["值={{getvar::never_defined}}"])
+    result = presets.render_blocks(config, _request())
+    joined = "\n".join(m.content for m in result.head())
+    assert "{{getvar" not in joined, "未解析的 getvar 不能残留在提示词里"
+    assert "值=" in joined
+    # 走一遍解释器本身，确认它把名字报了出来
+    _, used, unresolved = presets.evaluate_variables(list(config.blocks))
+    assert "never_defined" in unresolved
+
+
+def test_char_if_not_group_falls_back_to_char_name() -> None:
+    """`{{charIfNotGroup}}` 在非群聊里 = 角色名（script.js:2878-2895）。
+
+    真实预设的 `main` 块用它；本系统没有群聊概念，所以它恒等于 `{{char}}`。
+    以前这个宏是会**被报成"不认识"**的（因为未知宏警告截断在 6 个块，
+    它从没露过面）—— 现在它被支持了，断言它真的被替换成角色名。
+    角色名来自角色卡（`_request()` 的 FakeCard.name == "灰烬"）。
+    """
+    config = _var_config(["角色是 {{charIfNotGroup}}"])
+    result = presets.render_blocks(config, _request())
+    joined = "\n".join(m.content for m in result.head())
+    assert "灰烬" in joined
+    assert "charIfNotGroup" not in joined
+
+
+def test_import_does_not_report_variable_macros_as_unknown() -> None:
+    """★ 变量宏已经支持了，导入时就**不该再报**它们"不认识"。
+
+    这条守的是"报告与现实一致"：以前导入弹窗把 setvar/getvar 全列成
+    "本系统不认识的宏"，现在它们能生效了，再报就是误报，
+    会让用户按错误的前提去手动改预设。
+    """
+    raw = {
+        "prompts": [
+            {"identifier": "a", "name": "定义", "content": "{{setvar::x::1}}"},
+            {"identifier": "b", "name": "消费", "content": "{{getvar::x}}"},
+            {"identifier": "c", "name": "真未知", "content": "{{someUnknownMacro}}"},
+        ],
+        "prompt_order": [
+            {"character_id": 100000, "order": [
+                {"identifier": "a", "enabled": True},
+                {"identifier": "b", "enabled": True},
+                {"identifier": "c", "enabled": True},
+            ]},
+        ],
+    }
+    config = presets.from_sillytavern(raw)
+    unknown_line = " ".join(w for w in config.warnings if "不认识的宏" in w)
+
+    assert "someUnknownMacro" in unknown_line, "真正不认识的宏必须报出来"
+    assert "getvar" not in unknown_line, "已经支持的 getvar 不该再报"
+    assert "setvar" not in unknown_line, "已经支持的 setvar 不该再报"
+
+
+# ==================================================================
+#  ★ A 档：酒馆预设里"我们跑不了"的扩展必须**原样保存**且**如实报告**
+# ==================================================================
+#  动机同上：用户问"什么被忽略了"。`extensions` 里的正则脚本与酒馆助手 JS
+#  以前是**一声不响地丢掉**的，而且 to_dict() 不序列化它们，
+#  于是"导入 → 导出"之后再也拿不回来 —— 用户删掉原始 JSON 就永久失去它们。
+
+
+def test_import_preserves_and_reports_extensions() -> None:
+    """`extensions` 要原样存下、导出时还回去，并且**明确报出**它有多大。"""
+    raw = {
+        "prompts": [{"identifier": "a", "name": "块", "content": "正文"}],
+        "prompt_order": [
+            {"character_id": 100000, "order": [{"identifier": "a", "enabled": True}]}
+        ],
+        "extensions": {
+            "regex_scripts": [
+                {"scriptName": "美化", "findRegex": "/<x>/g", "replaceString": ""},
+            ],
+            "tavern_helper": {
+                "scripts": [{"name": "助手", "content": "console.log(1)"}],
+                "variables": {"v": 1},
+            },
+        },
+    }
+    config = presets.from_sillytavern(raw)
+
+    # 1) 原样保真：内容一模一样
+    assert config.raw_extensions["regex_scripts"][0]["scriptName"] == "美化"
+    assert config.raw_extensions["tavern_helper"]["scripts"][0]["name"] == "助手"
+
+    # 2) 存库往返不丢
+    back = presets.from_config(config.to_dict())
+    assert back.raw_extensions == config.raw_extensions, "to_dict/from_config 把扩展弄丢了"
+
+    # 3) 如实报告（不能再无声无息）
+    joined = " ".join(config.warnings)
+    assert "正则脚本" in joined, "正则脚本的存在必须被告知"
+    assert "酒馆助手 JS" in joined, "酒馆助手脚本的存在必须被告知"
+    assert "不会生效" in joined or "不会运行" in joined, "必须说清它们不生效"
+
+
+def test_warnings_contain_no_markdown_emphasis() -> None:
+    """★ 导入提醒里不能出现 `**加粗**` 这类 Markdown 标记。
+
+    因为前端是这样渲染的（`web/js/views/presets.js:396`、
+    导入完成弹窗在 `:792`）：`esc(n)` 只做 HTML 转义、**不渲染 Markdown**。
+    写 `**原样保留**` 的结果是用户看到一串字面量星号 —— 我在这次改动里
+    就犯过这个错（正文注释里可以写 `**`，**用户可见的字符串里不行**）。
+    这条用例把"用户可见文本"与"代码注释"的边界钉住。
+    """
+    raw = {
+        "prompts": [{"identifier": "a", "name": "块", "content": "{{setvar::x::1}}{{getvar::x}}"}],
+        "prompt_order": [
+            {"character_id": 100000, "order": [{"identifier": "a", "enabled": True}]},
+        ],
+        "extensions": {
+            "regex_scripts": [{"scriptName": "s", "findRegex": "/x/g", "replaceString": ""}],
+            "tavern_helper": {"scripts": [{"name": "h", "content": "1"}]},
+        },
+    }
+    config = presets.from_sillytavern(raw)
+    for w in config.warnings:
+        assert "**" not in w, f"用户可见的提醒里混进了 Markdown 标记：{w!r}"
