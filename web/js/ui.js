@@ -335,7 +335,8 @@ export function looksLikeHtml(text) {
  *   · 属性只留 `style/class/表格结构` —— **任何 `on*` 事件、`href/src` 都不会留下**；
  *   · 因此即使角色卡是别人公开分享的，也不会在你的控制台里执行脚本。
  */
-export function sanitizeHtml(html) {
+export function sanitizeHtml(html, opts = {}) {
+  const { proseLineBreaks = false } = opts;
   const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
 
   const clean = (node, out) => {
@@ -398,10 +399,79 @@ export function sanitizeHtml(html) {
 
   const box = document.createElement('div');
   clean(doc.body, box);
+  // ★ 顺序不能反：`clean` 是**重建 DOM**（文本节点都重新 append 过），
+  //   所以必须等它跑完再动文本节点；反过来做会被它当纯文本转义掉。
+  if (proseLineBreaks) proseNewlinesToBreaks(box);
   return box.innerHTML;
 }
 
 /* ---------------- HTML 卡片：真正把它渲染出来 ---------------- */
+
+/**
+ * 把「有实际内容的文本节点」里的换行变成 `<br>`。
+ *
+ * ==================== 为什么必须做（真实故障）====================
+ * 酒馆正则"美化"出来的 HTML 长这样（实测那条 1669 字符的消息）：
+ *
+ *     <div class="dream-scene-bar">…状态栏…</div>
+ *     你弯下腰，钻进左边那条矮巷道。
+ *
+ *     第一下没算准高度。后脑勺蹭过岩壁下沿…
+ *
+ *     <details><summary>平行事件</summary>…</details>
+ *
+ * 也就是说：**正文段落是裸文本，靠 `\n\n` 分段**，没有 `<p>`/`<br>` 包着。
+ * 聊天区的 `.msg-body` 是 `white-space: pre-wrap`，所以那样显示是正常的；
+ * 但 `mountRich` 把内容放进 **iframe**（独立文档，默认 `white-space: normal`），
+ * HTML 会把连续换行**折叠成一个空格** —— 于是整段正文挤成一坨，
+ * 用户的原话是"文字排版变得十分难看，没有分段"。
+ *
+ * ==================== 为什么不是简单地给 body 加 pre-wrap ====================
+ * 那些美化 HTML 里有大量**用于缩进的换行**（标签之间、`<style>` 内部），
+ * 实测 63 处。给整篇加 `pre-wrap` 会把它们全部显形，排版反而更乱
+ * （三种做法都截图比对过：只转"有内容的文本节点"这一种效果正确）。
+ *
+ * 所以判据是两条**同时**成立：
+ *   · 这个文本节点**去掉空白后还有内容**（纯缩进节点跳过 → 不会被显形）；
+ *   · 它里面**确实含换行**（没有就不用动）。
+ * 另外 `<style>`/`<script>`/`<textarea>`/`<pre>` 里的换行是**语义的一部分**，
+ * 一概不能碰（往 `<style>` 里塞 `<br>` 会直接破坏样式表）。
+ *
+ * ★ 只在"渲染视图"里做：用户切到「源码」页签看到的仍是原样文本，
+ *   所以这不是"改数据"，只是"怎么显示"。
+ *
+ * @param {Document|Element} root 已清洗过的 DOM（会被**就地**修改）
+ */
+function proseNewlinesToBreaks(root) {
+  if (!root) return;
+  const SKIP = new Set(['style', 'script', 'textarea', 'pre', 'code']);
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  /** @type {Text[]} */
+  const targets = [];
+  let node = walker.nextNode();
+  while (node) {
+    const parent = node.parentElement;
+    const value = node.nodeValue || '';
+    if (
+      parent &&
+      !SKIP.has(parent.tagName.toLowerCase()) &&
+      value.includes('\n') &&
+      value.trim() // ★ 纯缩进/空白的节点跳过，否则会把缩进也顶出来
+    ) {
+      targets.push(node);
+    }
+    node = walker.nextNode();
+  }
+  for (const text of targets) {
+    const frag = root.ownerDocument.createDocumentFragment();
+    const lines = (text.nodeValue || '').split('\n');
+    lines.forEach((line, index) => {
+      if (index > 0) frag.appendChild(root.ownerDocument.createElement('br'));
+      frag.appendChild(root.ownerDocument.createTextNode(line));
+    });
+    text.parentNode?.replaceChild(frag, text);
+  }
+}
 
 /**
  * 清洗 CSS：只挡"能执行 / 能对外发请求做探针"的写法。
@@ -455,11 +525,15 @@ function stripFences(text) {
  *
  * @param host  容器元素（会被清空重填）
  * @param html  原始文本（HTML 或纯文本）
- * @param opts  { char, user, view: 'html' | 'raw' }
+ * @param opts  { char, user, view: 'html' | 'raw', keepProseLineBreaks: boolean }
+ *   `keepProseLineBreaks`：把"有内容的文本节点"里的换行转成 `<br>`。
+ *   专给**酒馆正则美化**出来的内容用（它的正文是裸换行，见
+ *   `proseNewlinesToBreaks` 的说明）；角色卡开场白默认**不开**，
+ *   免得悄悄改掉它们已经稳定的排版。
  */
 export function mountRich(host, html, opts = {}) {
   if (!host) return;
-  const { char = '', user = '', view = 'html' } = opts;
+  const { char = '', user = '', view = 'html', keepProseLineBreaks = false } = opts;
 
   let text = stripFences(html);
   if (char) text = text.replace(/\{\{\s*char\s*\}\}/gi, char);
@@ -499,7 +573,10 @@ export function mountRich(host, html, opts = {}) {
     frame.setAttribute('sandbox', 'allow-same-origin');
     frame.setAttribute('referrerpolicy', 'no-referrer');
     frame.setAttribute('title', '角色卡 HTML 渲染');
-    frame.srcdoc = richDocHead() + sanitizeHtml(text) + '</body></html>';
+    frame.srcdoc =
+      richDocHead() +
+      sanitizeHtml(text, { proseLineBreaks: keepProseLineBreaks }) +
+      '</body></html>';
     frame.addEventListener('load', () => {
       // 挂上"图片加载失败"的兜底：外链图床被墙时，用户看到的不该是破图小图标
       patchBrokenImages(frame);

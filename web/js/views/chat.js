@@ -52,6 +52,33 @@ const state = {
 
 /** 当前导航批次的信号（切页时 abort） */
 let activeSignal = null;
+
+/**
+ * 显示层美化的结果缓存：消息 id → { html, raw, reasoning_html, raw_reasoning, note }。
+ *
+ * ★ 为什么要缓存：用户要的是"**默认**就美化"，但美化结果动辄几十 KB
+ *   （实测那条 1,669 字符的消息美化后 31,978 字符，其中一半是脚本内联的
+ *   固定 <style> 模板）。所以：
+ *     · 一次批量请求拿回**整条会话**的结果（不是每条一个往返）；
+ *     · 结果留在内存里，来回切"原文/美化"不再发请求；
+ *     · **只缓存后端说"真的变了"的那些**（没有协议标签的消息压根不在里面），
+ *       所以它不会随会话长度无上限地涨。
+ *   ★ 切会话要清空（见 openSession）：否则会把上一个会话的 HTML 画到新会话上。
+ *   ★ 不落库：缓存只是"这一次看的方式"，数据库里永远是模型原话。
+ */
+let regexViewCache = new Map();
+
+/**
+ * 用户**明确**点过「原文」的消息 id。
+ *
+ * ★ 为什么需要记住它：`silentReload` 每一轮都会重建整个面板，然后
+ *   `autoBeautify` 会把能美化的都重新画上 —— 如果这里不记，
+ *   用户点过的「原文」会在下一轮回复到达时**自己变回美化**，
+ *   看起来就像"这个开关按不住"。
+ * ★ 切会话时清空（那是另一个会话的选择）。
+ */
+let regexViewRawChoice = new Set();
+
 /** 正在进行的流式请求控制器，用于「停止生成」 */
 let streamController = null;
 
@@ -741,6 +768,10 @@ async function openSession(root, id, signal) {
   if (signal?.aborted) return;
 
   state.detail = detail;
+  // ★ 换了会话：清掉上一个会话的"美化结果"与"用户选过看原文"的记录。
+  //   不清的话缓存会一直涨，用户的"看原文"选择也会串到别的会话上。
+  regexViewCache = new Map();
+  regexViewRawChoice = new Set();
   // 换了会话，上一轮的用量就不该继续显示（否则会让人以为这个会话花过这些 token）
   state.usage = null;
   // ★ 这一轮可能正在**后台**写（用户切走过，服务端继续写完了）：把它当"正在流式"来看待，
@@ -748,6 +779,10 @@ async function openSession(root, id, signal) {
   state.streaming = Boolean(detail.generating);
   renderChatPanel(root, detail);
   hydrateRichMessages(root);
+  // ★ 默认美化：打开会话就自动把该美化的消息画出来（用户要求的默认行为）。
+  //   放在 hydrateRichMessages 之后：两者都用 mountRich，顺序反了会被覆盖。
+  //   **不 await**：它是"锦上添花"，不该拖住会话打开的渲染。
+  autoBeautify(root);
   $$('.session-item', root).forEach((el) =>
     el.classList.toggle('active', Number(el.dataset.id) === id),
   );
@@ -838,6 +873,8 @@ function scheduleGeneratingPoll(root, sessionId, grace = 6) {
     state.streaming = false;
     renderChatPanel(root, detail);
     hydrateRichMessages(root);
+    // 新到账的这一轮也要美化（与 openSession 同一个理由：默认美化要覆盖新消息）
+    autoBeautify(root);
     if (draft) {
       const input = $('#composer-input', root);
       if (input) input.value = draft;
@@ -908,13 +945,20 @@ function messageActions(m, opts = {}) {
         `title="删掉这句话以及它之后的全部内容">撤回</button>`,
     );
   } else if (m.role === 'assistant') {
-    // ★ 预设美化（酒馆正则的显示层）：只有在**生效预设确实带显示层正则**时才给入口
-    //   —— 规则由后端算（state.detail.regex_view.display_count），前端只读，
+    // ★ 预设美化（酒馆正则的显示层）：**默认就美化**，这个按钮只是"逐条切回原文/再美化"。
+    //   用户的原话："如果有美化，应该默认美化，而不是让用户每次都要去点美化按钮"。
+    //   只有在**生效预设确实带显示层正则**时才给入口 —— 规则由后端算
+    //   （state.detail.regex_view.display_count），前端只读，规则只有一份；
     //   否则会出现"按钮点了没反应"（后端没脚本可跑）。
     if (state.detail?.regex_view?.display_count > 0) {
+      const beautified = regexViewCache.has(Number(m.id));
       buttons.push(
         `<button class="btn link small" data-act="regex-view" ` +
-          `title="按提示词预设自带的显示层正则渲染这条消息（酒馆的「美化」：状态栏 / 选项框 / 思考折叠）。只改显示，不改数据">✨ 美化</button>`,
+          `title="${
+            beautified
+              ? '切回模型原话（美化只改显示，不改数据）'
+              : '按提示词预设自带的显示层正则渲染这条消息（酒馆的「美化」：状态栏 / 选项框 / 思考折叠）'
+          }">${beautified ? '📄 原文' : '✨ 美化'}</button>`,
       );
     }
     buttons.push(
@@ -946,6 +990,10 @@ function messageActions(m, opts = {}) {
  *   后续的 delta 就没地方写了。所以流式全程纯文本，收尾时才切换。
  * ★ 为什么要给用户留「源码」页签：
  *   HTML 卡片渲染失败时，用户得能看到原始内容，否则只会以为"系统卡了"。
+ * ★ 为什么开 `keepProseLineBreaks`：
+ *   卡里常见"HTML 外壳 + 裸换行正文"（实测本机 8 张卡里有 1 张是这样）。
+ *   iframe 会把裸换行折叠成空格，正文就挤成一坨 —— 与美化那条是同一个根因，
+ *   所以同一处修法；规范用 <p>/<br> 分段的卡不受影响（缩进空白会被跳过）。
  */
 function hydrateRichMessages(root, onlyBubble) {
   const bubbles = onlyBubble ? [onlyBubble] : Array.from($$('.msg', root));
@@ -957,7 +1005,7 @@ function hydrateRichMessages(root, onlyBubble) {
     const text = body.textContent || '';
     if (!looksLikeHtml(text)) continue;
     body.dataset.richMounted = '1';
-    mountRich(body, text, { char, user });
+    mountRich(body, text, { char, user, keepProseLineBreaks: true });
   }
 }
 
@@ -2155,16 +2203,110 @@ function clearTranslating(bubble) {
  */
 
 /* ==================================================================
-   预设美化（酒馆正则的显示层）：按需向后端要"渲染后的样子"
+   预设美化（酒馆正则的显示层）：**默认就美化**
    ==================================================================
-   为什么要按需：实测单条美化能到 74 KB（预设每条正则都内联一段 <style>），
-   消息列表最多 200 条 ⇒ 随列表返回就是 ~14 MB，首屏会被拖垮。
-   后端只在这一刻算这一条，算完就丢（不落库、不改数据）。
+   用户的明确要求："如果有美化，应该默认美化，而不是让用户每次都要去点
+   美化按钮（加了美化不就为了看吗）"。所以这里的主体是 `autoBeautify()`：
+   打开会话就自动把该美化的消息画出来，按钮退化成"这一条切回原文"。
 
-   ★ 渲染走已有的 mountRich：它在**无 allow-scripts 的 iframe** 里画，
-     并且先过 sanitizeHtml 白名单 —— 所以预设里带 <script> 也不会执行。
-     这与「绝不执行第三方 JS」是同一条红线。
+   ★ 为什么是**一次批量**请求：逐条点 = 每条一个往返，长会话几十上百次。
+     后端 `GET /sessions/{id}/regex-view` 一次算完，而且**只回真的变了的**
+     （实测同一条会话 4 条 assistant 里有 3 条美化前后逐字节相同 ——
+     没有协议标签的消息没必要传一遍）。
+   ★ 为什么结果要缓存：来回切"原文/美化"不该反复请求。
+   ★ 渲染走 mountRich：它在**无 allow-scripts 的 iframe** 里画，且先过
+     sanitizeHtml 白名单 —— 预设里带 <script> 也不会执行（红线延续）。
    ================================================================== */
+
+/** 把整条会话的美化结果取回来并填进缓存（不画）。 */
+async function loadRegexView(sessionId) {
+  const envelope = await api.getRaw(`/narrative/sessions/${sessionId}/regex-view`);
+  const data = envelope?.data || {};
+  const items = Array.isArray(data.items) ? data.items : [];
+  // ★ 换了会话就把旧缓存丢掉，否则会把上一个会话的卡片画到这个会话上
+  regexViewCache = new Map();
+  for (const item of items) {
+    const mid = Number(item.message_id);
+    if (mid) regexViewCache.set(mid, item);
+  }
+  return { count: items.length, message: envelope?.message || '' };
+}
+
+/**
+ * 把一条消息画成"美化后的样子"。
+ *
+ * ★ `keepProseLineBreaks` 必须开：预设美化出来的正文是**裸换行**分段
+ *   （没有 `<p>`/`<br>`），而 iframe 默认会把换行折叠成空格 ——
+ *   不开这项，正文就会挤成一坨（真实反馈："文字排版变得十分难看，没有分段"）。
+ *   详见 `ui.js::proseNewlinesToBreaks`。
+ */
+function paintRegexView(bubble, item) {
+  const body = bubble?.querySelector('.msg-body');
+  if (!body || !item) return false;
+  const html = String(item.html || '');
+  if (!html) return false;
+  body.dataset.regexView = '1';
+  // 记住原文，供"切回原文"用（数据库里本来就是原文，这里只是本地还原）
+  bubble.dataset.regexRaw = String(item.raw || body.textContent || '');
+  mountRich(body, html, {
+    char: state.detail?.character_card?.name || '',
+    user: authSession.user?.username || '',
+    keepProseLineBreaks: true,
+  });
+  return true;
+}
+
+/** 把一条消息还原成"纯文本的原文"。 */
+function unpaintRegexView(bubble) {
+  const body = bubble?.querySelector('.msg-body');
+  if (!body) return;
+  body.dataset.regexView = '';
+  body.dataset.richMounted = '';
+  // 整体重置 innerHTML 比逐个删干净：mountRich 会在 body 里建 iframe/分段控件，
+  // 漏删一个就会留下半截卡片。
+  body.innerHTML = esc(bubble.dataset.regexRaw ?? '');
+}
+
+/** 把按钮的文字/提示同步成当前状态（切回原文 / 再美化）。 */
+function syncRegexViewButton(bubble) {
+  const btn = bubble?.querySelector('[data-act="regex-view"]');
+  if (!btn) return;
+  const beautified = bubble.querySelector('.msg-body')?.dataset.regexView === '1';
+  btn.textContent = beautified ? '📄 原文' : '✨ 美化';
+  btn.title = beautified
+    ? '切回模型原话（美化只改显示，不改数据）'
+    : '按提示词预设自带的显示层正则渲染这条消息（酒馆的「美化」）';
+}
+
+/**
+ * 打开会话后**自动**美化所有该美化的消息（用户要的默认行为）。
+ *
+ * ★ 失败不打扰用户：美化是"锦上添花"，接口挂了不该弹红条 ——
+ *   界面保持显示原文即可（这也保证"没有预设 / 没有脚本"的会话**一个字都不变**）。
+ */
+async function autoBeautify(root) {
+  const sessionId = state.sessionId;
+  if (!sessionId) return;
+  if (!(state.detail?.regex_view?.display_count > 0)) return;
+  if (typeof document !== 'undefined' && document.hidden) return;
+  try {
+    await loadRegexView(sessionId);
+  } catch {
+    return; // 取不到就当没这回事，保持原文
+  }
+  // 请求期间用户可能已经切走了 —— 别把上一个会话的卡片画到新会话上
+  if (state.sessionId !== sessionId || !regexViewCache.size) return;
+  for (const [mid, item] of regexViewCache) {
+    // ★ 用户明确选过"看原文"的那条不再自动美化（否则每轮刷新都会把选择顶掉）
+    if (regexViewRawChoice.has(mid)) continue;
+    const bubble = root.querySelector(`.msg[data-id="${mid}"]`);
+    if (!bubble) continue;
+    paintRegexView(bubble, item);
+    syncRegexViewButton(bubble);
+  }
+}
+
+/** 点按钮：在"美化"与"原文"之间逐条切换（数据不动，纯显示）。 */
 async function showRegexView(root, btn) {
   const bubble = btn.closest('.msg');
   const id = Number(bubble?.dataset.id);
@@ -2173,13 +2315,23 @@ async function showRegexView(root, btn) {
 
   const body = bubble.querySelector('.msg-body');
   if (!body) return;
-  // 已经渲染过就切回原文（按钮当开关用，避免"点一次就回不去"）
+
+  // 已经显示的是美化版 ⇒ 切回原文（纯前端，不发请求）
   if (body.dataset.regexView === '1') {
-    body.dataset.regexView = '';
-    // 直接还原成"纯文本的原文"：mountRich 会在 body 里建 iframe/分段控件，
-    // 整体重置 innerHTML 比逐个删干净（漏一个就会留下半截卡片）。
-    body.innerHTML = esc(bubble.dataset.regexRaw ?? '');
-    btn.textContent = '✨ 美化';
+    unpaintRegexView(bubble);
+    // ★ 记下"用户明确要看原文"：下一轮刷新（silentReload 会重建面板）
+    //   不该把这条又自动美化回去，否则这个开关看起来按不住。
+    regexViewRawChoice.add(id);
+    syncRegexViewButton(bubble);
+    return;
+  }
+
+  // 还没有缓存（例如自动美化被跳过 / 这条当时没算出来）⇒ 单独补一次
+  const cached = regexViewCache.get(id);
+  if (cached) {
+    regexViewRawChoice.delete(id); // 用户又要看美化了
+    paintRegexView(bubble, cached);
+    syncRegexViewButton(bubble);
     return;
   }
 
@@ -2199,14 +2351,17 @@ async function showRegexView(root, btn) {
       toastErr(envelope?.message || '这条消息没有可渲染的美化结果');
       return;
     }
-    // 记住原文，供"切回原文"用（数据库里本来就是原文，这里只是本地还原）
-    bubble.dataset.regexRaw = String(data.raw || body.textContent || '');
-    body.dataset.regexView = '1';
-    mountRich(body, html, {
-      char: state.detail?.character_card?.name || '',
-      user: authSession.user?.username || '',
-    });
-    btn.textContent = '↩ 原文';
+    const item = {
+      message_id: id,
+      html,
+      raw: String(data.raw || body.textContent || ''),
+      reasoning_html: data.reasoning_html || '',
+      raw_reasoning: data.raw_reasoning || '',
+      note: envelope?.message || '',
+    };
+    regexViewCache.set(id, item);
+    paintRegexView(bubble, item);
+    syncRegexViewButton(bubble);
     if (envelope?.message) toastOk(envelope.message);
   } catch (err) {
     toastErr(err?.toDisplay ? err.toDisplay() : String(err));
@@ -2818,6 +2973,8 @@ function finishBubble(bubble, data) {
     mountRich(body, rawText, {
       char: state.detail?.character_card?.name || '',
       user: authSession.user?.username || '',
+      // 与 hydrateRichMessages 同一理由：卡里的裸换行正文不该被折叠成一坨
+      keepProseLineBreaks: true,
     });
   }
 }
@@ -2856,6 +3013,11 @@ async function silentReload(root) {
       if (sub) sub.insertAdjacentHTML('beforeend', `<span class="chat-meta">${esc(previousMeta)}</span>`);
     }
     if (atBottom) scrollBottom(root, true);
+    // ★ 新写出来的这一轮同样要美化（预设的显示层正则）：
+    //   renderChatPanel 刚把面板重建成纯文本，不补这一步的话
+    //   新回复永远是原样，而"默认美化"就只对历史消息生效、对新消息失效 ——
+    //   用户会看到同一条会话里新旧消息排版不一样。
+    autoBeautify(root);
     refreshSessions(root, activeSignal);
   } catch {
     /* 刷新失败不影响已经显示的内容 */

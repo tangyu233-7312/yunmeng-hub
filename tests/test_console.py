@@ -459,7 +459,14 @@ def test_rich_iframe_document_follows_the_theme() -> None:
     """
     src = (WEB_DIR / "js" / "ui.js").read_text(encoding="utf-8")
     assert "function richDocHead()" in src, "iframe 文档头必须是按主题动态生成的函数"
-    assert "richDocHead() + sanitizeHtml(" in src, "srcdoc 必须用 richDocHead() 拼"
+    # ★ 断言要盯"srcdoc 这条赋值语句用了谁"，而不是死抠拼接的字面写法。
+    #   以前写的是 `"richDocHead() + sanitizeHtml(" in src` —— 那串在
+    #   `sanitizeHtml` 需要传第二个参数（proseLineBreaks）而被换行后就匹配不到了，
+    #   于是**实现正确、断言假失败**。这里改成取整条语句来判断，意图不变：
+    #   文档头必须来自 richDocHead()，正文必须过 sanitizeHtml()。
+    srcdoc_stmt = src.split("frame.srcdoc =", 1)[1].split(";", 1)[0]
+    assert "richDocHead()" in srcdoc_stmt, "srcdoc 必须用 richDocHead() 拼（否则主题写死）"
+    assert "sanitizeHtml(" in srcdoc_stmt, "srcdoc 里的正文必须过 sanitizeHtml()"
     assert "getComputedStyle(document.documentElement)" in src, (
         "richDocHead() 必须从父页面读当前主题变量"
     )

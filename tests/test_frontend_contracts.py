@@ -18,6 +18,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 AUTH_JS = REPO / "web" / "js" / "views" / "auth.js"
 CHAT_JS = REPO / "web" / "js" / "views" / "chat.js"
+UI_JS = REPO / "web" / "js" / "ui.js"
 STYLES = REPO / "web" / "css" / "styles.css"
 
 
@@ -244,16 +245,132 @@ def test_regex_view_renders_in_sandbox_and_can_go_back() -> None:
     两条硬要求：
       · 渲染走 mountRich —— 预设产出的 HTML 里**可能带 `<script>`**
         （实测那份预设就有），只有沙箱能保证它不执行（红线：绝不执行第三方 JS）；
-      · 能切回原文 —— 否则用户点一下"美化"就再也看不到模型原话了。
+      · 能切回原文 —— 否则用户看到美化版就再也拿不回模型原话。
+
+    ★ 另外必须开 `keepProseLineBreaks`：预设美化出来的正文是**裸换行**分段
+      （没有 `<p>`/`<br>`），iframe 默认会把换行折叠成空格 ——
+      不开这项，正文会挤成一坨（真实反馈："文字排版变得十分难看，没有分段"）。
     """
     src = _read(CHAT_JS)
-    start = src.index("async function showRegexView(")
-    block = src[start : src.index("\nasync function ", start + 10)]
+    start = src.index("function paintRegexView(")
+    block = src[start : src.index("\nfunction ", start + 10)]
     assert "mountRich(" in block, "必须走沙箱渲染，不能直接 innerHTML 插预设给的 HTML"
+    assert "keepProseLineBreaks: true" in block, (
+        "必须开 keepProseLineBreaks，否则正文的裸换行会被 iframe 折叠、挤成一坨"
+    )
     assert "regexRaw" in block, "要记下原文，供切回原文"
-    assert "regex-view" in block, "要调后端那个按需接口"
-    # 幂等/可回退：再点一次要还原
-    assert "dataset.regexView" in block, "要有个状态位支持『再点一次切回原文』"
+    assert "dataset.regexView" in block, "要有个状态位支持『切回原文』"
+    # 切回原文那条路径也要存在
+    assert "function unpaintRegexView(" in src, "要能还原成纯文本原文"
+
+
+def test_prose_line_breaks_are_preserved_in_every_rich_render() -> None:
+    """★ 每一处 `mountRich` 都要开 `keepProseLineBreaks`。
+
+    ==================== 这条守着一个真实的排版故障 ====================
+    酒馆正则美化出来的正文、以及部分角色卡开场白，是**HTML 外壳 + 裸换行正文**
+    （实测本机 8 张卡里有 1 张如此），没有 `<p>`/`<br>` 分段。
+    iframe 默认 `white-space: normal`，会把换行折叠成空格 ——
+    正文挤成一坨。用户的原话："文字排版变得十分难看，没有分段"。
+
+    教训：**同一个根因出现在多条渲染路径上时，只修其中一条等于没修**。
+    所以这里遍历所有 `mountRich(` 调用点，逐个要求带上这个参数。
+    """
+    src = _read(CHAT_JS)
+    import re as _re
+
+    calls = _re.findall(r"mountRich\(([\s\S]{0,320}?)\);", src)
+    assert calls, "找不到 mountRich 调用点（锚点失效了？）"
+    for i, call in enumerate(calls):
+        assert "keepProseLineBreaks: true" in call, (
+            f"第 {i + 1} 处 mountRich 没开 keepProseLineBreaks，"
+            "该路径上的裸换行正文会被折叠成一坨：\n" + call[:200]
+        )
+
+
+def test_sanitize_html_converts_prose_newlines_after_rebuilding() -> None:
+    """★ `proseLineBreaks` 的转换必须发生在 `clean()` **之后**。
+
+    `clean` 是重建 DOM（文本节点都重新 append 过）。若先转成 `<br>` 再清洗，
+    那些 `<br>` 会被当成文本转义掉 —— 等于白做。
+    """
+    src = _read(UI_JS)
+    start = src.index("export function sanitizeHtml(")
+    block = src[start : src.index("\nexport ", start + 10)]
+    assert "proseNewlinesToBreaks(box)" in block, "要有这一步"
+    idx_clean = block.index("clean(doc.body, box)")
+    idx_conv = block.index("proseNewlinesToBreaks(box)")
+    assert idx_conv > idx_clean, "转换必须在 clean() 之后，否则 <br> 会被当文本转义"
+    # 纯缩进节点不能碰（否则会把标签缩进也顶出来，排版更乱）
+    helper = src[src.index("function proseNewlinesToBreaks(") :]
+    helper = helper[: helper.index("\n}\n")]
+    assert "value.trim()" in helper, "要跳过纯缩进/空白的文本节点"
+    assert "'style'" in helper and "'script'" in helper, "<style>/<script> 里的换行是语义的一部分"
+
+
+def test_regex_view_is_beautified_by_default() -> None:
+    """★ 美化必须**默认生效**，不能要求用户每条手点。
+
+    用户原话："如果有美化，应该默认美化，而不是让用户每次都要去点美化按钮
+    （加了美化不就为了看吗）"。
+
+    判据：
+      · 存在批量拉取 + 自动上色的入口（一次请求，不是逐条点）；
+      · 会话打开 / 新回复到账 / silentReload 三条路径都要调它 ——
+        漏掉任何一条，"默认美化"就只对部分消息生效，同一条会话里新旧消息
+        排版会不一致（这比"全都不美化"更让人困惑）。
+    """
+    src = _read(CHAT_JS)
+    assert "async function autoBeautify(" in src, "要有自动美化入口"
+    assert "function loadRegexView(" in src, "要批量拉（一次请求），而不是逐条点"
+    # 一次批量请求整条会话，而不是 N 个单条请求
+    assert "/regex-view`" in src and "/messages/${id}/regex-view" in src
+
+    # ★ 必须**逐个函数**检查，不能只数调用次数。
+    #   第一版写的是 `src.count("autoBeautify(root)") >= 3` ——
+    #   变异测试证明它是**假绿**：把 openSession 里那处删掉，
+    #   另外两处照样凑够 3 次，断言依旧通过，而"打开会话即美化"已经失效。
+    def _func_block(name: str) -> str:
+        start = src.index(f"function {name}(")
+        # 往前吞掉紧邻的 JSDoc/注释，不影响判断
+        body = src[start + 10 :]
+        nxt = body.find("\nasync function ")
+        nxt2 = body.find("\nfunction ")
+        candidates = [n for n in (nxt, nxt2) if n != -1]
+        return src[start : start + 10 + (min(candidates) if candidates else len(body))]
+
+    for fn in ("openSession", "silentReload"):
+        assert "autoBeautify(root)" in _func_block(fn), (
+            f"{fn} 里没有调 autoBeautify —— 默认美化在这条路径上失效"
+            "（打开会话 / 新回复到账都会看不到美化）"
+        )
+    # 新回复到账那条轮询路径（scheduleGeneratingPoll 内的回调）
+    assert src.count("autoBeautify(root)") >= 3, "新回复到账的路径也要调"
+
+
+def test_regex_view_respects_explicit_raw_choice() -> None:
+    """★ 用户点过「原文」的那条，下一轮刷新不许被自动美化顶回去。
+
+    `silentReload` 每轮都会重建面板并重新自动美化。若不记住用户的选择，
+    他点的「原文」会在下一轮回复到达时自己变回美化 —— 看起来就是"开关按不住"。
+    """
+    src = _read(CHAT_JS)
+    assert "regexViewRawChoice" in src, "要记住用户明确选过看原文的消息"
+    start = src.index("async function autoBeautify(")
+    block = src[start : src.index("\nfunction ", start + 10)]
+    assert "regexViewRawChoice.has(" in block, "自动美化要跳过用户选过原文的那条"
+
+
+def test_regex_view_cache_is_cleared_when_switching_session() -> None:
+    """★ 切会话必须清空美化缓存与选择记录。
+
+    不清的话：缓存会随会话无上限地涨，而且用户的"看原文"选择会串到别的会话上。
+    """
+    src = _read(CHAT_JS)
+    start = src.index("async function openSession(")
+    block = src[start : src.index("\nasync function ", start + 10)]
+    assert "regexViewCache = new Map()" in block, "切会话要清空美化缓存"
+    assert "regexViewRawChoice = new Set()" in block, "切会话要清空『看原文』的选择"
 
 
 def test_regex_view_handler_is_wired_into_dispatcher() -> None:

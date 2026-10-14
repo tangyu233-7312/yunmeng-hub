@@ -675,6 +675,94 @@ def translate_message(
 
 
 @router.get(
+    "/sessions/{session_id}/regex-view",
+    summary="整条会话的显示层美化（默认美化：一次算一批，只回真的变了的）",
+    response_model=ApiResponse[dict],
+)
+def regex_view_session(
+    session_id: int,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ApiResponse[dict]:
+    """把整条会话的 assistant 消息按显示层正则渲染成 HTML（**默认美化**的入口）。
+
+    ==================== 为什么要批量，而不是前端逐条点 ====================
+    用户的原话："如果有美化，应该默认美化，而不是让用户每次都要去点美化按钮
+    （加了美化不就为了看吗）"。
+    逐条请求在长会话里就是几十上百个往返，所以这里一次算完。
+
+    ==================== 为什么只回「真的变了」的消息 ====================
+    实测那份预设：同一条会话里 **4 条 assistant 消息中有 3 条替换数为 0**
+    （它们没有协议标签，美化前后逐字节相同）。真正膨胀的只有 1 条
+    （1,669 → 31,978 字符，其中 17,051 是各脚本内联的固定 `<style>` 模板）。
+    所以这里**逐条比对**，只把 `html != raw` 的放进响应 ——
+    没有标签的消息一条都不会白白传一遍。
+    即便如此，大会话仍可能到 MB 量级，所以：
+      · 只算 assistant（user 消息没有可美化的卡片）；
+      · 有 `limit` 上限（默认与消息列表一致，最大 1000）；
+      · 前端拿到后**不落库**，随时能切回原文。
+
+    ★ 与单条接口共用同一套实现（`regex_display_html`），两者结果必然一致。
+    """
+    from app.narrative import sessions as sessions_mod
+
+    session = session_service.get_owned_session(db, current_user.id, session_id)
+    rows, total, truncated = sessions_mod.get_messages(db, session.id)
+    # 深度基准：与装配层/单条接口口径一致（最后一条 = 0）
+    indexed = [(row, sessions_mod.depth_of_message(db, session, row)) for row in rows]
+
+    state = sessions_mod.regex_view_state(db, session)
+    items: list[dict] = []
+    changed = 0
+    failed: list[str] = []
+    for row, depth in indexed:
+        if str(getattr(row, "role", "")) != "assistant":
+            continue
+        html, reasoning_html, note = sessions_mod.regex_display_html(
+            db, session, row, depth=depth
+        )
+        raw = str(getattr(row, "content", "") or "")
+        raw_reasoning = str(getattr(row, "reasoning", "") or "")
+        # ★ 只有"美化结果与原文不同"才值得发过去；否则前端保持原样渲染即可。
+        if not html or html == raw:
+            continue
+        changed += 1
+        items.append(
+            {
+                "message_id": row.id,
+                "html": html,
+                "raw": raw,
+                "reasoning_html": reasoning_html,
+                "raw_reasoning": raw_reasoning,
+                "note": note,
+            }
+        )
+        if "没能执行" in note:
+            failed.append(note)
+
+    message = (
+        f"已美化 {changed} 条消息（其余 {len(rows) - changed} 条没有可美化的内容，保持原样）"
+        if changed
+        else "这条会话暂时没有需要美化的消息"
+    )
+    if failed:
+        message += f"；有 {len(failed)} 条消息的部分正则没能执行"
+    if truncated:
+        message += f"；只处理了最近 {len(rows)} / {total} 条消息"
+    return ApiResponse.ok(
+        {
+            "items": items,
+            "changed": changed,
+            "scanned": len(rows),
+            "total": total,
+            "truncated": truncated,
+            "state": state,
+        },
+        message=message,
+    )
+
+
+@router.get(
     "/sessions/{session_id}/messages/{message_id}/regex-view",
     summary="按预设的显示层正则渲染这条消息（酒馆的「美化」，按需算）",
     response_model=ApiResponse[dict],

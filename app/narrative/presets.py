@@ -638,11 +638,18 @@ def _extension_notes(extensions: Any) -> list[str]:
     if isinstance(regex_scripts, list) and regex_scripts:
         enabled = [s for s in regex_scripts if not (isinstance(s, dict) and s.get("disabled"))]
         size = len(json.dumps(regex_scripts, ensure_ascii=False))
+        # ★ 分层如实说明：这两句必须说准，因为**能不能生效**是要用户判断的事。
+        #   · 剥协议标签那批（promptOnly）在**发给模型前**自动生效；
+        #   · 美化那批（markdownOnly）在**界面渲染**时生效；我们在界面上默认就美化。
+        #   以前这里写的是"本系统目前不会运行它们" —— C 档做完后那句话**已经不准了**，
+        #   而"说错了能力范围"比"不说"更糟：用户会以为自己看到的就是原样。
         notes.append(
             f"这份预设还带 {len(regex_scripts)} 条酒馆正则脚本"
             f"（启用 {len(enabled)} 条，约 {size:,} 字符）：它们负责把模型输出里的"
-            "协议标签剥掉、以及把状态栏之类渲染成 HTML。"
-            "本系统目前不会运行它们，但已原样保存，导出时一并还给你。"
+            "协议标签剥掉、以及把状态栏之类渲染成 HTML。本系统会跑其中作用于"
+            "「模型输出 / 用户输入 / 思考过程」的那些 —— 剥标签的在发给模型前生效，"
+            "美化的在界面上生效（默认已开启，可逐条切回原文）；"
+            "作用于世界书、斜杠命令等位置的正则不会生效（导入时会单独列出）。"
         )
 
     helper = extensions.get("tavern_helper")

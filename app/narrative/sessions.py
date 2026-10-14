@@ -516,6 +516,17 @@ def _effective_preset_row(db: Session, session: NarrativeSession) -> Any:
     )
 
 
+def regex_view_state(db: Session, session: NarrativeSession) -> dict[str, Any] | None:
+    """这条会话生效预设的显示层正则状态（**公开入口**）。
+
+    ★ 为什么要有它：批量美化接口（默认美化）也要报同一套状态，
+      而"取生效预设行"这件事必须只有一份实现 —— 否则
+      「会话详情的 regex_view」与「批量美化返回的 state」可能给出不同答案，
+      用户就会看到自相矛盾的界面。内部实现仍是 `_regex_view_state`。
+    """
+    return _regex_view_state(_effective_preset_row(db, session))
+
+
 def _regex_view_state(row: Any) -> dict[str, Any] | None:
     """这份预设的显示层正则能不能用（界面据此决定显不显示「看美化」入口）。
 
