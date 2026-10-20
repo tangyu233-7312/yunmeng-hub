@@ -53,7 +53,20 @@ $RepoRoot = Split-Path -Parent $DesktopDir
 $ReleaseDir = Join-Path $RepoRoot 'release'
 
 if (-not $EnvFile) { $EnvFile = Join-Path $RepoRoot '.env' }
-if (-not $WorkRoot) { $WorkRoot = Join-Path $env:TEMP ('yunmeng-installer-' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
+
+# ★★ 临时目录不能用 `$env:TEMP`。
+#
+#   在**受限会话**（沙箱/服务账号）里，TEMP 可能被重定向到一个策略目录，
+#   NSIS 在那里自解压会直接失败：退出码 2、一个文件都不写、也不给任何提示。
+#   实测：同一个安装包，装到 `%TEMP%\dsh-…\` 下 exit=2，装到
+#   `%LOCALAPPDATA%\Temp\` 下 exit=0 —— 差别只有路径。
+#   用户的真实机器上 TEMP 就是 %LOCALAPPDATA%\Temp，所以这里也用它，
+#   让验收环境尽量贴近真实环境。
+if (-not $WorkRoot) {
+  $tempBase = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'
+  if (-not (Test-Path $tempBase)) { $tempBase = [IO.Path]::GetTempPath() }
+  $WorkRoot = Join-Path $tempBase ('yunmeng-installer-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+}
 $ProfileDir = Join-Path $WorkRoot 'profile'
 $InstallDir = Join-Path $WorkRoot 'app'
 
@@ -138,9 +151,52 @@ Step '2/7 静默装到临时目录'
 
 # ★ /D= 必须是命令行**最后一项**，且路径不加引号（NSIS 的老规矩）。
 $installLog = Join-Path $WorkRoot 'install.log'
-$proc = Start-Process -FilePath $Installer -ArgumentList @('/S', "/D=$InstallDir") -PassThru -Wait
-if ($proc.ExitCode -ne 0) { throw "安装失败（退出码 $($proc.ExitCode)）" }
-Ok "安装完成（退出码 0）"
+
+# ★★ 把安装包先复制到**装它的那个目录旁边**再执行。
+#
+#   为什么：直接从仓库的 `release\` 里跑，本机实测会「退出码 0 但一个文件都没装」，
+#   而且没有任何报错。同一个字节放到别处跑就是好的 —— 说明问题出在
+#   **从那个位置启动**这件事本身（真实用户在普通桌面会话里双击不受影响）。
+#   复制一份再跑，既绕开了它，也让"装的是不是同一个包"可以被哈希证明。
+$installerHash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash
+$runnerPath = Join-Path $WorkRoot 'setup-under-test.exe'
+Copy-Item -LiteralPath $Installer -Destination $runnerPath -Force
+$copiedHash = (Get-FileHash -LiteralPath $runnerPath -Algorithm SHA256).Hash
+if ($installerHash -ne $copiedHash) {
+  throw '安装包复制后哈希不一致（磁盘/杀软改动了文件），拒绝继续'
+}
+
+# ★★ 用 [Diagnostics.Process] 直接起进程，**不用** Start-Process -Wait。
+#
+#   为什么：`Start-Process -Wait` 走的是 ShellExecute 的"等整棵进程树"路径，
+#   而 NSIS 安装器会把控制权交给临时解出来的 `Un_A.exe` 子进程再退出。
+#   父进程一退出，-Wait 就报
+#     "由于出现以下错误，无法运行此命令: 操作已被用户取消。"
+#   （静默安装其实已经成功，只是等待那一步失败。）
+#   直接 WaitForExit 只看安装器自己的退出码，这才是"安装成功与否"的判据。
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $runnerPath
+# NSIS：/S 是静默，/D=… 必须是参数**最后一项**且不加引号
+$psi.Arguments = "/S /D=$InstallDir"
+$psi.UseShellExecute = $false
+$psi.WorkingDirectory = $WorkRoot
+$instProc = [System.Diagnostics.Process]::Start($psi)
+if (-not $instProc.WaitForExit(15 * 60 * 1000)) {
+  try { $instProc.Kill() } catch {}
+  throw '安装超过 15 分钟仍未结束，已强制结束'
+}
+$instProc.WaitForExit()
+if ($instProc.ExitCode -ne 0) { throw "安装失败（退出码 $($instProc.ExitCode)）" }
+
+# ★ 退出码 0 不等于装好了：上面那个"0 但空目录"的情况就是反例。
+#   所以这里再核一次目录，把"假成功"挡在 2/7。
+$probeExe = Get-ChildItem $InstallDir -Filter '*.exe' -File -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -notmatch '^(Uninstall|elevate)' } | Select-Object -First 1
+if (-not $probeExe) {
+  throw ("安装器报告退出码 0，但 $InstallDir 里没有应用 exe " +
+    '（静默安装没有真正落盘 —— 通常是安装包所在位置/临时目录被策略限制）')
+}
+Ok "安装完成（退出码 0，已核对落盘）"
 
 $appExe = Get-ChildItem $InstallDir -Filter '*.exe' -File |
   Where-Object { $_.Name -notmatch '^(Uninstall|elevate)' } | Select-Object -First 1
@@ -388,10 +444,22 @@ if (-not (Test-Path $uninstaller)) {
 if (-not $uninstaller) {
   Bad '找不到卸载程序，跳过卸载验收'
 } else {
-  # ★ 卸载程序会把自己复制到临时目录再执行，所以要等它自己结束
-  $u = Start-Process -FilePath $uninstaller -ArgumentList @('/S') -PassThru -Wait
+  # ★ 卸载程序会把自己复制到临时目录再执行（和安装器同一种手法），
+  #   所以这里也用 [Diagnostics.Process] 直接等，而不是 Start-Process -Wait ——
+  #   后者会去等整棵进程树，父进程一交接就报"操作已被用户取消"。
+  $upsi = New-Object System.Diagnostics.ProcessStartInfo
+  $upsi.FileName = $uninstaller
+  $upsi.Arguments = '/S'
+  $upsi.UseShellExecute = $false
+  $upsi.WorkingDirectory = (Split-Path -Parent $uninstaller)
+  $unProc = [System.Diagnostics.Process]::Start($upsi)
+  if (-not $unProc.WaitForExit(5 * 60 * 1000)) {
+    try { $unProc.Kill() } catch {}
+    throw '卸载超过 5 分钟仍未结束，已强制结束'
+  }
+  $unProc.WaitForExit()
   Start-Sleep -Seconds 3
-  Ok "静默卸载完成（退出码 $($u.ExitCode)）"
+  Ok "静默卸载完成（退出码 $($unProc.ExitCode)）"
 
   # ★ 卸载**绝不能**删用户数据。零配置形态下"用户数据"就是那个 SQLite 文件
   #   （会话 / 角色卡 / 世界书全在里面），所以两种模式各查各的落点。

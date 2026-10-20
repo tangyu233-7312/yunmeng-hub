@@ -157,12 +157,17 @@ def seed(base: str) -> dict:
             ("narrative/sessions", {"limit": 100}),
             ("character-cards", {"limit": 100, "scope": "mine"}),
             ("world-books", {"limit": 100, "force": "true"}),
-            # ★ 插件**不在这里整体清空**：默认插件是"只发一次"的（users.plugin_defaults_seeded
-            #   是墓碑位），清空之后不会重建，反而让"默认两个空壳"这条断言永远不成立。
-            #   探针自己造的那些在插件那一节末尾按名字单独删。
+            # ★ 插件**不能整体清空**：默认插件是"只发一次"的（users.plugin_defaults_seeded
+            #   是墓碑位），清空之后不会重建，反而让"默认三个插件"这条断言永远不成立。
+            #   所以下面只按名字删探针自己造的那几条。
             # ★ 只删探针自己造的配置（名字带「探针」前缀），
             #   绝不能顺手删用户自己配的真实模型！
             ("providers", {"limit": 100}),
+            # ★ 探针自己造/添加的插件也必须清掉，否则第二轮起基线就不对：
+            #   第 12 节默认按"我的插件正好 3 个"做断言，上一轮留下的
+            #   「探针注入 / 探针正则 / 探针主题 / 作者注（示例）」会让它开页就红，
+            #   而界面本身没有任何问题 —— 实测踩过：第一次绿、第二次红、第三次绿。
+            ("plugins", {"limit": 100}),
         ):
             got = c.get(f"{api}/{path}", headers=h, params=params or {"limit": 100})
             if got.status_code != 200:
@@ -171,6 +176,11 @@ def seed(base: str) -> dict:
             items = data.get("items", data) if isinstance(data, dict) else data
             for it in items or []:
                 if path == "providers" and "探针" not in str(it.get("name", "")):
+                    continue
+                if path == "plugins" and not (
+                    str(it.get("name", "")).startswith("探针")
+                    or str(it.get("name", "")).startswith("作者注")
+                ):
                     continue
                 extra = {"force": "true"} if path in ("character-cards", "world-books") else None
                 c.delete(f"{api}/{path}/{it['id']}", headers=h, params=extra)
@@ -455,6 +465,21 @@ def main() -> int:
             cdp.send("Runtime.enable")
             cdp.send("Log.enable")
             cdp.send("Page.enable")
+            # ★★ 视口必须在**所有检查之前**固定成桌面尺寸，不能只在截图前设。
+            #
+            #   `--window-size` 只是给窗口的"期望值"：headless Edge 起窗口时未必照做，
+            #   实测同一份脚本连跑四轮，有两次视口退回默认 800×600 —— 于是
+            #   CSS 的 `max-width:900px` 断点被命中，对话区变成**上下单列**，
+            #   `--chat-side-w` 不再影响布局，拖动看起来"完全没反应"，双击也一样。
+            #   两条断言红得理直气壮，而界面本身没有任何问题（真人用 1360 宽是好的）。
+            #   Emulation 的 override 是会话级的、跨导航保持，正好是这里需要的确定性。
+            cdp.send(
+                "Emulation.setDeviceMetricsOverride",
+                width=1360,
+                height=1000,
+                deviceScaleFactor=1,
+                mobile=False,
+            )
             try:
                 run_checks(cdp, base, data)
             except ModuleLoadFailure as exc:
@@ -2017,29 +2042,77 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
     #
     # ★ 先切到别的页再切回来，确保这一次对话视图是**新渲染**的：
     #   如果此刻已经在对话页，点一下导航仍可能触发一次异步重渲染，
-    #   而探针紧接着就 `querySelector('#chat-resize')` 拿到**旧节点**并派发合成事件 ——
+    #   而探针紧接着就 `querySelector('#chat-resize')` 拿到**旧节点**并派发事件 ——
     #   旧节点的监听器已随旧 view signal 一起 abort，于是表现成"拖不动 / 双击没反应"
     #   （真实踩到过：两条断言红，宽高一点没变。见 docs/pitfalls.md 第 35 条。）
-    cdp.eval("document.querySelector('#nav [data-route=\"books\"]').click(); 'ok'")
-    cdp.wait_for("(document.querySelector('#view h1')?.textContent || '').includes('世界书')", 15)
-    cdp.eval("document.querySelector('#nav [data-route=\"chat\"]').click(); 'ok'")
-    cdp.wait_for("!!document.querySelector('#chat-resize')", 15)
-    time.sleep(0.5)
+    #
+    # ★★ 拖之前必须清掉 `hne_chat_size`：尺寸是**持久化**的（localStorage），
+    #   上一轮拖到的位置会变成这一轮的起点。起点不确定，断言测的就不是
+    #   "能不能拖"，而是"上次拖到哪了" —— 实测同一条断言连着跑，一红一绿。
+    def _enter_fresh_chat() -> None:
+        """清掉持久化尺寸 → 切走 → 切回，保证对话页是全新装配的。"""
+        cdp.eval("localStorage.removeItem('hne_chat_size'); 'ok'")
+        cdp.eval("document.querySelector('#nav [data-route=\"books\"]').click(); 'ok'")
+        cdp.wait_for("(document.querySelector('#view h1')?.textContent || '').includes('世界书')", 15)
+        cdp.eval("document.querySelector('#nav [data-route=\"chat\"]').click(); 'ok'")
+        cdp.wait_for("!!document.querySelector('#chat-resize')", 15)
+        # 手柄的内联 right/bottom 是 initChatResize 末尾写的：它出现了才代表
+        # "视图装配完 + 监听器已挂上"，早一步派发指针事件就是打给旧节点。
+        cdp.wait_for(
+            "(() => { const h = document.querySelector('#chat-resize');"
+            " return !!h && !!h.style.right && !!h.style.bottom; })()",
+            15,
+        )
+        time.sleep(0.4)
+
+    _enter_fresh_chat()
+
+    # 拖动的方向要按**当前余量**选：离上限近就往左拖，离下限近就往右拖。
+    # 写死成"往右拖 +70"是那条间歇失败的另一半原因 —— 起点一旦贴着上限，
+    # 往右拖会被 clamp 成"纹丝不动"，看起来像产品坏了，其实是探针自己没余量。
+    cdp.wait_for("!!document.querySelector('#chat-layout .chat-side')", 15)
     width_before = cdp.num(
         "Math.round(document.querySelector('#chat-layout .chat-side')?.getBoundingClientRect().width ?? -1)"
     )
-    drag = cdp.eval(
-        "(() => {"
-        "  const h = document.querySelector('#chat-resize');"
-        "  const r = h.getBoundingClientRect();"
-        "  const opt = (x, y) => ({ bubbles: true, pointerId: 1, pointerType: 'mouse',"
-        "                          clientX: x, clientY: y, isPrimary: true });"
-        "  h.dispatchEvent(new PointerEvent('pointerdown', opt(r.left + 10, r.top + 10)));"
-        "  h.dispatchEvent(new PointerEvent('pointermove', opt(r.left + 80, r.top + 60)));"
-        "  h.dispatchEvent(new PointerEvent('pointerup', opt(r.left + 80, r.top + 60)));"
-        "  return 'ok';"
-        "})()"
+    limits = json.loads(cdp.eval("JSON.stringify(window.__hneChatResize.limits)"))
+    mid = (limits["wMin"] + limits["wMax"]) / 2
+    dx = 70 if width_before <= mid else -70
+
+    # ★★ 用**真实鼠标**拖，不用合成 PointerEvent。
+    #
+    #   合成事件曾经能用（实现把 move/up 挂到了 window，不依赖 setPointerCapture），
+    #   但它终究不是浏览器发出的可信事件：指针捕获、命中测试、`pointerType` 语义
+    #   全都和真实操作有差别，而"拖不动"恰恰是这类差别最容易伪装的故障。
+    #   实测：同一份代码连跑三轮，合成事件版本一绿两红，真实鼠标版本稳定。
+    #   代价是需要先用 handleRect() 拿到手柄在视口里的真实坐标。
+    handle = json.loads(cdp.eval("JSON.stringify(window.__hneChatResize.handleRect())"))
+    sx = float(handle["x"]) + float(handle["w"]) / 2
+    sy = float(handle["y"]) + float(handle["h"]) / 2
+    dy = 60.0
+    cdp.send(
+        "Input.dispatchMouseEvent",
+        type="mousePressed", x=sx, y=sy, button="left", clickCount=1, buttons=1,
     )
+    for step in range(1, 6):
+        cdp.send(
+            "Input.dispatchMouseEvent",
+            type="mouseMoved",
+            x=sx + dx * step / 5,
+            y=sy + dy * step / 5,
+            button="left",
+            buttons=1,
+        )
+        time.sleep(0.05)
+    cdp.send(
+        "Input.dispatchMouseEvent",
+        type="mouseReleased",
+        x=sx + dx,
+        y=sy + dy,
+        button="left",
+        clickCount=1,
+        buttons=0,
+    )
+    drag = "ok"
     time.sleep(0.5)
     width_after = cdp.num(
         "Math.round(document.querySelector('#chat-layout .chat-side')?.getBoundingClientRect().width ?? -1)"
@@ -2047,11 +2120,22 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
     height_after = cdp.num(
         "Math.round(document.querySelector('#chat-layout')?.getBoundingClientRect().height ?? -1)"
     )
+    # 期望值按"起点 + 位移，再夹进 [wMin, wMax]"算出来，而不是固定写 +70。
+    # 这样往左拖（起点贴上限时）同样成立，也顺带验证了夹取逻辑本身。
+    width_expected = min(max(width_before + dx, limits["wMin"]), limits["wMax"])
     probe.check(
         "11.拖动大小",
         "★ 拖动右下角手柄能改变会话列表宽度与对话区高度",
-        drag == "ok" and width_after > width_before + 30 and height_after > 0,
-        {"拖前宽": width_before, "拖后宽": width_after, "拖后高": height_after},
+        drag == "ok"
+        and abs(width_after - width_expected) <= 3
+        and height_after > 0,
+        {
+            "拖前宽": width_before,
+            "拖后宽": width_after,
+            "期望宽": width_expected,
+            "拖后高": height_after,
+            "手柄坐标": [round(sx), round(sy)],
+        },
     )
 
     # 尺寸必须被记住：重新进入本页（视图重建）之后仍然是你调好的宽度
@@ -2071,11 +2155,20 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
         {"拖后宽": width_after, "重进后宽": width_restored},
     )
 
-    # 双击手柄恢复默认
-    cdp.eval(
-        "document.querySelector('#chat-resize').dispatchEvent("
-        "new MouseEvent('dblclick', { bubbles: true })); 'ok'"
-    )
+    # 双击手柄恢复默认（真实双击：连续两次 mousePressed/Released + clickCount=2）
+    handle2 = json.loads(cdp.eval("JSON.stringify(window.__hneChatResize.handleRect())"))
+    hx = float(handle2["x"]) + float(handle2["w"]) / 2
+    hy = float(handle2["y"]) + float(handle2["h"]) / 2
+    for count in (1, 2):
+        cdp.send(
+            "Input.dispatchMouseEvent",
+            type="mousePressed", x=hx, y=hy, button="left", clickCount=count, buttons=1,
+        )
+        cdp.send(
+            "Input.dispatchMouseEvent",
+            type="mouseReleased", x=hx, y=hy, button="left", clickCount=count, buttons=0,
+        )
+        time.sleep(0.08)
     time.sleep(0.5)
     width_reset = cdp.num(
         "Math.round(document.querySelector('#chat-layout .chat-side')?.getBoundingClientRect().width ?? -1)"
@@ -2289,15 +2382,28 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
 
     cdp.eval("document.querySelector('#nav [data-route=\"plugins\"]').click(); 'ok'")
     opened = cdp.wait_for("(document.querySelector('#view h1')?.textContent || '') === '插件'", 20)
-    cdp.wait_for("!!document.querySelector('#view .cc')", 20)
+    # ★★ 必须先等「我的插件」列表真的渲染出来，再数卡片。
+    #
+    #   这段原来是"开页 → 直接 querySelectorAll 数数"，而列表是异步拉的：
+    #   接口慢一点时这一刻还是空壳，数出来就是 0 → 报"默认插件不是 3 个"。
+    #   实测症状非常像产品坏了：同一份代码，跑三遍两遍红。
+    #   （相似的问题还有：`.cc` 与「内置示例目录」的卡片用同一个类名，等错选择器会永远等不到。）
+    plugins_ready = cdp.wait_for(
+        "document.querySelectorAll('#view .cc:not(.catalog-item)').length >= 1", 25
+    )
     probe.check(
         "12.插件",
         "★ 插件页能打开，并列出三个默认插件（2 个空壳 + 默认主题）",
         opened
+        and plugins_ready
         # ★ 第二十三轮：默认插件从 2 个变成 3 个（多了新账号默认启用的「星云暗涌」主题）。
         #   这是**意图变更**，不是把断言改松 —— 数量仍然被钉住。
         and (cdp.eval("document.querySelectorAll('#view .cc:not(.catalog-item)').length") or 0) == 3,
-        cdp.eval("document.querySelectorAll('#view .cc:not(.catalog-item) .cc-name').length"),
+        {
+            "打开了": opened,
+            "列表已渲染": plugins_ready,
+            "我的插件数": cdp.eval("document.querySelectorAll('#view .cc:not(.catalog-item)').length"),
+        },
     )
     probe.check(
         "12.插件",
@@ -2323,15 +2429,27 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
         ".click(); 'ok'"
     )
     added_ok = cdp.wait_for(
-        "document.querySelectorAll('#view .cc:not(.catalog-item)').length === 3"
-        " && !!document.querySelector('#view .catalog-item .badge.ok')",
+        # ★ 数量必须写 4：点「添加」会把这一条复制进「我的插件」，3 → 4。
+        #   原来这里写的是 === 3，只有"badge 已出现、列表还没刷新"的那几十毫秒里
+        #   才成立 —— 也就是说这条断言一直是**靠时序侥幸通过**的，
+        #   换个机器或慢一点就红，且报出来的还是"添加没生效"，指向完全错误。
+        "document.querySelectorAll('#view .cc:not(.catalog-item)').length === 4"
+        " && !!document.querySelector('#view .catalog-item .badge.ok')"
+        " && Array.from(document.querySelectorAll('#view .cc:not(.catalog-item) .cc-name'))"
+        "      .some(n => (n.textContent || '').includes('作者注'))",
         25,
     )
     probe.check(
         "12.插件",
         "★ 目录里的示例点「添加」后才进我的插件（并标成「已添加」）",
         added_ok,
-        cdp.eval("document.querySelectorAll('#view .cc:not(.catalog-item)').length"),
+        {
+            "我的插件数": cdp.eval("document.querySelectorAll('#view .cc:not(.catalog-item)').length"),
+            "有作者注": cdp.eval(
+                "Array.from(document.querySelectorAll('#view .cc .cc-name'))"
+                ".some(n => (n.textContent||'').includes('作者注'))"
+            ),
+        },
     )
 
     # 界面新建一个「提示词注入」插件（走真实表单：选类型 → 填名字 → 填内容 → 保存）
@@ -3743,6 +3861,8 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
           }
           return JSON.stringify({
             rows: out,
+            paths: [...document.querySelectorAll('.about-path')]
+              .map(e => (e.textContent || '').trim()),
             hasPath: document.querySelectorAll('.about-path').length,
             hasRepo: !!document.querySelector('.about-rows a[href*="github.com"]'),
             hasCopyBtn: !!document.getElementById('about-copy'),
@@ -3763,13 +3883,23 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
         any(k in str(rows.get("当前存储", "")) for k in ("SQLite", "MySQL")),
         rows.get("当前存储"),
     )
+    # ★ 断言后面**每一条**路径，而不是只看「数据目录」那一行。
+    #
+    #   原来的写法只读了 `.about-row` 里的 textContent。而「数据目录」这一行
+    #   同时包含一个 <code class="about-path"> 与一个「打开」按钮，按钮的
+    #   aria-label / data-tip 里默认写着「…/VSCode/…」这类示例路径 ——
+    #   textContent 把按钮的长提示也拼了进来，于是看起来像"数据目录是个仓库目录"。
+    #   真实的目录在 .about-path 元素的 textContent 里，逐条断言才不会被按钮文案污染。
+    about_paths = [str(p) for p in (about.get("paths") or [])]
     probe.check(
         "13.关于",
         "★ 数据/日志目录来自后端且**未被打码**（用户要照着它去打开目录）",
-        about.get("hasPath") == 2
-        and os.path.sep in str(rows.get("数据目录", ""))
-        and "*" not in str(rows.get("数据目录", "")),
-        {"路径行数": about.get("hasPath"), "数据目录": rows.get("数据目录")},
+        # 3 行 = 数据目录 / 日志目录 / 长期记忆；每行都是后端的真实绝对路径，
+        # 没被 `***` 打码，也不是 electron 桥给的空值。
+        about.get("hasPath") == 3
+        and len(about_paths) == 3
+        and all(os.path.isabs(p) and "*" not in p and "<" not in p for p in about_paths),
+        {"路径行数": about.get("hasPath"), "路径": about_paths},
     )
     probe.check(
         "13.关于",

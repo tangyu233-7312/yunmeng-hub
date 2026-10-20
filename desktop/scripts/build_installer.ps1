@@ -284,6 +284,30 @@ if ($code -ne 0) {
   Write-Host "    完整日志：$logFile" -ForegroundColor Yellow
   Write-Host '    最后 40 行：' -ForegroundColor Yellow
   Get-Content -LiteralPath $logFile -Tail 40 -Encoding UTF8 | ForEach-Object { Write-Host "      $_" }
+
+  # ================================================================
+  #  ★ 最常见、也最难自己看出来的那一类失败：中间产物一运行就退出
+  # ================================================================
+  #  electron-builder 生成安装包时要**运行一个中间产物**、由它 WriteUninstaller
+  #  生成卸载器。这一步在 Windows 上是通过 execFile 直接起的（不发 stderr），
+  #  所以失败时它只会说一句 `process failed ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`，
+  #  真实原因（NSIS 自己弹的那句「Error writing temporary file.」）**一个字都没有**。
+  #  本机实测过两种会让它挂掉的环境差异：
+  #    · 在受限账号 / 沙箱策略下运行（中间产物拿不到它需要的临时目录权限）；
+  #    · 仓库所在路径的权限被某个安全策略改过。
+  #  两者都不是代码问题，换台机器（或在普通桌面会话里跑一次）就好。
+  $intermediate = Get-ChildItem -LiteralPath $ReleaseDir -Filter '*Setup*.exe' -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Length -lt 5MB } | Select-Object -First 1
+  if ($intermediate) {
+    Write-Host ''
+    Write-Host "  [i] 诊断：这一步要 electron-builder **运行一个中间产物**来生成卸载器；" -ForegroundColor DarkGray
+    Write-Host "      那个中间产物只有 $([math]::Round($intermediate.Length / 1KB)) KB（正常安装包是几百 MB），" -ForegroundColor DarkGray
+    Write-Host "      它一启动就退出了。常见原因是**当前会话是受限/沙箱账号**，它拿不到必要的临时目录权限。" -ForegroundColor DarkGray
+    Write-Host "      可以这样确认（在普通桌面会话里跑，不需要管理员）：" -ForegroundColor DarkGray
+    Write-Host "        Start-Process '$($intermediate.FullName)' -Wait" -ForegroundColor DarkGray
+    Write-Host "      若弹出的正是「Error writing temporary file. Make sure your temp folder is valid.」，" -ForegroundColor DarkGray
+    Write-Host "      那就是环境限制而不是构建配置的问题 —— 换一次普通会话重跑本脚本即可。" -ForegroundColor DarkGray
+  }
   exit $code
 }
 Write-Host "[√] electron-builder 成功（日志：$logFile）"
