@@ -12,21 +12,21 @@
 | 向量数据库 | ChromaDB 1.5（PersistentClient 持久化） |
 | LLM 接入 | httpx 自研统一适配层，兼容 OpenAI / Anthropic / Ollama 等异构协议 |
 | 认证 | PyJWT + bcrypt |
-
-前端（后续）：HTML / CSS / JavaScript，最终通过 Electron 打包为桌面应用。
+| 前端 | 原生 HTML / CSS / JavaScript（无构建步骤，改完刷新即可） |
+| 桌面端 | Electron 壳 + PyInstaller 打包后端 + electron-builder 出 Windows 安装包 |
 
 > **当前状态**：后端 3.1~3.10 完成，可视化控制台可直接使用（含叙事对话界面与消息级操作）。
-> **919 项 `pytest` 全绿**（SQLite 后端；另有 3 项按环境跳过 —— 真实预设 2 项 + 连接池参数 1 项。
-> 换到 MySQL 后端则是 **920 passed / 2 skipped**：那一项连接池断言只在 MySQL 下有意义。
+> **1061 项 `pytest` 全绿**（SQLite 后端；另有 3 项按环境跳过 —— 真实预设 2 项 + 连接池参数 1 项。
+> 换到 MySQL 后端则是 **1062 passed / 2 skipped**：那一项连接池断言只在 MySQL 下有意义。
 > 两种后端跑的是同一套用例）、
-> **184 项端到端冒烟全过**、**147 项真实浏览器探针全过**（控制台报错 0 条）。
+> **184 项端到端冒烟全过**、**158 项真实浏览器探针全过**（无意外报错：
+> 探针会**故意**打一条 401 与一条 404 来验证错误收集器的取舍，
+> 这两条是预期内的，其余控制台报错为 0 条）。
 > 桌面版已完成三个阶段：Electron 壳 → PyInstaller 打包后端 → **Windows 安装包**
-> （`desktop/` 自带 **160 项 Node 自测**，多出一条命令即可装出来用，见 `desktop/README.md` §8）。
+> （`desktop/` 自带 **187 项 Node 自测**，多出一条命令即可装出来用，见 `desktop/README.md` §8）。
 > **装完即用**：默认数据存成本机的一个 SQLite 文件，不需要安装任何数据库服务，
 > 也不需要事先建库建表 —— 表由后端启动时自动创建，密钥由后端首次运行自动生成。
 > 仍然需要你自备的只有一样：**你自己要用的那个大模型 API Key**。
-
-前端（后续）：HTML / CSS / JavaScript，已通过 Electron 打包为桌面应用。
 
 ## 数据存哪里：SQLite（默认）与 MySQL（可选）
 
@@ -113,7 +113,7 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 |---|---|
 | 降低上手成本 | 不用装 Node、不用 `npm install`、不用等打包，改完刷新页面即可 |
 | 便于答辩演示 | 现场只要一个 Python 环境就能跑起来 |
-| 为 Electron 铺路 | 这套代码将来可以**原样**套进 Electron，不需要重写 |
+| 为 Electron 铺路 | 这套代码**原样**套进了 Electron，不需要重写（`desktop/` 只做壳） |
 | 够用 | 需要的是「能点、能验证功能」，不是复杂的状态管理 |
 
 ### ★ 前端缓存击穿：改了代码为什么不会白屏
@@ -641,7 +641,7 @@ curl http://127.0.0.1:8000/api/v1/system/provider-types
 
 ## 用户认证
 
-采用 **JWT Bearer Token**（而非 Session）—— 前端最终要打包成 Electron 桌面应用，
+采用 **JWT Bearer Token**（而非 Session）—— 前端运行在 Electron 桌面应用里，
 JWT 天然适合「客户端持有凭证」的形态，服务端也无需存储会话。
 
 ### 完整流程
@@ -801,7 +801,8 @@ injection_position = 1  → 按 injection_depth **插进对话历史中间**
 | 情况 | 表现 |
 |---|---|
 | 块本系统没有内容源（`personaDescription`） | 保留在配置里、装配跳过、界面标注「本系统不支持」 |
-| 宏不认识（如 `{{getvar::x}}`） | **原样保留**（不是替换成空串）+ 界面列出 |
+| 宏不认识（如 `{{foo}}`） | **原样保留**（不是替换成空串）+ 界面列出 |
+| 酒馆变量宏（`setvar` / `addvar` / `incvar` / `decvar` / `getvar` / `trim`，含 `global` 变体） | **按块顺序真实求值**，值里嵌套的宏先求值再存；读一个从未定义的变量 → 空串 |
 | 参数云端无效（`top_k / top_a / min_p / repetition_penalty`） | 照常保存（导出回酒馆不丢），但明确标注「云端会忽略」 |
 | 协议不允许中途 system（Anthropic） | 降级成 user + 加身份声明，并把降级写进说明 |
 | 预设被删除 | 会话回落到默认预设，**对话记录不受影响** |
@@ -1088,7 +1089,7 @@ tEXt 块的数据 = "关键字 \0 文本"
 | **JS 内联样式**同样要走变量（`zone.style.background = '#fafbfc'` 这类） | 拖拽上传区"回到静止态"时写死浅色，拖过一次文件后深色主题下就卡在浅色。测试里有一条静态守门人专扫 JS 里的 `background*` 字面量 |
 | **提示框的边框色**走 `--warn-border` / `--danger-border` / `--info-border` / `--ok-border` | 边框以前写死成四个浅色：背景跟着主题变、**边框不变** → 深色下每个提示框镶一圈**亮边**。浅色默认值一字未改；老主题由引擎按"文字色 × 柔和底"的中间调补上 |
 | 头像等小部件的**字色**走 `--catalog-accent`（没写就跟随 `--brand`） | "一半走变量"最典型的坑：底色是 `var(--brand-soft)`、字色写死 `#6b46c1` → 深色下深紫压深藏青**看不清**。有一条通用守门人专抓这种"底色变量化、文字没变量化"的配色 |
-| 会话在**背后**被删掉（删卡时勾"连同对话记录"、别的标签页删的）时，前端**不再白打一次注定 404 的请求** | 列表本来就已经取回来了，先查再请求；否则浏览器控制台会留一条红色 404，用户以为前端坏了。探针有一条总检守住"整轮控制台 0 报错" |
+| 会话在**背后**被删掉（删卡时勾"连同对话记录"、别的标签页删的）时，前端**不再白打一次注定 404 的请求** | 列表本来就已经取回来了，先查再请求；否则浏览器控制台会留一条红色 404，用户以为前端坏了。探针有一条总检守住"除预期的 401/404 探路请求外，整轮无其他控制台报错" |
 
 > 探针里有一条专门守这件事的断言：深色主题下**不许出现浅色块** ——
 > 透明的元素会被单独列出来报告（防止"漏测还显示通过"），
@@ -1574,8 +1575,6 @@ DELETE /narrative/sessions/{id}                  # 删除某一条世界线（�
 
 ## 叙事会话与对话（含 SSE 流式）
 
-## 叙事会话与对话（含 SSE 流式）
-
 会话 = 一张角色卡 + 一个模型配置 + 一串消息（可以理解成"一个存档"）。
 
 | 接口 | 说明 |
@@ -1773,7 +1772,7 @@ SSE 事件类型：
 ## 运行测试
 
 ```powershell
-# 1) 单元测试（SQLite 后端：919 passed + 3 skipped；真实预设 2 项需设 HNE_REAL_PRESET）
+# 1) 单元测试（SQLite 后端：1061 passed + 3 skipped；真实预设 2 项需设 HNE_REAL_PRESET）
 #    ★ 默认跑 SQLite，不需要任何外部服务；换到 MySQL 见下面那条
 .\.venv\Scripts\python.exe -m pytest -q
 
@@ -1784,14 +1783,14 @@ $env:HNE_DB_BACKEND='mysql'; .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000   # 另开一个窗口
 .\.venv\Scripts\python.exe scripts\smoke_test.py
 
-# 3) 浏览器探针（147 项，会自动起假模型与无头 Edge）
+# 3) 浏览器探针（158 项，会自动起假模型与无头 Edge）
 .\.venv\Scripts\python.exe scripts\ui_probe.py
 
 # 4) 检索/状态基准
 .\.venv\Scripts\python.exe scripts\benchmark.py
 .\.venv\Scripts\python.exe scripts\benchmark.py --from-db
 
-# 5) 桌面壳的 Node 自测（160 项，不需要数据库，也不需要 Electron）
+# 5) 桌面壳的 Node 自测（187 项，不需要数据库，也不需要 Electron）
 cd desktop
 npm test
 ```
@@ -1819,7 +1818,7 @@ npm start
 # ② 打包后端：之后用户机**不需要 Python**
 powershell -File scripts\build_backend.ps1
 
-# ③ 出 Windows 安装包 → 仓库根 release\
+# ③ 出 Windows 安装包 → 仓库根 release\（文件名形如 `云梦枢 Setup 0.3.0.exe`）
 npm run build:installer
 ```
 
