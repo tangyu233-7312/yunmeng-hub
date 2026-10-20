@@ -105,7 +105,7 @@ def _text(value: Any, limit: int) -> str:
     return str(value).strip()[:limit]
 
 
-def _finite(value: Any) -> float | None:
+def finite_number(value: Any) -> float | None:
     """只认真正的有限数字（bool 不算，NaN / inf 不算）。"""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -158,8 +158,8 @@ def _normalize_field(raw: dict[str, Any]) -> dict[str, Any] | None:
     # 数值字段的上下限（可选）。★ 必须原样保留：state.normalize 里 `_clean_number`
     # 就是靠它把"自造的数值字段"夹到边界；不保留的话声明了也不会生效
     # （这个坑是 benchmark 的状态用例抓出来的：标注"应当被夹取"而实际没夹）。
-    low = _finite(raw.get("min"))
-    high = _finite(raw.get("max"))
+    low = finite_number(raw.get("min"))
+    high = finite_number(raw.get("max"))
     if low is not None and high is not None and low > high:
         low = high = None
     if low is not None:
@@ -168,7 +168,7 @@ def _normalize_field(raw: dict[str, Any]) -> dict[str, Any] | None:
         out["max"] = int(high) if float(high).is_integer() else round(high, 2)
     # 数值/条的初始值（可选，方便界面给骨架）
     for key, kind in (("initial", "number"), ("initial_current", "number"), ("initial_max", "number")):
-        num = _finite(raw.get(key))
+        num = finite_number(raw.get(key))
         if num is not None:
             out[key] = int(num) if float(num).is_integer() else round(num, 2)
     return out
@@ -231,7 +231,7 @@ def infer_type(value: Any) -> str:
         return "tuples" if any(isinstance(v, dict) for v in value) else "list"
     if isinstance(value, dict):
         return "flags"
-    if _finite(value) is not None:
+    if finite_number(value) is not None:
         return "number"
     return "text"
 
@@ -255,8 +255,8 @@ def infer_fields(sample: dict[str, Any], *, max_field: str = "max") -> list[dict
         if not name or name in consumed or not _NAME_RE.match(name):
             continue
         # ---- 嵌套写法：{"hp": {"current": 70, "max": 90}} ----
-        if isinstance(value, dict) and _finite(value.get("current")) is not None:
-            inner_max = _finite(value.get("max"))
+        if isinstance(value, dict) and finite_number(value.get("current")) is not None:
+            inner_max = finite_number(value.get("max"))
             inner_name = _text(value.get("max_name") or "", 24)
             out.append(
                 {
@@ -270,7 +270,7 @@ def infer_fields(sample: dict[str, Any], *, max_field: str = "max") -> list[dict
                 out[-1]["initial_max"] = (
                     int(inner_max) if float(inner_max).is_integer() else round(inner_max, 2)
                 )
-            cur = _finite(value.get("current"))
+            cur = finite_number(value.get("current"))
             if cur is not None:
                 out[-1]["initial_current"] = int(cur) if float(cur).is_integer() else round(cur, 2)
             continue
@@ -278,7 +278,7 @@ def infer_fields(sample: dict[str, Any], *, max_field: str = "max") -> list[dict
         twin = f"{name}_{max_field}" if f"{name}_{max_field}" in sample else None
         if twin is None and name == "hp" and "max" in sample:
             twin = "max"
-        if twin is not None and _finite(value) is not None and _finite(sample.get(twin)) is not None:
+        if twin is not None and finite_number(value) is not None and finite_number(sample.get(twin)) is not None:
             consumed.add(twin)
             out.append(
                 {

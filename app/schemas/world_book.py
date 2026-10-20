@@ -19,19 +19,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.common import clean_text
+
 # ---------------- 上限（改动这里即可全局生效）----------------
 MAX_ENTRIES = 500
 MAX_KEYS_PER_ENTRY = 50
 MAX_KEY_LENGTH = 200
 MAX_CONTENT_LENGTH = 20_000
-
-
-def _clean_text(value: str | None) -> str | None:
-    """去首尾空白；空字符串视为「没填」。与角色卡的规则保持一致。"""
-    if value is None:
-        return None
-    cleaned = value.strip()
-    return cleaned or None
 
 
 def _normalize_keys(raw: object) -> list[str]:
@@ -148,7 +142,7 @@ class WorldBookCreate(BaseModel):
     @field_validator("description")
     @classmethod
     def _clean_description(cls, value: str | None) -> str | None:
-        return _clean_text(value)
+        return clean_text(value)
 
     @field_validator("entries")
     @classmethod
@@ -214,7 +208,7 @@ class WorldBookUpdate(BaseModel):
     @field_validator("description")
     @classmethod
     def _clean_description(cls, value: str | None) -> str | None:
-        return _clean_text(value)
+        return clean_text(value)
 
     @field_validator("entries")
     @classmethod

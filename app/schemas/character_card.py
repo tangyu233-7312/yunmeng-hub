@@ -15,6 +15,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.common import clean_text
+
 # ---------------- 规范化时的上限（改动这里即可全局生效）----------------
 MAX_TAG_COUNT = 20
 MAX_TAG_LENGTH = 50
@@ -25,20 +27,6 @@ MAX_TAG_LENGTH = 50
 #    上限跟着放宽到 100：够用，又不会被恶意请求塞爆。
 MAX_GREETING_COUNT = 100
 MAX_GREETING_LENGTH = 8000
-
-
-def _clean_text(value: str | None) -> str | None:
-    """文本字段统一处理：去掉首尾空白；空字符串视为「没填」(None)。
-
-    ★ 为什么要区分 "" 和 None？
-      数据库里存 "" 和 NULL 都查不出内容，但会让判断逻辑变麻烦
-      （比如 `if card.greeting:` 和 `if card.greeting is not None:` 结果不同）。
-      统一收敛成 None，后面构建提示词时只需要判断一种情况。
-    """
-    if value is None:
-        return None
-    cleaned = value.strip()
-    return cleaned or None
 
 
 def _clean_str_list(
@@ -158,7 +146,7 @@ class CharacterCardCreate(BaseModel):
     )
     @classmethod
     def _clean_text_fields(cls, value: str | None) -> str | None:
-        return _clean_text(value)
+        return clean_text(value)
 
     @field_validator("tags")
     @classmethod
@@ -241,7 +229,7 @@ class CharacterCardUpdate(BaseModel):
     )
     @classmethod
     def _clean_text_fields(cls, value: str | None) -> str | None:
-        return _clean_text(value)
+        return clean_text(value)
 
     @field_validator("tags")
     @classmethod

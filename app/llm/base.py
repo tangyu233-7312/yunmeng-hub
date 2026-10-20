@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 from loguru import logger
 
 from app.core.exceptions import ConfigurationError, LLMProviderError
+from app.core.security import mask_api_key
 from app.llm.errors import LLMBadRequestError, LLMUpstreamError, normalize_exception
 from app.llm.http_client import build_client
 from app.llm.params import ContextBudget, GenerationParams, ReasoningEffort, compute_context_budget
@@ -205,12 +206,13 @@ class BaseLLMProvider(ABC):
 
     @property
     def masked_api_key(self) -> str:
-        """脱敏后的密钥。★ 任何时候都不要输出完整密钥。"""
-        if not self._api_key:
-            return "(未配置)"
-        if len(self._api_key) <= 8:
-            return "*" * len(self._api_key)
-        return f"{self._api_key[:4]}****{self._api_key[-4:]}"
+        """脱敏后的密钥。★ 任何时候都不要输出完整密钥。
+
+        ★ 实现只有一份（app.core.security.mask_api_key）：脱敏是安全边界，
+          一旦存在两份实现，"改这边忘那边"就是一次真实的密钥泄露。
+          空密钥显示占位符，让日志里能区分"没配"和"配了但被裁掉"。
+        """
+        return mask_api_key(self._api_key) or "(未配置)"
 
     def _endpoint(self, path: str) -> str:
         """拼接完整请求地址。"""

@@ -51,7 +51,6 @@ from loguru import logger
 
 from app.core.config import get_settings
 from app.core.exceptions import VectorStoreError
-from app.db.base import Base  # noqa: F401  (保持数据层导入一致性，无实际用途)
 from app.embeddings import BaseEmbedding, EmbeddingFingerprint, create_embedding
 
 # 集合使用的距离度量。文本嵌入一律推荐余弦距离：

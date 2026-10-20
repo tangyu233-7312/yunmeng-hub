@@ -23,6 +23,23 @@ from pydantic import BaseModel, Field, computed_field
 T = TypeVar("T")
 
 
+def clean_text(value: str | None) -> str | None:
+    """文本字段统一处理：去掉首尾空白；空字符串视为「没填」(None)。
+
+    ★ 唯一实现：角色卡与世界书原本各抄了一份一模一样的逻辑，
+      改一处忘另一处就会出现"角色卡干净、世界书不干净"的规则漂移。
+
+    ★ 为什么要区分 "" 和 None？
+      数据库里存 "" 和 NULL 都查不出内容，但会让判断逻辑变麻烦
+      （比如 `if card.greeting:` 和 `if card.greeting is not None:` 结果不同）。
+      统一收敛成 None，后面构建提示词时只需要判断一种情况。
+    """
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
 class ApiResponse(BaseModel, Generic[T]):
     """统一成功响应壳。用法：return ApiResponse.ok(user_out)。"""
 

@@ -443,7 +443,6 @@ def copy_memories(*, user_id: int, from_session_id: int, to_session_id: int) -> 
     分叉本身已经成功落库了，不该因为向量库的问题让用户以为分叉失败。
     """
     from app.db import chroma
-    from app.narrative import memory as memory_mod
 
     try:
         if not chroma.has_user_collection(user_id):

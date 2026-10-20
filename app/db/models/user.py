@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, String, text
+from sqlalchemy import Boolean, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.types import PkInt

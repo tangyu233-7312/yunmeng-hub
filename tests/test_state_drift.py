@@ -91,6 +91,43 @@ def test_out_of_range_returns_none_when_nothing_is_computable() -> None:
     assert drift.out_of_range({"hp": "一百", "max": 100}, schema, bounds={"hp": 100.0}) is None
 
 
+def test_garbage_flags_every_declared_type() -> None:
+    """★ 每个声明类型都必须真的校验，不能只校验其中一两种。
+
+    基准脚本只让 meter 变成了脏值（`"hp": "一百"`），所以像 list / tuples /
+    flags / text 这几条分支**从来没被单独验证过** —— 把它们关掉，整套测试
+    依然是绿的。这里对每种类型各喂一个"类型对不上声明"的脏值，逐条钉死：
+    任何一条分支被删掉或写错，这里都会红。
+    """
+    schema, _ = state_mod.schema_mod.parse_schema(_spec()["schema"])
+    dirty = {
+        "meter": {"hp": "一百"},  # 数字被写成中文
+        "list": {"inventory": [1, 2]},  # 元素必须是字符串
+        "tuples": {"quests": ["x"]},  # 元素必须是 dict
+        "flags": {"flags": ["a"]},  # 必须是 dict
+        "text": {"location": 123},  # 必须是字符串
+    }
+    declared = {field["name"]: field.get("type", "text") for field in schema["fields"]}
+    for ftype, state in dirty.items():
+        name = next(iter(state))
+        assert declared[name] == ftype, f"基准 schema 里 {name} 的类型变了：{declared[name]}"
+    for ftype, state in dirty.items():
+        assert drift._garbage(state, schema) is True, f"{ftype} 的脏值没有被识别出来：{state}"
+
+
+def test_garbage_accepts_well_formed_state() -> None:
+    """干净的状态不能误报——否则脏值率会恒为 1，指标就废了。"""
+    schema, _ = state_mod.schema_mod.parse_schema(_spec()["schema"])
+    clean = {
+        "hp": 80,
+        "location": "灯塔",
+        "inventory": ["提灯"],
+        "quests": [{"title": "点亮灯塔"}],
+        "flags": {"灯油": "半桶"},
+    }
+    assert drift._garbage(clean, schema) is False
+
+
 def test_garbage_rate_only_grows_in_the_counterfactual() -> None:
     """脏值一旦写进去就洗不掉：反事实的脏值率只会升不会降（这正是校验的意义）。"""
     buckets = drift.bucket(drift.simulate(_spec()), 5)

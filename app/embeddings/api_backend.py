@@ -36,6 +36,7 @@ import httpx
 from loguru import logger
 
 from app.core.exceptions import VectorStoreError
+from app.core.security import mask_api_key
 from app.embeddings.base import BaseEmbedding
 
 
@@ -106,12 +107,9 @@ class ApiEmbedding(BaseEmbedding):
         """脱敏后的密钥，用于日志与健康检查。
 
         ★ 安全要求：任何时候都不能把完整 API Key 写进日志或返回给前端。
+        ★ 与 app.llm.base 共用 app.core.security.mask_api_key —— 脱敏规则只有一份。
         """
-        if not self._api_key:
-            return "(未配置)"
-        if len(self._api_key) <= 8:
-            return "*" * len(self._api_key)
-        return f"{self._api_key[:4]}****{self._api_key[-4:]}"
+        return mask_api_key(self._api_key) or "(未配置)"
 
     def _get_client(self) -> httpx.Client:
         """获取 HTTP 客户端。

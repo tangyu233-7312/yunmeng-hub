@@ -30,7 +30,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 from typing import Any
 
@@ -196,11 +195,13 @@ def extract_state_block(content: str) -> tuple[str, str | None]:
 
 
 def _number(value: Any) -> float | None:
-    """只认真正的有限数字（bool 不算，NaN / inf 不算）。"""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    num = float(value)
-    return num if math.isfinite(num) else None
+    """只认真正的有限数字（bool 不算，NaN / inf 不算）。
+
+    ★ 判定规则只留一份（state_schema.finite_number）：
+      这里原本是同一段代码的副本，"bool 算不算数字"这种细节
+      一旦两边改得不一致，同一份状态在不同路径就会算出不同结果。
+    """
+    return schema_mod.finite_number(value)
 
 
 def _text(value: Any) -> str:
