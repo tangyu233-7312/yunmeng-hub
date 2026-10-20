@@ -1,4 +1,4 @@
-﻿/* ============================================================
+/* ============================================================
    叙事会话视图（对话界面 + SSE 流式打字机）
 
    ==================== 为什么不用 EventSource？====================
@@ -31,6 +31,8 @@ import {
   modal,
   mount,
   mountRich,
+  mountSegmented,
+  splitRichSegments,
   textField,
   toastErr,
   toastOk,
@@ -193,6 +195,23 @@ function shell() {
         </div>
         <div class="side-util-hint" id="side-vn-hint">默认显示立绘与背景。</div>
       </div>
+
+      <!-- ★ 内置状态栏开关**单独一块**，不并进上面的 #side-vn：
+           #side-vn 在没开 VN 舞台的卡上会整块 hidden，而状态栏是**每张卡都可能有**的
+           （只要卡里定义了 state_schema），并进去的话这类卡就再也关不掉状态栏了。
+           语义与立绘开关一致：本会话单独设过 → 用你设的；没设过 → 用这里的默认。 -->
+      <div class="side-util" id="side-state" hidden>
+        <div class="side-util-label">界面</div>
+        <div class="side-util-row">
+          <span>📊 内置状态栏</span>
+          <label class="switch" title="系统自带的「状态栏」卡片（剧情/场景/好感等）。关掉只影响显示，卡里自己的 HTML 状态栏照常渲染">
+            <input type="checkbox" id="state-bar-default" checked />
+            <span class="track"></span>
+            <span class="thumb"></span>
+          </label>
+        </div>
+        <div class="side-util-hint" id="side-state-hint">默认显示系统状态栏；单条上也能随时「收起」。</div>
+      </div>
     </aside>
 
     <section class="chat-main panel" id="chat-main">
@@ -261,6 +280,34 @@ function bindStatic(root, signal) {
       if (!detail?.vn) return;
       setVnImmersive(detail, Boolean(e.target.checked));
       renderChatPanel(root, detail);
+    },
+    { signal },
+  );
+
+  /* ---------------- 侧边栏：系统状态栏的默认开关 ----------------
+     ★ 与上面的立绘开关**同一套语义**（2026-10-13 那个坑原样适用）：
+       写全局默认 → 顺带清掉本会话的单独设置 → 再重渲染。
+       只写默认不清单会话，开关会立刻弹回原位（看起来像"点了没反应"）。
+     ★ 刻意**不** abort 当前 view signal：这里只需切一小块 DOM，
+       交给用户的还是原来那次渲染 — 重走 renderChatPanel 会打断滚动位置。
+       （toggleStateBar 已经在做 DOM 替换，这里复用它。） */
+  $('#state-bar-default', root)?.addEventListener(
+    'change',
+    (e) => {
+      const want = Boolean(e.target.checked);
+      setStateBarDefault(want);
+      const detail = state.detail;
+      if (!detail) {
+        // 没开会话时只改默认值就够了（此刻没有可画的 DOM）。
+        refreshSideStateBar(root, detail);
+        return;
+      }
+      // ★ 必须**先清掉本会话的单独设置**再画，否则 stateBarOn 读到的还是旧值；
+      // ★ 然后调 setStateBarOpen（按显式目标值画），**不能**调 toggleStateBar：
+      //   后者是"翻转当前生效值"，此刻偏好已是新值，再翻就翻了回去 —
+      //   实测症状：关掉开关状态栏不动、再打开反而收起了。
+      clearStateBar(detail);
+      setStateBarOpen(root, detail, want, { asDefault: true });
     },
     { signal },
   );
@@ -380,6 +427,24 @@ function bindStatic(root, signal) {
           bar.classList.toggle('expanded');
         }
         return;
+      }
+      if (act === 'toggle-state-bar') {
+        toggleStateBar(root, btn);
+        return;
+      }
+      if (act === 'show-card-state' || act === 'hide-card-state') {
+        // ★ 只翻「谁占主位」，不动数据：
+        //   作者优先时系统那条**本来就在**（细条），所以重画那一块就够了。
+        //   「展开」= 这次按作者优先（清掉"你对系统那份单独做过的选择"）；
+        //   「收起」= 这次按系统优先（给系统那条写一条"显示"的会话偏好）。
+        //   作者面板的显隐由同一个优先级决定（系统优先时它自动降为细条），
+        //   所以不存在"收起两次变成两条都没了"的情况，这里只翻一个值就够。
+        if (act === 'show-card-state') {
+          clearStateBar(state.detail);
+          return redrawStateArea(root);
+        }
+        setStateBarOn(state.detail, true);
+        return redrawStateArea(root);
       }
       if (act === 'copy-msg') return copyMessage(btn);
       if (act === 'edit-msg') return openEditDialog(root, signal, msgOf(btn));
@@ -983,6 +1048,64 @@ function messageActions(m, opts = {}) {
 }
 
 /**
+ * 这条消息该不该进富文本渲染？
+ *
+ * ★ 不能只看 `looksLikeHtml`：围栏卡片（```` ``` ```` + `<body>`）是
+ *   酒馆助手的事实标准，它的特征标签是 `<body>`，而 `_HTML_HINTS` 里
+ *   **没有** body（那张表是给裸 HTML 标签用的）。只看 looksLikeHtml 的话，
+ *   作者辛苦包的卡片会原样显示成源码 + 两个孤零零的 ```。
+ */
+function needsRichRender(text) {
+  if (!text) return false;
+  if (looksLikeHtml(text)) return true;
+  // 围栏卡片：交给 splitRichSegments 判断（它认得出就返回 card 段）
+  const segs = splitRichSegments(text);
+  return segs.some((s) => s.kind === 'card');
+}
+
+/**
+ * 把一条消息的正文渲染进 `.msg-body`：混排消息分段渲染，其余保持老行为。
+ *
+ * ==================== 为什么要有这个统一入口 ====================
+ * 有三处地方要把消息画成富文本：历史消息（`hydrateRichMessages`）、
+ * 流式收尾（`finishBubble`）、以及将来的新入口。三处各写一遍必然会分叉
+ * （本项目已经踩过：同一根因只修一条路 = 没修）。
+ *
+ * ★ 老行为原样保留：**整条都是卡片**（没有正文混排）时仍然走 `mountRich`，
+ *   用户看到的还是「渲染视图 / 源码」两个页签，一个字都没变；
+ *   只有真的混排才切换 — 这样这次改动的风险面就只有"混排消息"这一类。
+ *
+ * @returns {boolean} 是否挂上了渲染
+ */
+function renderRichBody(body, text) {
+  if (!body) return false;
+  const char = state.detail?.character_card?.name || '';
+  const user = authSession.user?.username || '';
+  const segments = splitRichSegments(text);
+  // 混排：正文不进 iframe，卡片各自一个沙箱
+  if (mountSegmented(body, segments, { char, user, keepProseLineBreaks: true })) {
+    return true;
+  }
+  // 单张卡片：用切出来的内容渲染（围栏已经在这里剥掉了）。
+  // ★ 交给 mountRich 时传 noStrip，并且不能再靠 looksLikeHtml 判断 —
+  //   围栏卡片的内容可能是 `<body>...</body>` 这种不含提示词的写法。
+  const only = segments.length === 1 ? segments[0] : null;
+  if (only && only.kind === 'card') {
+    mountRich(body, only.html, {
+      char,
+      user,
+      noStrip: true,
+      keepProseLineBreaks: true,
+    });
+    return true;
+  }
+  // 单段纯文本：不打富文本，让调用方保持原来的纯文本排版
+  if (!looksLikeHtml(text)) return false;
+  mountRich(body, text, { char, user, keepProseLineBreaks: true });
+  return true;
+}
+
+/**
  * 把气泡里"看起来是 HTML 卡片"的消息真正渲染出来（开场白最常见）。
  *
  * ★ 为什么流式期间不渲染、等收尾才渲染：
@@ -997,15 +1120,18 @@ function messageActions(m, opts = {}) {
  */
 function hydrateRichMessages(root, onlyBubble) {
   const bubbles = onlyBubble ? [onlyBubble] : Array.from($$('.msg', root));
-  const char = state.detail?.character_card?.name || '';
-  const user = authSession.user?.username || '';
   for (const bubble of bubbles) {
     const body = bubble.querySelector('.msg-body');
     if (!body || body.dataset.richMounted) continue;
     const text = body.textContent || '';
-    if (!looksLikeHtml(text)) continue;
+    if (!needsRichRender(text)) continue;
+    // ★ 先记下原文：分段渲染后 .msg-body 里可能只剩一堆分段 div，
+    //   而复制/编辑/重新生成/切译文都要从 textContent 拿原话（见 msgOf），
+    //   记在 dataset 上比从 DOM 反推可靠 — 且 DOM 里的 HTML 已经被清洗过，
+    //   反推出来的"原文"会丢标签、也会丢卡片里的文字。
+    body.dataset.rawContent = text;
     body.dataset.richMounted = '1';
-    mountRich(body, text, { char, user, keepProseLineBreaks: true });
+    renderRichBody(body, text);
   }
 }
 
@@ -1139,7 +1265,10 @@ function altTextAttrs(m) {
   const alt = altText(m);
   if (!alt) return '';
   // 富文本（HTML 卡片）消息不做切换：换 textContent 会把挂好的 iframe 一起毁掉
-  if (looksLikeHtml(String(m.content || '')) || looksLikeHtml(alt)) return '';
+  // ★ 判据必须与 hydrateRichMessages 完全一致（needsRichRender，不是 looksLikeHtml）：
+  //   漏掉围栏卡片（```+<body>，looksLikeHtml 不认）的代价不是"少个功能"，
+  //   会渲染出一个点下去毫无反应的「看看另一份」按钮 — 用户只会以为界面坏了。
+  if (needsRichRender(String(m.content || '')) || needsRichRender(alt)) return '';
   const showing = alt === m.content ? 'content' : 'translation';
   return ` data-alt-text="${esc(alt)}" data-showing="${showing}"`;
 }
@@ -1165,6 +1294,10 @@ function toggleTranslation(btn) {
   const body = bubble?.querySelector('.msg-body');
   const alt = bubble?.dataset.altText;
   if (!body || !alt) return;
+  // ★ 富文本（HTML 卡片 / 分段渲染）消息不参与切换：换 textContent 会把
+  //   挂好的分段和 iframe 一起毁掉，用户就再也看不到卡片了。
+  //   （与 finishBubble 里富文本不做译文覆盖的判断保持一致。）
+  if (body.dataset.rawContent) return;
   const current = body.textContent;
   body.textContent = alt;
   bubble.dataset.altText = current;
@@ -1543,11 +1676,267 @@ function lastRawState(detail) {
   return '';
 }
 
+/* ==================================================================
+   系统状态栏的显示开关（2026-10-20 用户要求）
+   ==================================================================
+   ★ 为什么只在本地存、不写 PATCH：这是**看的方式**，不是数据。
+     关掉只影响画不画那一条，`<state>` 照常解析落库、协议照常注入提示词。
+     所以用户随手动、回话全程不丢状态。卡作者在 HTML 里自绘了面板时，
+     两套数字打架，用户可以顺手把"系统那条"收起来。
+   ★ 为什么不干脆不画：彻底不画的话，用户再也找不到状态数据、也点不到
+     「手动填写 / 纠正」。所以收起时留一条 `.state-bar-collapsed` 细条
+     （文案 + 「显示」按钮），随时能一键找回。
+   ★ 三种来源，和 VN 舞台同一套语义：本会话明确选过 → 用你选的；
+     没选过 → 全局默认（侧边栏「📊 系统状态栏」开关）。
+   ================================================================== */
+const STATE_BAR_KEY = 'hne_state_bar';
+//: 全局默认（默认展开：结构化状态是这套系统相对酒馆的核心能力之一）
+const STATE_BAR_DEFAULT_KEY = 'hne_state_bar_default';
+
+function stateBarDefaultOn() {
+  try {
+    return window.localStorage.getItem(STATE_BAR_DEFAULT_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function setStateBarDefault(on) {
+  try {
+    window.localStorage.setItem(STATE_BAR_DEFAULT_KEY, on ? '1' : '0');
+  } catch {
+    /* 隐私模式下记不住，本次仍然生效 */
+  }
+}
+
+/** 这个会话的状态栏要不要画？ */
+function stateBarOn(detail) {
+  if (!detail?.id) return stateBarDefaultOn();
+  let stored = null;
+  try {
+    stored = window.localStorage.getItem(`${STATE_BAR_KEY}:${detail.id}`);
+  } catch {
+    stored = null;
+  }
+  if (stored !== null) return stored === '1';
+  return stateBarDefaultOn();
+}
+
+function setStateBarOn(detail, on) {
+  if (!detail?.id) return;
+  try {
+    window.localStorage.setItem(`${STATE_BAR_KEY}:${detail.id}`, on ? '1' : '0');
+  } catch {
+    /* 同上：记不住也照样生效 */
+  }
+}
+
+/** 清掉"这个会话单独设过"，让它重新听全局默认（与 clearVnStage 同一套语义）。 */
+function clearStateBar(detail) {
+  if (!detail?.id) return;
+  try {
+    window.localStorage.removeItem(`${STATE_BAR_KEY}:${detail.id}`);
+  } catch {
+    /* 删不掉也不影响：这次渲染已经按新默认走了 */
+  }
+}
+
+/**
+ * 收起 / 显示系统状态栏（消息区里那条的「收起 / 显示」按钮）。
+ *
+ * ★ 为什么是**只换 DOM**、不走 renderChatPanel：重渲染会 abort 当前 view signal，
+ *   把用户正在看的滚动位置和展开状态全打断（与 `toggle-state` 同一个坑）。
+ * ★ 为什么写 localStorage 而不是只改 DOM：用户要的是"这条会话以后就这样"，
+ *   只改 DOM 的话下一条消息流式结束、整页刷新一次就弹回来了 — 那正是
+ *   本项在 2026-10-13 修过的"假死开关"（见 test_sidebar_stage_switch_actually_takes_effect）。
+ * ★ 状态数据一个字都不动：这里只决定画不画，`<state>` 早就在后端解析落库了。
+ */
+function toggleStateBar(root, btn) {
+  const detail = state.detail;
+  // 收起状态下点击的是 #messages 里那条 `.state-bar-collapsed` 下的「显示」按钮；
+  // 展开状态下点的是 `.state-bar` 里的「收起」。两处都只翻**一个**值。
+  if (!detail || !btn) return false;
+  // ★ 点的是哪一边：主位上系统那条点「收起」（按当前生效值翻），
+  //   让位的那条点「显示」= 这次改成系统优先（等价于"我选系统那份"）。
+  const wasDeferred = btn.closest('#state-bar-collapsed')?.dataset?.deferred === '1';
+  const target = wasDeferred ? true : !stateBarOn(detail);
+  return setStateBarOpen(root, detail, target);
+}
+
+/**
+ * 把状态栏画成**指定**状态（on=true 展开 / false 收起细条）。
+ *
+ * ★ 为什么单独抽出来、而不是让侧边栏开关去调 toggleStateBar：
+ *   toggleStateBar 的语义是"翻转**当前生效值**"，而侧边栏开关点下去时，
+ *   偏好已经被写成了新值 — 再调 toggle 就会**又翻回去**，净效果为零
+ *   （实测症状：关掉开关，状态栏纹丝不动；再打开，反而收起了）。
+ *   这里按显式目标值画，谁调都不会翻错方向。
+ * ★ 只换 DOM、不走 renderChatPanel：重渲染会 abort 当前 view signal，
+ *   把用户正在看的滚动位置和展开状态全打断。
+ */
+function setStateBarOpen(root, detail, on, { asDefault = false } = {}) {
+  if (!detail) return false;
+  const box = root.querySelector('#messages');
+  if (!box) return false;
+  // ★ 偏好先写：下面的重绘要按"新的生效值"算主位给谁（顺序反了会画回旧样子）。
+  //   ★ asDefault：从侧边栏改的是**全局默认**，不写本会话的键（见调用方）。
+  if (!asDefault) setStateBarOn(detail, on);
+  // ★ 只重绘"状态区"这一块（系统那条 + 卡状态面板），不整页重渲染：
+  //   整页重渲染会 abort 当前 view signal，把用户的滚动位置和展开状态全打断。
+  //   ★ 为什么需要整块重绘而不是只换一个节点：两套状态栏是**互相让位**的关系，
+  //     换掉其中一个必然要同时换另一个，否则会出现"两条都收起了"或"两条都在"。
+  return redrawStateArea(root);
+}
+
+/**
+ * 重绘消息区末尾那块"状态区"（系统状态栏 + 卡自带状态，二者互相让位）。
+ *
+ * ★ 单独抽出来是因为**两处**要同一份排版逻辑：首次渲染（`renderChatPanel` 的
+ *   模板字符串）与点「收起 / 显示 / 展开」时的局部替换。两处各写一遍必然分叉
+ *   —— 本项目踩过太多"同一根因只修一条路"。
+ * ★ 为什么要整块替换：两套状态栏是**互相让位**的关系，换掉其中一个必然要同时
+ *   换另一个，否则会出现"两条都收起了"或"两条都展开"的不一致画面。
+ */
+function renderStateArea(detail, box, existing) {
+  const holder = document.createElement('div');
+  holder.innerHTML = stateAreaHTML(detail);
+  const fresh = Array.from(holder.children);
+  if (!existing.length) {
+    // 之前一条都没有（比如刚收到第一份卡状态）：追加到末尾即可
+    fresh.forEach((el) => box.appendChild(el));
+    return;
+  }
+  // 插在第一条旧节点**前面**，再把旧的全删掉 —— 顺序与原来一致，也不会留残影
+  const anchor = existing[0];
+  const parent = anchor.parentNode;
+  fresh.forEach((el) => parent.insertBefore(el, anchor));
+  existing.forEach((el) => el.remove());
+}
+
+/**
+ * 把状态区按**当前偏好**原地重画一遍（不重渲染整页：那会打断滚动与展开状态）。
+ *
+ * ★ 只做一件很笨但可靠的事：找出现有的那几条、整块换掉。
+ *   两套状态栏互相让位，只换其中一条必然出现"两条都在 / 两条都没了"。
+ */
+function redrawStateArea(root) {
+  const detail = state.detail;
+  const box = root.querySelector?.('#messages') || document.querySelector('#messages');
+  if (!detail || !box) return false;
+  const ids = ['state-bar', 'state-bar-collapsed', 'card-state', 'card-state-collapsed'];
+  const existing = Array.from(box.children).filter((el) => ids.includes(el.id));
+  renderStateArea(detail, box, existing);
+  refreshSideStateBar(root, detail);
+  box.scrollTop = box.scrollHeight;
+  return true;
+}
+
+/**
+ * 消息区末尾"状态区"的 HTML：系统状态栏 + 卡自带状态，二者互相让位。
+ *
+ * ★ **唯一**的排版来源：首屏渲染与后续局部重绘都调它（见 `renderStateArea`）。
+ *   分成两处写死过一次就分叉 —— 首屏按新规则画、点一下又变回旧规则，是本项目
+ *   反复踩过的形状。
+ * ★ 优先级（用户 2026-10-20 拍板）：
+ *   作者有状态且用户没单独选过系统那份 → 作者在上、系统收成细条；
+ *   否则系统按自己的开关画、作者那份收成细条（两边都留入口，数据都还在）。
+ */
+function stateAreaHTML(detail) {
+  if (!detail?.card_state?.has_value) {
+    return stateBarOn(detail)
+      ? stateBarHTML(detail.state, detail.state_schema, lastRawState(detail))
+      : stateBarCollapsedHTML(detail);
+  }
+  if (authorStateFirst(detail)) {
+    return cardStateHTML(detail.card_state) + stateBarDeferredHTML(detail, detail.card_state);
+  }
+  return (
+    (stateBarOn(detail)
+      ? stateBarHTML(detail.state, detail.state_schema, lastRawState(detail))
+      : stateBarCollapsedHTML(detail)) + cardStateCollapsedHTML(detail.card_state)
+  );
+}
+
+/**
+ * 这张会话该由**谁的**状态栏占据主位？
+ *
+ * 用户 2026-10-20 拍板：**作者优先**（保证作者原意图）。
+ * 语义与「收起 / 显示」同一条规则：本会话单独选过 → 用你选的；
+ * 没选过 → 有作者状态就让位，没有就画系统那份。
+ *
+ * ★ 这里只回答"主位给谁"，不决定"画不画"：无论给谁，
+ *   另一边都以**细条**出现（数据都在，随时能点回来）。
+ */
+function authorStateFirst(detail) {
+  if (!detail?.id) return false;
+  if (!detail?.card_state?.has_value) return false;
+  let stored = null;
+  try {
+    stored = window.localStorage.getItem(`${STATE_BAR_KEY}:${detail.id}`);
+  } catch {
+    stored = null;
+  }
+  // 用户对**系统**状态栏做过选择（收起 / 显示）→ 尊重他
+  if (stored !== null) return false;
+  return true;
+}
+
+/** 侧边栏「📊 系统状态栏」开关同步成当前会话的**生效值**。 */
+function refreshSideStateBar(root, detail) {
+  const box = root.querySelector('#side-state');
+  const input = root.querySelector('#state-bar-default');
+  if (!input) return;
+  // ★ 开关只在"这张卡真的会画状态栏"时才有意义：
+  //   没开任何会话 / 卡里没定义 state_schema / 纯聊天模式 → 整块藏掉，
+  //   否则用户会看到一个点了毫无变化的开关（不如没有）。
+  const fields = Array.isArray(detail?.state_schema?.fields) ? detail.state_schema.fields : [];
+  const usable = Boolean(detail?.id) && fields.length > 0 && !detail?.pure_chat;
+  if (box) box.hidden = !usable;
+  if (!usable) return;
+  input.checked = stateBarOn(detail);
+  const hint = root.querySelector('#side-state-hint');
+  if (!hint) return;
+  let perSession = false;
+  try {
+    perSession = Boolean(
+      detail?.id && window.localStorage.getItem(`${STATE_BAR_KEY}:${detail.id}`) !== null,
+    );
+  } catch {
+    perSession = false;
+  }
+  hint.textContent = perSession
+    ? '这个会话你单独调过（消息区那条的「收起 / 显示」），以你调的为准；动上面的开关会重新跟回默认。'
+    : input.checked
+      ? '默认显示系统状态栏；单条上也能随时「收起」。'
+      : '已默认隐藏系统状态栏 — 状态照常解析、照常注入提示词，只是不画出来。';
+}
+
+/** 收起时那一行细条：必须留一个**能点回来**的按钮，否则用户找不回状态。 */
+function stateBarCollapsedHTML(detail) {
+  const fields = Array.isArray(detail?.state_schema?.fields) ? detail.state_schema.fields : [];
+  const st = detail?.state;
+  const has = st && typeof st === 'object' && Object.keys(st).length > 0;
+  const tip = fields.length
+    ? `${fields.length} 个字段${has ? '，模型每轮仍在更新' : '，模型还没输出过'}`
+    : '这张卡没定义状态栏格式';
+  return (
+    `<div class="state-bar-collapsed" id="state-bar-collapsed">` +
+    `<span class="faint">📊 系统状态栏已收起（${esc(tip)}）</span>` +
+    `<button class="btn link small" data-act="toggle-state-bar" ` +
+    `title="重新显示系统状态栏（状态数据一直在，只是没画）">显示</button>` +
+    `</div>`
+  );
+}
+
 function stateBarHTML(st, schema, rawState) {
   const fields = Array.isArray(schema?.fields) ? schema.fields : [];
   const editBtn = (label, title) =>
     `<button class="btn link small" data-act="edit-state" title="${esc(title)}">${label}</button>`;
   const toggleBtn = `<button class="btn link small" data-act="toggle-state" title="展开 / 收起状态详情（默认收起，不占地方）">详情</button>`;
+  // ★ 「收起」放在**每一条**状态栏上（包括空状态那条）：空状态也在 DOM 里常驻，
+  //   只给"有状态"的那种挂按钮，用户会在没状态的时候找不到开关。
+  const hideBtn = `<button class="btn link small" data-act="toggle-state-bar" ` +
+    `title="收起系统状态栏（只影响显示；状态照常解析落库、照常注入提示词）">收起</button>`;
 
   // ★ 一行摘要：只放"值"，不放血条/背包那种占地方的渲染 —— 那些在详情里。
   //   用户反馈："状态栏占用的空间有点大，导致对话很小" ⇒ 默认只占一行。
@@ -1587,7 +1976,7 @@ function stateBarHTML(st, schema, rawState) {
       const detail = stateBarFieldsHTML(st, schema);
       return wrap(
         `🧭 这条会话是旧版建的（当时状态栏字段是写死的），现在按旧格式显示。` +
-          `${toggleBtn}${editBtn('编辑', '这条旧会话没有字段定义，直接改 JSON')}`,
+          `${toggleBtn}${editBtn('编辑', '这条旧会话没有字段定义，直接改 JSON')}${hideBtn}`,
         detail,
       );
     }
@@ -1595,7 +1984,7 @@ function stateBarHTML(st, schema, rawState) {
       （或 <code>initial_state</code>），或者在它关联的世界书里加一条名字以
       <code>[状态栏]</code> 开头的条目、正文里放一段 <code>&lt;state&gt;{…}&lt;/state&gt;</code> 示例。`;
     return wrap(
-      `🧭 这张角色卡没有定义状态栏格式，所以这里没有状态可显示。${toggleBtn}`,
+      `🧭 这张角色卡没有定义状态栏格式，所以这里没有状态可显示。${toggleBtn}${hideBtn}`,
       `<div class="small muted">${howto}</div>${rawHTML}${editBtn('手动填写', '模型没输出时，也可以自己先建一份')}`,
       true,
     );
@@ -1607,7 +1996,7 @@ function stateBarHTML(st, schema, rawState) {
     return wrap(
       `🧭 还没有状态：模型每轮回复末尾输出 <code>&lt;state&gt;</code> 块后，` +
         `这里会显示 ${esc(names)}。${toggleBtn}` +
-        editBtn('手动填写', '模型没输出时，也可以自己先建一份'),
+        editBtn('手动填写', '模型没输出时，也可以自己先建一份') + hideBtn,
       `<div class="small muted">字段由角色卡 / 世界书定义：${esc(names)}</div>${rawHTML}`,
       true,
     );
@@ -1616,7 +2005,7 @@ function stateBarHTML(st, schema, rawState) {
   // ---------------- 正常：一行摘要 + 详情（详情里是原来那套完整渲染）----------------
   const line =
     `🧭 <span class="state-bar-chips">${compact}</span>` +
-    `${toggleBtn}${editBtn('纠正', '模型写错了就自己改（校验规则与模型输出时同一套）')}`;
+    `${toggleBtn}${editBtn('纠正', '模型写错了就自己改（校验规则与模型输出时同一套）')}${hideBtn}`;
   return wrap(line, `${stateBarFieldsHTML(st, schema)}${rawHTML}`);
 }
 
@@ -1626,6 +2015,112 @@ function stateBarHTML(st, schema, rawState) {
  * ★ 这一段是第十六轮从 `stateBarHTML` 原样搬过来的 —— 探针按
  *   `#state-bar .state-hp` 与文案断言，所以类名与文案一个都不能改。
  */
+
+/**
+ * 卡作者自带的状态栏（第二状态存储的界面那半边）。
+ *
+ * ==================== 为什么它排在系统状态栏**前面** ====================
+ * 用户 2026-10-20 拍板："卡自带的状态块优先（保证作者原意图），系统那份收起来"。
+ * 所以这里画一张卡作者自己的面板；系统那条 `#state-bar` 仍然渲染 ——
+ * 只是以 `#state-bar-collapsed` 的**细条**形态出现（数据一个字都没少）。
+ *
+ * ★ 为什么不干脆不画系统那条：它是"界面上唯一能找到状态数据、能手动纠正"的入口
+ *   （2026-10-20 加「收起」时定下的原则：收起可以，消失不行）。
+ * ★ 为什么字段名不做任何加工：这是**作者的**字段，我们连名字都不认识，
+ *   按原样列出来并标上来源，比硬套成"HP / 背包"更诚实。
+ */
+function cardStateHTML(cardState) {
+  const value = cardState?.value;
+  const rows =
+    value && typeof value === 'object'
+      ? Object.keys(value)
+          .slice(0, 60)
+          .map((key) => {
+            const raw = value[key];
+            const shown =
+              raw !== null && typeof raw === 'object'
+                ? `<code class="card-state-json">${esc(JSON.stringify(raw))}</code>`
+                : Array.isArray(raw)
+                  ? esc(raw.join(' / '))
+                  : esc(String(raw ?? ''));
+            return `<div class="card-state-row"><span class="card-state-key">${esc(key)}</span>` +
+              `<span class="card-state-val">${shown}</span></div>`;
+          })
+          .join('')
+      : '';
+  const drift = Array.isArray(cardState?.drift?.missing) ? cardState.drift.missing : [];
+  const retyped = Array.isArray(cardState?.drift?.retyped) ? cardState.drift.retyped : [];
+  // ★ 漂移提示只报**能确证**的两件事（字段消失 / 类型变了），不做数值偏移
+  //   —— 卡状态没有 schema，数值"该往哪边算"无从定义（见后端 card_state.diff_fields）。
+  const driftHTML = drift.length || retyped.length
+    ? `<div class="card-state-drift small">⚠ 与上一轮相比：` +
+      (drift.length ? `少了 ${esc(drift.join('、'))}` : '') +
+      (drift.length && retyped.length ? '；' : '') +
+      (retyped.length
+        ? retyped
+            .map((d) => `${esc(d.key)} 类型变了（${esc(d.was)} → ${esc(d.now)}）`)
+            .join('；')
+        : '') +
+      `</div>`
+    : '';
+  return (
+    `<div class="card-state" id="card-state">` +
+    `<div class="card-state-head">` +
+    `<span>🃏 角色卡自带状态</span>` +
+    `<span class="card-state-src" title="系统原样保管、不校验、不注入提示词">${esc(cardState?.label || '')}</span>` +
+    (cardState?.updates ? `<span class="faint small">已更新 ${cardState.updates} 次</span>` : '') +
+    // ★ 「收起」必须存在于**面板里**，否则作者面板一旦占主位就没有出口：
+    //   系统那条已经让位成细条、卡面板又收不起来 ⇒ 两条都看不到（收起可以，消失不行）。
+    `<button class="btn link small" data-act="hide-card-state" ` +
+    `title="切回系统状态栏占主位（作者的数据仍在，随时点回来了）">收起</button>` +
+    `</div>` +
+    (rows ? `<div class="card-state-body">${rows}</div>` : '') +
+    driftHTML +
+    `<div class="card-state-hint small faint">${esc(cardState?.hint || '')}</div>` +
+    `</div>`
+  );
+}
+
+/**
+ * 系统状态栏占主位时，**作者那份**的形态：一条细条（点一下展开看作者的）。
+ *
+ * ★ 与上面那个函数对称：任何一边占主位，另一边都留一个能点回来的入口 ——
+ *   这跟 2026-10-20「收起」那条教训是同一件事：收起可以，消失不行。
+ */
+function cardStateCollapsedHTML(cardState) {
+  return (
+    `<div class="card-state-collapsed" id="card-state-collapsed">` +
+    `<span class="faint">🃏 角色卡自带状态（${esc(cardState?.label || '作者格式')}，` +
+    `已更新 ${Number(cardState?.updates || 0)} 次）</span>` +
+    `<button class="btn link small" data-act="show-card-state" ` +
+    `title="展开看作者自己写的状态（只影响显示）">展开</button>` +
+    `</div>`
+  );
+}
+
+/**
+ * 系统状态栏在"作者状态优先"时的形态：一条细提示（带「显示系统状态」按钮）。
+ *
+ * ★ 与用户手动「收起」那条**长得一样、语义不同**：
+ *   那条是"你自己收的"，这条是"因为有作者状态，系统这份让位了"。
+ *   点按钮 = 这次先看系统那份（`setStateBarOpen` 画回来，不改作者优先级）。
+ */
+function stateBarDeferredHTML(detail, cardState) {
+  const fields = Array.isArray(detail?.state_schema?.fields) ? detail.state_schema.fields : [];
+  const tip = fields.length
+    ? `${fields.length} 个字段`
+    : detail?.state && Object.keys(detail.state).length
+      ? '旧版会话的状态'
+      : '没有可显示的状态';
+  return (
+    `<div class="state-bar-collapsed" id="state-bar-collapsed" data-deferred="1">` +
+    `<span class="faint">📊 系统状态栏让位给作者的状态栏（${esc(tip)}，数据仍在）</span>` +
+    `<button class="btn link small" data-act="toggle-state-bar" ` +
+    `title="临时看系统那份状态（作者的状态栏不受影响）">显示</button>` +
+    `</div>`
+  );
+}
+
 function stateBarFieldsHTML(st, schema) {
   const fields = Array.isArray(schema?.fields) ? schema.fields : [];
   const editBtn = (label, title) =>
@@ -1869,10 +2364,15 @@ function renderChatPanel(root, detail) {
     ${pureChat ? '' : vnStageHTML(detail)}
 
     <!-- ★ 第十六轮：状态条挪到**消息区末尾**（= 最新那条回复的下方），
-         并且默认只占一行 —— 用户反馈"顶部那个框太大，把对话挤小了"。 -->
-    <div class="messages" id="messages">${renderMessages(detail)}${
-      pureChat ? '' : stateBarHTML(detail.state, detail.state_schema, lastRawState(detail))
-    }</div>
+         并且默认只占一行 — 用户反馈"顶部那个框太大，把对话挤小了"。
+         ★ 2026-10-20：加了「收起」。收起时渲染的是一条细提示
+         .state-bar-collapsed（带「显示」按钮）而不是什么都不画 —
+         什么都不画的话用户既找不到状态、也点不到「纠正 / 手动填写」。
+         ★ 注意：这段在**模板字符串里**，绝不能出现反引号，否则会把
+           后面的插值表达式变成真代码、把整段 HTML 变成普通字符串 —
+           表现：页面某块整个消失 / 控制台报 "xxx is not defined"。
+         首屏就按生效值决定画哪一种，避免"先画出来再闪一下消失"。 -->
+    <div class="messages" id="messages">${renderMessages(detail)}${pureChat ? '' : stateAreaHTML(detail)}</div>
     ${pendingReplyHTML(detail)}
     ${generatingHTML(detail)}
     <button class="btn sec sm scroll-bottom hidden" data-act="scroll-bottom">↓ 回到最新</button>
@@ -1897,6 +2397,9 @@ function renderChatPanel(root, detail) {
   if (box) box.scrollTop = box.scrollHeight;
   // 侧边栏的"显示选项"跟着这次渲染同步（没有 VN 舞台时整块藏起来）
   refreshSideVn(root, detail);
+  // ★ 状态栏开关也要在每次打开/刷新会话时回填成**这个会话的生效值**，
+  //   否则侧边栏会一直显示上次那个会话的勾选状态（看起来像"开关不管事"）。
+  refreshSideStateBar(root, detail);
 }
 
 function alertsHTML(list) {
@@ -2386,8 +2889,10 @@ async function translateOneMessage(root, btn) {
   const sessionId = state.sessionId;
   if (!bubble || !id || !sessionId) return;
 
+  // ★ 必须用 rawBodyText：分段渲染过的消息 textContent 拼出来的不是原文
+  //   （卡片里的标签被清洗过），拿它当"原文"翻译会让译文对不上原文。
   const body = bubble.querySelector('.msg-body');
-  const original = body?.textContent || '';
+  const original = rawBodyText(body);
   btn.disabled = true;
   showTranslating(bubble, state.detail?.translate?.settings?.target_lang, 'reply');
   try {
@@ -2401,7 +2906,8 @@ async function translateOneMessage(root, btn) {
       toastErr(envelope?.message || '这条没有可翻译的内容');
       return;
     }
-    if (body && !looksLikeHtml(original)) {
+    // ★ 与 altTextAttrs 同一判据：卡片与分段消息不覆盖正文，否则 iframe 和分段一起没掉。
+    if (body && !needsRichRender(original)) {
       bubble.dataset.altText = original;
       bubble.dataset.showing = 'translation';
       body.textContent = translation.text;
@@ -2425,6 +2931,21 @@ async function translateOneMessage(root, btn) {
    消息级操作：复制 / 编辑 / 撤回 / 重新生成
    ================================================================== */
 
+/**
+ * 从一条消息的 `.msg-body` 取**模型原文**。
+ *
+ * ★ 为什么不直接 `textContent`：消息被渲染成富文本后，body 里要么是
+ *   iframe（读不到内容），要么是切成好几段的 div（`textContent` 会把
+ *   卡片里被清洗掉标签的文字也拼进来，顺序也对不上原文）。
+ *   所以渲染前一律把原始文本存进 `dataset.rawContent`，这里优先读它；
+ *   没渲染过的消息没有这个字段，自然回落到 `textContent`。
+ */
+function rawBodyText(body) {
+  if (!body) return '';
+  const raw = body.dataset.rawContent;
+  return typeof raw === 'string' && raw ? raw : body.textContent || '';
+}
+
 /** 从被点的按钮找到它所在的那条消息（data-id 是后端消息 id）。 */
 function msgOf(btn) {
   const node = btn.closest('.msg');
@@ -2432,7 +2953,7 @@ function msgOf(btn) {
   return {
     id: Number(node.dataset.id),
     role: node.classList.contains('user') ? 'user' : 'assistant',
-    content: node.querySelector('.msg-body')?.textContent || '',
+    content: rawBodyText(node.querySelector('.msg-body')),
   };
 }
 
@@ -2944,7 +3465,8 @@ function finishBubble(bubble, data) {
       data.translation.display === 'content' ? data.translation.text : rawText;
     const shown =
       data.translation.display === 'content' ? rawText : data.translation.text;
-    if (body && !looksLikeHtml(rawText)) {
+    // ★ 判据同 altTextAttrs / toggleTranslation：卡片与分段混排都不覆盖正文
+    if (body && !needsRichRender(rawText)) {
       bubble.dataset.altText = alt;
       bubble.dataset.showing =
         data.translation.display === 'content' ? 'content' : 'translation';
@@ -2968,14 +3490,13 @@ function finishBubble(bubble, data) {
     );
   }
   // HTML 卡片（尤其是开场白）在这一刻才换成"渲染视图"
-  if (body && looksLikeHtml(rawText)) {
+  if (body && needsRichRender(rawText)) {
+    // ★ 与 hydrateRichMessages 同一理由：先存原文，再渲染。
+    //   分段渲染会把 .msg-body 拆成好几块 div，之后 textContent 拼出来的
+    //   已经不是原文了（卡片里的文字是清洗过的），复制/编辑就拿到错的东西。
+    body.dataset.rawContent = rawText;
     body.dataset.richMounted = '1';
-    mountRich(body, rawText, {
-      char: state.detail?.character_card?.name || '',
-      user: authSession.user?.username || '',
-      // 与 hydrateRichMessages 同一理由：卡里的裸换行正文不该被折叠成一坨
-      keepProseLineBreaks: true,
-    });
+    renderRichBody(body, rawText);
   }
 }
 

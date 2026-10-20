@@ -299,6 +299,18 @@ class SessionDetail(BaseModel):
         "{spec, source: card|world_book|initial_state, description?, fields:[{name,label,type,...}]}；"
         "fields 为空 = 该卡没有定义状态栏（界面显示「未定义」，也不向模型注入状态协议）。",
     )
+    card_state: dict[str, Any] = Field(
+        default_factory=dict,
+        description="★ 角色卡**自带**的状态（第二状态存储，与系统那份 `state` 互不覆盖）："
+        "{enabled, has_value, value, raw, source, label, schema_hash, updates, "
+        "drift:{missing, retyped:[{key,was,now}], new}, updated_at, hint}。"
+        "来源 source 取值：state_tag（<state> 标签）/ json_fence（JSON 围栏）/ "
+        "mvu（酒馆 MVU 指令块）/ script_json（卡内嵌 JSON 脚本）/ "
+        "json_tag（自定义 JSON 标签）。"
+        "★ 卡状态**不注入提示词、不按 schema 校验**，系统只负责保管与显示；"
+        "界面默认优先显示它，系统那份收成一条细提示（用户可切回）。"
+        "has_value=false 表示这张卡还没输出过自己的状态块。",
+    )
     vn: dict[str, Any] | None = Field(
         default=None,
         description="★ 角色卡 VN 模式（立绘/背景）的**舞台数据**，由后端按当前状态算好："

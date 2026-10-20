@@ -10,6 +10,7 @@
 靠本文件把这些模型全部加载进来。
 """
 
+from app.db.models.card_state import CardState
 from app.db.models.character_card import CharacterCard
 from app.db.models.llm_provider import LLMProvider
 from app.db.models.message import Message
@@ -28,4 +29,5 @@ __all__ = [
     "Message",
     "PromptPreset",
     "Plugin",
+    "CardState",
 ]

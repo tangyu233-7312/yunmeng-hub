@@ -2028,11 +2028,300 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
             "   .forEach(b => b.click()); return 'ok'; })()"
         )
         time.sleep(0.4)
+
+    # ---------- 10.12 ★ 混排消息要「正文分段 + 卡片就地渲染」，不能整条二选一 ----------
+    #
+    # 以前只有两条路：整条渲染成卡片（正文被塞进 iframe，排版由卡片 CSS 决定）
+    # 或整条按纯文本显示（状态栏只剩一堆标签源码）。用户要的是
+    # **正文照原样排版、卡片在它出现的位置显示成卡片**。
+    # 这里造一张开场白就是混排的卡，进会话实测：
+    #   ① 段数与顺序对；② 卡片真在沙箱 iframe 里；③ 复制拿到的是原文。
+    mixed_made = cdp.eval(
+        "(async () => {"
+        "  const token = localStorage.getItem('hne_access_token');"
+        "  const greeting = '你推开门，风灌了进来。\\n\\n'"
+        "    + '<div class=\\\"status\\\"><b>HP</b> 80/100</div>\\n\\n'"
+        "    + '她抬起眼。';"
+        "  const r = await fetch('/api/v1/character-cards', { method: 'POST',"
+        "    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },"
+        "    body: JSON.stringify({ name: '探针混排卡_" + str(int(time.time())) + "',"
+        "      greeting, personality: '测试' }) });"
+        "  if (!r.ok) return 'HTTP ' + r.status;"
+        "  const d = await r.json();"
+        "  return String(d.data.id);"
+        "})()"
+    )
+    mixed_id = int(mixed_made) if str(mixed_made or "").isdigit() else None
+    probe.check(
+        "10.12.混排消息", "能造出一张「正文+卡片+正文」开场白的卡", mixed_id is not None, mixed_made
+    )
+
+    if mixed_id is not None:
+        sess = cdp.eval(
+            "(async () => {"
+            "  const token = localStorage.getItem('hne_access_token');"
+            "  const r = await fetch('/api/v1/narrative/sessions', { method: 'POST',"
+            "    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },"
+            "    body: JSON.stringify({ character_card_id: " + str(mixed_id) + " }) });"
+            "  if (!r.ok) return 'HTTP ' + r.status + ' ' + (await r.text()).slice(0,120);"
+            "  const d = await r.json();"
+            "  return String(d.data.id);"
+            "})()"
+        )
+        probe.check("10.12.混排消息", "能为它开一个会话", str(sess or "").isdigit(), sess)
+        if str(sess or "").isdigit():
+            # 回对话页并点开这条会话（列表由后端刷新，等它出现）
+            cdp.eval("document.querySelector('#nav [data-route=\"chat\"]').click(); 'ok'")
+            time.sleep(1.0)
+            row_sel = "#session-list .session-item[data-id=\"" + str(int(sess)) + "\"]"
+            listed = cdp.wait_for("!!document.querySelector('" + row_sel + "')", 25)
+            opened_click = "__not_listed__"
+            if listed:
+                # ★ 点的是里层的正文区，不是整行：整行上的监听器在重渲染时
+                #   会被新节点替换，直接 click() 整行偶尔会点到"删除"那一类按钮。
+                opened_click = cdp.eval(
+                    "(() => { const row = document.querySelector('" + row_sel + "');"
+                    "  if (!row) return '__no_row__';"
+                    "  (row.querySelector('.si-title') || row).click();"
+                    "  return 'ok'; })()"
+                )
+            probe.check(
+                "10.12.混排消息", "能在侧栏找到并点开这个会话", opened_click == "ok", opened_click
+            )
+            if opened_click == "ok":
+                cdp.wait_for("!!document.querySelector('#messages .msg .msg-body')", 20)
+                time.sleep(1.0)
+                seg_info = cdp.eval(
+                    "(() => { const body = document.querySelector('#messages .msg .msg-body');"
+                    " if (!body) return '__no_body__';"
+                    " const wrap = body.querySelector('.msg-segs');"
+                    " if (!wrap) return JSON.stringify({ mixed: false, cls: body.className });"
+                    " const kinds = [...wrap.children].map(el =>"
+                    "   el.classList.contains('msg-seg-card') ? 'card' : 'text');"
+                    " const frame = wrap.querySelector('iframe');"
+                    " return JSON.stringify({ mixed: true, kinds,"
+                    "   hasClass: body.classList.contains('has-segs'),"
+                    "   frame: frame ? (frame.getAttribute('sandbox')||'') : '__none__',"
+                    "   rawStored: !!body.dataset.rawContent }); })()"
+                )
+                probe.check(
+                    "10.12.混排消息",
+                    "★ 切成三段且顺序是 正文→卡片→正文",
+                    isinstance(seg_info, str) and '"kinds":["text","card","text"]' in seg_info,
+                    seg_info,
+                )
+                probe.check(
+                    "10.12.混排消息",
+                    "★ 卡片走 iframe 沙箱（allow-same-origin，无 allow-scripts）",
+                    isinstance(seg_info, str) and '"frame":"allow-same-origin"' in seg_info,
+                    seg_info,
+                )
+                probe.check(
+                    "10.12.混排消息",
+                    "★ 原文存进 dataset（复制/编辑不会拿到清洗过的假原文）",
+                    isinstance(seg_info, str) and '"rawStored":true' in seg_info,
+                    seg_info,
+                )
+                prose_ok = cdp.eval(
+                    "(() => { const list = [...document.querySelectorAll("
+                    "  '#messages .msg .msg-body .msg-seg-text')];"
+                    " if (!list.length) return '__none__';"
+                    " return list.map(t => (t.textContent||'').replace(/\\s/g,'')).join('|'); })()"
+                )
+                probe.check(
+                    "10.12.混排消息",
+                    "正文段文字真的显示出来了（两段都在，没被 iframe 吞掉）",
+                    isinstance(prose_ok, str)
+                    and "你推开门" in prose_ok
+                    and "她抬起眼" in prose_ok,
+                    str(prose_ok)[:120],
+                )
+                card_inner = cdp.eval(
+                    "(() => { const f = document.querySelector("
+                    "  '#messages .msg .msg-body .msg-seg-card iframe');"
+                    " if (!f || !f.contentDocument) return '__unreadable__';"
+                    " return (f.contentDocument.body.textContent||'').replace(/\\s/g,''); })()"
+                )
+                probe.check(
+                    "10.12.混排消息",
+                    "卡片内容在 iframe 里真的渲染出来了",
+                    isinstance(card_inner, str) and "HP" in card_inner and "80/100" in card_inner,
+                    str(card_inner)[:80],
+                )
+                copied = cdp.eval(
+                    "(() => { const body = document.querySelector('#messages .msg .msg-body');"
+                    " return body ? (body.dataset.rawContent || '').slice(0,200) : '__none__'; })()"
+                )
+                probe.check(
+                    "10.12.混排消息",
+                    "★ 复制取到的是模型原文（还带着 <div），不是清洗后的纯文本",
+                    isinstance(copied, str) and "<div" in copied and "你推开门" in copied,
+                    str(copied)[:100],
+                )
+                leak = cdp.eval("getComputedStyle(document.body).backgroundColor")
+                probe.check(
+                    "10.12.混排消息",
+                    "★ 卡片样式没泄漏到控制台（iframe 隔离生效）",
+                    isinstance(leak, str) and leak not in ("rgb(255, 0, 0)", "red"),
+                    leak,
+                )
+
     cdp.eval(
         "(() => { document.querySelectorAll('#modal-root .modal [data-close]')"
         "   .forEach(b => b.click()); return 'ok'; })()"
     )
     time.sleep(0.4)
+
+    # ---------- 10.13 ★ 围栏卡片：```+<body> 的「事实标准」写法 ----------
+    #
+    # 中文区作者普遍把整页 HTML 包进代码围栏。酒馆助手的口径是：
+    # **在代码块里 + 有 `<body>`** 就算卡片。不认它的话，用户看到的
+    # 是一大段带 ``` 的源码 + 两个孤零零的反引号（正是本项要消灭的症状）。
+    # 这里实测两条路径：
+    #   ① 整条消息只有一张围栏卡片 → 渲染成卡片（走 mountRich 单卡老路）；
+    #   ② 正文 + 围栏卡片 + 正文 → 仍按顺序分段（走分段渲染）。
+    def _mk_card(greeting_text):
+        return cdp.eval(
+            "(async () => {"
+            "  const token = localStorage.getItem('hne_access_token');"
+            "  const greeting = " + json.dumps(greeting_text) + ";"
+            "  const r = await fetch('/api/v1/character-cards', { method: 'POST',"
+            "    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },"
+            "    body: JSON.stringify({ name: '探针围栏卡_" + str(int(time.time())) + "', greeting,"
+            "      personality: '测试' }) });"
+            "  if (!r.ok) return 'HTTP ' + r.status;"
+            "  const d = await r.json();"
+            "  return String(d.data.id);"
+            "})()"
+        )
+
+    def _mk_session(card_id):
+        return cdp.eval(
+            "(async () => {"
+            "  const token = localStorage.getItem('hne_access_token');"
+            "  const r = await fetch('/api/v1/narrative/sessions', { method: 'POST',"
+            "    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },"
+            "    body: JSON.stringify({ character_card_id: " + str(card_id) + " }) });"
+            "  if (!r.ok) return 'HTTP ' + r.status;"
+            "  const d = await r.json();"
+            "  return String(d.data.id);"
+            "})()"
+        )
+
+    def _open_session(sess_id):
+        cdp.eval("document.querySelector('#nav [data-route=\"chat\"]').click(); 'ok'")
+        time.sleep(1.0)
+        row_sel = "#session-list .session-item[data-id=\"" + str(int(sess_id)) + "\"]"
+        if not cdp.wait_for("!!document.querySelector('" + row_sel + "')", 25):
+            return False
+        clicked = cdp.eval(
+            "(() => { const row = document.querySelector('" + row_sel + "');"
+            "  if (!row) return '__no_row__';"
+            "  (row.querySelector('.si-title') || row).click(); return 'ok'; })()"
+        )
+        if clicked != "ok":
+            return False
+        cdp.wait_for("!!document.querySelector('#messages .msg .msg-body')", 20)
+        time.sleep(1.0)
+        return True
+
+    def _seg_snapshot():
+        return cdp.eval(
+            "(() => { const body = document.querySelector('#messages .msg .msg-body');"
+            " if (!body) return '__no_body__';"
+            " const wrap = body.querySelector('.msg-segs');"
+            " const kinds = wrap ? [...wrap.children].map(el =>"
+            "   el.classList.contains('msg-seg-card') ? 'card' : 'text') : null;"
+            " const frame = body.querySelector('iframe');"
+            " let inner = '';"
+            " try { inner = (frame?.contentDocument?.body?.textContent || '')"
+            "   .replace(/\\s/g,''); } catch (e) { inner = '__unreadable__'; }"
+            " return JSON.stringify({ kinds, iframe: !!frame,"
+            "   sandbox: frame ? (frame.getAttribute('sandbox')||'') : '',"
+            "   visibleSource: (body.textContent||'').includes('```'),"
+            "   raw: (body.dataset.rawContent||'').includes('```'), inner }); })()"
+        )
+
+    fenced_greeting = (
+        "```html\n"
+        "<html><body><div class=\"fence-status\"><b>MP</b> 66/100</div></body></html>\n"
+        "```"
+    )
+    fenced_made = _mk_card(fenced_greeting)
+    fenced_id = int(fenced_made) if str(fenced_made or "").isdigit() else None
+    probe.check(
+        "10.13.围栏卡片", "能造出一张「整条就是围栏卡片」的卡", fenced_id is not None, fenced_made
+    )
+    if fenced_id is not None:
+        fenced_sess = _mk_session(fenced_id)
+        fenced_open = (
+            _open_session(fenced_sess) if str(fenced_sess or "").isdigit() else False
+        )
+        probe.check("10.13.围栏卡片", "能打开这张卡的会话", fenced_open, fenced_sess)
+        if fenced_open:
+            info = _seg_snapshot()
+            probe.check(
+                "10.13.围栏卡片",
+                "★ 整条围栏卡片渲染成 iframe，不显示成源码（页面上没有 ```）",
+                isinstance(info, str)
+                and '"iframe":true' in info
+                and '"visibleSource":false' in info,
+                info,
+            )
+            probe.check(
+                "10.13.围栏卡片",
+                "★ 围栏里的内容真的渲染出来了（MP 66/100）",
+                isinstance(info, str) and "MP" in info and "66/100" in info,
+                info,
+            )
+            probe.check(
+                "10.13.围栏卡片",
+                "★ 原文（含围栏）进了 dataset，复制/编辑拿到的是原话",
+                isinstance(info, str) and '"raw":true' in info,
+                info,
+            )
+
+    fenced_mixed_greeting = (
+        "风停了。\n\n"
+        "```html\n<div class=\"fence-status\"><b>MP</b> 66/100</div>\n```\n\n"
+        "她把门关上。"
+    )
+    mixed_fenced_made = _mk_card(fenced_mixed_greeting)
+    mixed_fenced_id = (
+        int(mixed_fenced_made) if str(mixed_fenced_made or "").isdigit() else None
+    )
+    probe.check(
+        "10.13.围栏卡片",
+        "能造出一张「正文 + 围栏卡片 + 正文」的卡",
+        mixed_fenced_id is not None,
+        mixed_fenced_made,
+    )
+    if mixed_fenced_id is not None:
+        mf_sess = _mk_session(mixed_fenced_id)
+        mf_open = _open_session(mf_sess) if str(mf_sess or "").isdigit() else False
+        probe.check("10.13.围栏卡片", "能打开这张混排围栏卡的会话", mf_open, mf_sess)
+        if mf_open:
+            info = _seg_snapshot()
+            probe.check(
+                "10.13.围栏卡片",
+                "★ 围栏卡片混排：切成 正文→卡片→正文 三段且顺序不变",
+                isinstance(info, str) and '"kinds":["text","card","text"]' in info,
+                info,
+            )
+            probe.check(
+                "10.13.围栏卡片",
+                "★ 围栏卡片混排：卡片在 iframe 沙箱里、正文段留在 iframe 外",
+                isinstance(info, str)
+                and '"sandbox":"allow-same-origin"' in info
+                and '"visibleSource":false' in info,
+                info,
+            )
+            probe.check(
+                "10.13.围栏卡片",
+                "★ 围栏卡片混排：围栏里的内容真的渲染出来了（MP 66/100）",
+                isinstance(info, str) and "MP" in info and "66/100" in info,
+                info,
+            )
 
 
     #
@@ -2347,6 +2636,212 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
         declared_data.get("src") == "card"
         and declared_data.get("fields") == ["hp", "location", "inventory"],
         declared_detail,
+    )
+
+    # ---------- 10.11b ★ 系统状态栏的显示开关 ----------
+    #
+    # 用户明确要求「状态栏加个关闭按钮」，但语义必须是**只影响显示**：
+    # 状态照常解析落库、协议照常注入提示词（否则"关掉状态栏"就等于关掉了功能）。
+    # 以及——收起时不能什么都不画：用户还得能找到「显示」按钮和「纠正 / 手动填写」。
+    # 这里实测四件事：开关出现 → 关掉变成细提示 → 「显示」能放回来 → 重进会话仍记得。
+    side_visible = cdp.eval(
+        "(() => { const box = document.querySelector('#side-state');"
+        " const input = document.querySelector('#state-bar-default');"
+        " return JSON.stringify({ visible: !!box && !box.hidden,"
+        "   checked: !!input && input.checked }); })()"
+    )
+    probe.check(
+        "10.11b.状态栏开关",
+        "★ 卡声明了状态栏时，侧边栏出现「内置状态栏」开关且默认勾选",
+        isinstance(side_visible, str)
+        and '"visible":true' in side_visible
+        and '"checked":true' in side_visible,
+        side_visible,
+    )
+    cdp.eval(
+        "(() => { const i = document.querySelector('#state-bar-default');"
+        " if (!i) return '__no_input__'; i.click(); return 'ok'; })()"
+    )
+    collapsed_ok = cdp.wait_for("!!document.querySelector('#state-bar-collapsed')", 10)
+    collapsed_info = cdp.eval(
+        "(() => ({ bar: !!document.querySelector('#state-bar'),"
+        " thin: !!document.querySelector('#state-bar-collapsed'),"
+        " hint: document.querySelector('#side-state-hint')?.textContent || '' }))()"
+    )
+    probe.check(
+        "10.11b.状态栏开关",
+        "★ 关掉开关后状态栏收起成一条细提示（带「显示」按钮），不是直接消失",
+        collapsed_ok
+        and isinstance(collapsed_info, dict)
+        and collapsed_info.get("thin") is True
+        and collapsed_info.get("bar") is False,
+        collapsed_info,
+    )
+    cdp.eval(
+        "(() => { const b = document.querySelector('#state-bar-collapsed"
+        " [data-act=\"toggle-state-bar\"]');"
+        " if (!b) return '__no_btn__'; b.click(); return 'ok'; })()"
+    )
+    restored_ok = cdp.wait_for("!!document.querySelector('#state-bar')", 10)
+    probe.check(
+        "10.11b.状态栏开关",
+        "★ 细提示上的「显示」按钮能把状态栏放回来（用户找得回状态）",
+        restored_ok,
+        restored_ok,
+    )
+    # 再关一次，然后切页再切回：面板整块重渲染，读的是 localStorage 里的偏好
+    cdp.eval(
+        "(() => { const i = document.querySelector('#state-bar-default');"
+        " if (!i) return '__no_input__'; i.click(); return 'ok'; })()"
+    )
+    cdp.wait_for("!!document.querySelector('#state-bar-collapsed')", 10)
+    cdp.eval("document.querySelector('#nav [data-route=\"books\"]').click(); 'ok'")
+    time.sleep(0.8)
+    cdp.eval("document.querySelector('#nav [data-route=\"chat\"]').click(); 'ok'")
+    time.sleep(1.5)
+    persisted = cdp.eval(
+        "JSON.stringify({ thin: !!document.querySelector('#state-bar-collapsed'),"
+        " bar: !!document.querySelector('#state-bar') })"
+    )
+    probe.check(
+        "10.11b.状态栏开关",
+        "★ 关掉后重进这个会话仍然是收起的（偏好按会话记住，不靠只改 DOM）",
+        isinstance(persisted, str) and '"thin":true' in persisted and '"bar":false' in persisted,
+        persisted,
+    )
+    # 恢复展开，别把"收起"状态留给后面几节（它们要看状态内容）
+    cdp.eval(
+        "(() => { const b = document.querySelector('#state-bar-collapsed"
+        " [data-act=\"toggle-state-bar\"]');"
+        " if (b) b.click(); return 'ok'; })()"
+    )
+    cdp.wait_for("!!document.querySelector('#state-bar')", 10)
+
+    # ---------- 10.14 ★★ 卡自带状态块（第二状态存储，2026-10-20）----------
+    #
+    # 用户拍板：作者卡自己的状态块要"尽量都认"，并且**显示上作者优先**，
+    # 系统那份收起成细条；两套数据都要在（独立表），卡状态**不注入提示词**。
+    #
+    # 这一节全部走真实链路：接口建卡（开场白就带作者状态块）→ 会话页打开 →
+    # 读界面 → 再点「展开 / 显示」验两边互相让位。
+    # ★ 为什么用开场白而不是"发一句话等模型回"：探针不连真模型，
+    #   开场白是唯一能**确定性**带出作者状态块的入口（而且它本来就是最常见的写法）。
+    with httpx.Client(timeout=30) as c:
+        author_card = c.post(
+            f"{base}/api/v1/character-cards",
+            headers=h,
+            json={
+                "name": f"探针作者状态卡_{int(time.time())}",
+                "description": "开场白自带作者状态块（没有声明 state_schema）",
+                "greeting": "她把提灯挂在钩子上。\n```json\n"
+                '{"作者体力": 72, "心情": "警觉", "背包": ["提灯", "油壶"]}\n```',
+            },
+        )
+        author_card.raise_for_status()
+        author_card_id = author_card.json()["data"]["id"]
+        author_card_name = author_card.json()["data"]["name"]
+        author_sid = c.post(
+            f"{base}/api/v1/narrative/sessions",
+            headers=h,
+            json={"character_card_id": author_card_id, "llm_provider_id": provider_id,
+                  "title": "作者状态探针会话"},
+        )
+        author_sid.raise_for_status()
+        author_sid_num = author_sid.json()["data"]["id"]
+        author_detail = c.get(f"{base}/api/v1/narrative/sessions/{author_sid_num}", headers=h)
+        author_panel = (author_detail.json().get("data") or {}).get("card_state") or {}
+
+    probe.check(
+        "10.14.作者状态块",
+        "★ 卡自带的状态块被**单独**收进第二存储（没有挤进系统状态）",
+        author_panel.get("has_value") is True
+        and author_panel.get("value") == {"作者体力": 72, "心情": "警觉", "背包": ["提灯", "油壶"]},
+        {"card_state": author_panel.get("value"), "来源": author_panel.get("label"),
+         "系统状态": (author_detail.json().get("data") or {}).get("state")},
+    )
+    probe.check(
+        "10.14.作者状态块",
+        "★ 作者状态块**不注入提示词**（只保管、不冒充系统的状态协议）",
+        "作者体力" not in json.dumps(
+            ((author_detail.json().get("data") or {}).get("prompt") or {}), ensure_ascii=False
+        ),
+        "提示词里没有「作者体力」",
+    )
+    # 打开这个会话，看界面上的**优先级**
+    cdp.eval("document.querySelector('#nav [data-route=\"chat\"]').click(); 'ok'")
+    cdp.wait_for("!!document.querySelector('#session-list')", 15)
+    time.sleep(0.8)
+    cdp.eval(
+        "(() => { const el = Array.from(document.querySelectorAll('.session-item'))"
+        f"   .find(x => (x.textContent || '').includes('作者状态探针会话'));"
+        " if (!el) return '__no_item__'; el.click(); return 'ok'; })()"
+    )
+    card_panel_ok = cdp.wait_for("!!document.querySelector('#card-state')", 20)
+    layout = cdp.eval(
+        "(() => ({ card: !!document.querySelector('#card-state'),"
+        " cardIndex: Array.from(document.querySelector('#messages').children)"
+        "   .findIndex(el => el.id === 'card-state'),"
+        " deferred: document.querySelector('#state-bar-collapsed')?.dataset?.deferred || '',"
+        " sysBar: !!document.querySelector('#state-bar'),"
+        " fences: (document.querySelector('#messages')?.textContent || '').includes('```') }))()"
+    )
+    probe.check(
+        "10.14.作者状态块",
+        "★ 作者优先：界面显示作者的状态面板，系统那条收成「让位」细条（不再展开）",
+        card_panel_ok
+        and isinstance(layout, dict)
+        and layout.get("card") is True
+        and layout.get("sysBar") is False
+        and layout.get("deferred") == "1",
+        layout,
+    )
+    probe.check(
+        "10.14.作者状态块",
+        "★ 气泡里看不到原始围栏（状态块被剥掉，正文还在）",
+        isinstance(layout, dict) and layout.get("fences") is False,
+        layout,
+    )
+    card_text = cdp.eval("document.querySelector('#card-state')?.textContent || ''") or ""
+    probe.check(
+        "10.14.作者状态块",
+        "★ 面板里的字段与值是**作者写的那几个**（系统不认识的字段名也照原样显示）",
+        "作者体力" in card_text and "72" in card_text and "心情" in card_text,
+        card_text[:120],
+    )
+    # 点系统那条上的「显示」→ 这一回看系统那份（左边显示、作者那份收成细条）
+    cdp.eval(
+        "(() => { const b = document.querySelector('#state-bar-collapsed"
+        " [data-act=\"toggle-state-bar\"]');"
+        " if (!b) return '__no_btn__'; b.click(); return 'ok'; })()"
+    )
+    swapped = cdp.wait_for("!!document.querySelector('#state-bar')", 10)
+    after_swap = cdp.eval(
+        "JSON.stringify({ sysBar: !!document.querySelector('#state-bar'),"
+        " cardPanel: !!document.querySelector('#card-state'),"
+        " cardThin: !!document.querySelector('#card-state-collapsed') })"
+    )
+    probe.check(
+        "10.14.作者状态块",
+        "★ 点「显示」后两边角色对调：系统那份展开、作者那份收成细条（数据都还在）",
+        swapped
+        and isinstance(after_swap, str)
+        and '"sysBar":true' in after_swap
+        and '"cardPanel":false' in after_swap
+        and '"cardThin":true' in after_swap,
+        after_swap,
+    )
+    # 再点作者的「展开」→ 回到作者优先
+    cdp.eval(
+        "(() => { const b = document.querySelector('#card-state-collapsed"
+        " [data-act=\"show-card-state\"]');"
+        " if (!b) return '__no_btn__'; b.click(); return 'ok'; })()"
+    )
+    back_ok = cdp.wait_for("!!document.querySelector('#card-state')", 10)
+    probe.check(
+        "10.14.作者状态块",
+        "★ 再点作者的「展开」能切回作者优先（两边随时能来回看）",
+        back_ok,
+        back_ok,
     )
 
     # ---------- 12. 插件（声明式：注入 / 正则 / CSS 主题）----------
@@ -2849,6 +3344,16 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
     #   所以直接读计算样式。这条同时守住两类事故：
     #   ① 覆盖语句没生效（选择器优先级/注入顺序变了）→ 选中态又会变回实心大色块；
     #   ② 有人把主题里这些规则删了。
+    #
+    # ★ 2026-10-20：状态栏多了「用户可收起」，于是它**不再一定在 DOM 里**。
+    #   万一用户（或上一个会话留下的偏好）把它收起了，这里读到空字符串，
+    #   就会误报成"主题没生效"——但真正的原因只是那条细条。
+    #   所以采样前先把当前会话的状态栏顶回展开（只点「显示」，幂等，不写偏好）。
+    cdp.eval(
+        "(() => { const b = document.querySelector('#state-bar-collapsed"
+        " [data-act=\\\"toggle-state-bar\\\"]'); if (b) b.click(); return 'ok'; })()"
+    )
+    cdp.wait_for("!!document.querySelector('.state-bar')", 5)
     neb_overrides = cdp.eval(
         "(() => {"
         " const seg = document.querySelector('.segmented button.active');"

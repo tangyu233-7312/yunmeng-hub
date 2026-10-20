@@ -53,12 +53,14 @@ from app.narrative.context_manager import (
 )
 from app.narrative import sessions
 from app.narrative import anchors as anchors_mod
+from app.narrative import card_state as card_state_mod
 from app.narrative import dice as dice_mod
 from app.narrative import memory as memory_mod
 from app.narrative import plugin_runtime
 from app.narrative import presets
 from app.narrative import retrieval as retrieval_mod
 from app.narrative import state as state_mod
+from app.narrative import state_schema as schema_mod
 from app.narrative import summary as summary_mod
 from app.narrative import tavern_regex
 from app.narrative import translate as translate_mod
@@ -1013,7 +1015,12 @@ def save_assistant_reply(
       这是唯一的落库点，而"这一轮到底掷出了几点"事后无法从正文反推
       （标签已被替换成明文）。标签**无论插件是否启用都会被剥掉** ——
       绝不能让用户看到 `<roll>1d20</roll>` 这种原始协议文本。
+    ★ 卡自带的状态块（2026-10-20，第二状态存储）：由 `state.apply_reply_with_meta`
+      内部先认出来、剥掉、落进 `card_states`（卡没声明 schema 时 `<state>` 归作者，
+      声明了则归系统），再照常处理本系统的 `<state>`。卡状态**不注入提示词**。
+      所以这里并不需要额外的分支 —— 那正是"只在唯一落库点做"的好处。
     """
+    card_hit: dict[str, Any] | None = None
     if sessions.is_pure_chat(session):
         content, _ = state_mod.extract_state_block(content)
         state_meta = {"required": False}
@@ -1023,6 +1030,11 @@ def save_assistant_reply(
         # ★ 原始 <state> 块单独落一列（界面「看作者原格式」用）：卡作者写的复杂排版
         #   被解析成结构化字段后就没了，留一份原文；遥测里不带它（漂移统计只认 counts）。
         raw_state = state_meta.pop("raw", None)
+        # ★ 卡自带的状态块（第二状态存储）：在这里 pop 出来，下面**同一事务**里写库。
+        #   为什么不在 state.py 里写：那时候回复还没落库，另开连接会
+        #   ① SQLite 上两把写锁互等（database is locked）；
+        #   ② 卡状态可能先于回复可见，指向一条还不存在的消息。
+        card_hit = state_meta.pop("card_state", None)
         if notes is not None:
             notes.extend(state_notes)
 
@@ -1064,6 +1076,21 @@ def save_assistant_reply(
     )
     db.add(message)
     session.message_count = (session.message_count or 0) + 1
+    if card_hit is not None:
+        # ★ 先把消息 flush 出去拿到 id（卡状态要记"来自哪条消息"），
+        #   再写卡状态 —— 两步都在下面同一次 commit 里。
+        db.flush()
+        previous = card_state_mod.latest(int(session.id), db=db)
+        diff = card_state_mod.diff_fields((previous or {}).get("value"), card_hit.get("value"))
+        saved = card_state_mod.save(
+            db,
+            session,
+            card_hit,
+            message_id=message.id,
+            drift=diff if any(diff.values()) else None,
+        )
+        if saved is not None and any(diff.values()) and notes is not None:
+            notes.extend(card_state_mod.drift_notes(diff))
     # ★ total_tokens 统计的是"累计消耗"，所以把输入与输出都算进去；
     #   只算输出会让用户严重低估成本（长会话里输入往往远大于输出）
     spent = usage.total_tokens if usage is not None and usage.total_tokens else token_count

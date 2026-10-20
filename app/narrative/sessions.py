@@ -28,6 +28,7 @@ from app.narrative import dice as dice_mod
 from app.narrative import plugin_runtime
 from app.narrative import presets
 from app.narrative import state as state_mod
+from app.narrative import card_state as card_state_mod
 from app.narrative import state_schema as state_schema_mod
 from app.narrative import streaming
 from app.narrative import translate as translate_mod
@@ -571,6 +572,44 @@ def _regex_view_state(row: Any) -> dict[str, Any] | None:
     }
 
 
+def card_state_panel(db: Session, session: NarrativeSession) -> dict[str, Any]:
+    """「卡自带状态」面板要的数据（第二状态存储，**不触发任何模型调用**）。
+
+    ★ 这里只报事实，不做决定：界面按"有没有 value"决定作者状态优先还是系统状态优先。
+      判据放在界面是因为它还取决于**用户**的显示偏好（他可能想看系统那份）。
+    ★ 纯聊天一律返回空面板：那种会话压根没有卡，也没有作者的状态块可收。
+    """
+    if is_pure_chat(session):
+        return {"enabled": False, "has_value": False}
+    hit = card_state_mod.latest(session.id, db=db)
+    if hit is None:
+        return {
+            "enabled": True,
+            "has_value": False,
+            "label": "",
+            # 提示里要说明"为什么不显示"：不是没做，是还没收到过
+            "hint": "这张卡还没有输出过自己的状态块。系统每轮都会检查回复末尾（"
+            "JSON 围栏 / <state> / 酒馆 MVU 指令块 / 卡内嵌 JSON 脚本），收到就存在这里。",
+        }
+    return {
+        "enabled": True,
+        "has_value": True,
+        "value": hit["value"],
+        "raw": hit.get("raw"),
+        "source": hit.get("source"),
+        "label": hit.get("label"),
+        "schema_hash": hit.get("schema_hash"),
+        "updates": hit.get("updates") or 0,
+        "drift": hit.get("drift") or {"missing": [], "retyped": [], "new": []},
+        "updated_at": hit.get("updated_at"),
+        "hint": (
+            "这是**角色卡作者自己写的**状态（来源：%s），系统原样保管、不校验、"
+            "不注入提示词；界面默认优先显示它，系统那份会收成一条细提示。"
+            % (hit.get("label") or hit.get("source") or "未知")
+        ),
+    }
+
+
 def translate_state(db: Session, session: NarrativeSession, messages: list[Any]) -> dict[str, Any]:
     """给「翻译」面板用的状态（**不触发任何模型调用**）。
 
@@ -773,6 +812,9 @@ def serialize_detail(
         # ★ 状态栏格式：界面按它渲染（字段、类型、图标都由卡/世界书决定）。
         #   空 schema 也照传（字段为空数组），界面据此显示"该卡未定义状态栏格式"。
         state_schema=state_mod.effective_schema(session),
+        # ★ 卡自带状态（第二状态存储）：作者自己写的状态块，界面默认优先显示它。
+        #   与本系统那份 `state` **互不覆盖**，两边的数据都在。
+        card_state=card_state_panel(db, session),
         # ★ VN 舞台：卡没开就传 null（界面据此隐藏「舞台」开关）
         vn=vn_stage,
         # ★ 翻译面板：设置 + 可选项 + 已译条数 / 花掉的 token
@@ -967,8 +1009,13 @@ def create_session(db: Session, user_id: int, payload) -> NarrativeSession:
 
         # 开场白里若自带状态块：剥掉（别让用户看到 JSON），并作为初始状态落库。
         # notify_missing=False：开场白没有状态块是常态，不该弹提醒。
+        greeting_cards: list[dict[str, Any]] = []
         greeting, _greeting_notes = state_mod.apply_reply(
-            session, greeting, schema=schema, notify_missing=False
+            session,
+            greeting,
+            schema=schema,
+            notify_missing=False,
+            card_sink=greeting_cards,
         )
 
         # 开场白里也可以掷骰（卡作者想给一个随机开局时）：与回复走同一套结算，
@@ -989,6 +1036,19 @@ def create_session(db: Session, user_id: int, payload) -> NarrativeSession:
         )
         db.add(message)
         session.message_count = 1
+        # ★ 开场白里带的**卡自带状态块**：与这条开场白在同一个事务里写进第二存储。
+        #   以前它被剥掉就丢了 —— 而那正是卡作者在开场白里声明的初始状态。
+        if greeting_cards:
+            db.flush()
+            previous = card_state_mod.latest(session.id, db=db)
+            diff = card_state_mod.diff_fields((previous or {}).get("value"), greeting_cards[0].get("value"))
+            card_state_mod.save(
+                db,
+                session,
+                greeting_cards[0],
+                message_id=message.id,
+                drift=diff if any(diff.values()) else None,
+            )
 
     db.commit()
     db.refresh(session)

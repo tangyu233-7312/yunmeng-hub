@@ -1,7 +1,7 @@
 {
   "name": "yunmeng-hub-desktop",
   "productName": "云梦枢",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "云梦枢（YunMeng Hub）桌面壳：Electron 只当浏览器壳，加载本机后端伺服的控制台",
   "author": "云梦枢 (YunMeng Hub)",

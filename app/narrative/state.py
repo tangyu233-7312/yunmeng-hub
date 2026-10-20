@@ -35,6 +35,7 @@ from typing import Any
 
 from loguru import logger
 
+from app.narrative import card_state as card_state_mod
 from app.narrative import state_schema as schema_mod
 
 #: 提示词里状态这一节的标题（= state_schema 里那份渲染的标题）
@@ -575,8 +576,19 @@ def apply_reply_with_meta(
          "deviation": 0.0~1.0, "fields_reported": n}
     ★ `required` 决定这条记录要不要参与统计：卡没声明状态栏 / 纯聊天时**不该**算它漏输出。
     """
+    # ★ 卡状态先过一道（2026-10-20，第二状态存储）：
+    #   卡没声明 schema 时，模型回复里的 `<state>` / ```json``` / MVU 指令块是**作者自己的**
+    #   状态，该进 `card_states`、并由这里剥掉（否则用户会在气泡里看到原始 JSON）。
+    #   卡声明了 schema 时 `<state>` 归系统（由下面照常处理），卡状态只认别的格式。
+    #   ★ 放在这里而不是 engine 里，是因为**建会话/开场白**那条路也走本函数 ——
+    #     只在 engine 里做的话，开场白里的作者状态块会被漏掉（两处各写一遍同样会漏）。
+    active_schema = schema if schema is not None else effective_schema(session)
+    content, card_hit = card_state_mod.extract_for_session(
+        content, not schema_mod.is_empty(active_schema)
+    )
+
     cleaned, raw_json = extract_state_block(content)
-    active = schema if schema is not None else effective_schema(session)
+    active = active_schema
 
     def _meta(payload: dict[str, Any]) -> dict[str, Any]:
         """遥测里**额外带上原始块文本**（`engine` 会把它单独落到 `messages.state_raw_json`）。
@@ -586,6 +598,10 @@ def apply_reply_with_meta(
         ★ 这个键由调用方 `pop` 掉，不会进 `state_meta_json`（漂移统计只认 counts/deviation）。
         """
         payload["raw"] = raw_json
+        if card_hit is not None:
+            # ★ 卡状态与系统状态**一起**交给落库点：在同一个事务里写完
+            #   （见本函数上方关于"不能自己开连接"的说明）。
+            payload["card_state"] = card_hit
         return payload
 
     if schema_mod.is_empty(active):
@@ -661,6 +677,7 @@ def apply_reply(
     *,
     schema: dict[str, Any] | None = None,
     notify_missing: bool = True,
+    card_sink: list[dict[str, Any]] | None = None,
 ) -> tuple[str, list[str]]:
     """收下一轮回复里的状态：剥掉状态块 → 校验合并 → 写回会话。
 
@@ -676,8 +693,17 @@ def apply_reply(
 
     ★ 本函数是 `apply_reply_with_meta` 的**薄包装**（只丢掉了遥测那一份返回值）：
       逻辑只有一份，避免"两条路各写一遍、哪天改歪一条"（踩过不止一次）。
+
+    ★ `card_sink`：传一个空列表进来，认出来的**卡自带状态块**会被追加进去，
+      由调用方在**自己那条事务**里落库（见 `engine.save_assistant_reply` 的说明：
+      这里绝不能自己开连接去写库）。
+      建会话时的开场白就走这条路 —— 开场白里带作者状态块的卡非常常见。
     """
-    cleaned, notes, _meta = apply_reply_with_meta(
+    cleaned, notes, meta = apply_reply_with_meta(
         session, content, schema=schema, notify_missing=notify_missing
     )
+    if card_sink is not None:
+        hit = meta.get("card_state")
+        if hit is not None:
+            card_sink.append(hit)
     return cleaned, notes

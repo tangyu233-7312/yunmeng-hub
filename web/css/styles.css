@@ -811,6 +811,25 @@ body.log-open .topbar {
 .msg.assistant .msg-body { background: var(--surface-2); border: 1px solid var(--border); }
 .msg.failed .msg-body { background: var(--danger-soft); border-color: var(--danger-border); }
 .msg.aborted .msg-body { opacity: .72; }
+
+/* ---- 分段渲染：正文与卡片混排 ---- *
+ * ☆ 为什么 .msg-body 有 .msg-segs 时要取消 pre-wrap：
+ *   外层那个 pre-wrap 是给"整条纯文本"用的。分段后每段自己管换行
+ *   （正文段用 .msg-seg-text 的 pre-wrap，卡片段是 iframe），
+ *   外层再套一层 pre-wrap 会把段与段之间的空白也显形出来 —— 多出一堆空行。
+ * ☆ 为什么正文段要单独 pre-wrap：段里是反序列化回来的节点，
+ *   裸换行必须显示成换行，否则整段会挤成一坨（和 iframe 那个坑同源）。
+ * ☆ 间距：卡片前后各留一点，不然卡片会和正文黏在一起、看起来像没分开。
+ */
+/* ☆ 不用 :has()：它需要较新的浏览器，装上却静默失效的降级很难察觉。
+ *   由 mountSegmented 主动给宿主加 .has-segs，判据明确、任何浏览器都认。 */
+.msg-body.has-segs { white-space: normal; }
+.msg-segs { display: flex; flex-direction: column; gap: 8px; }
+.msg-seg-text { white-space: pre-wrap; word-break: break-word; line-height: 1.65; }
+.msg-seg-card { min-width: 0; }
+/* 卡片自带的渲染/源码切换条在分段里要收敛一点，别喧宾夺主 */
+.msg-seg-card .segmented { font-size: 11px; }
+
 .msg-reason {
   font-size: 12px; color: var(--text-dim); background: var(--warn-soft);
   border: 1px dashed var(--border-strong); border-radius: 8px;
@@ -1119,6 +1138,47 @@ body.log-open .topbar {
   color: var(--text-dim);
 }
 .state-bar.empty { color: var(--text-faint); }
+
+/* ---- 卡自带状态（第二状态存储）的面板与细条 ----
+ * ☆ 为什么它比系统状态栏"厚"：用户拍板「作者优先」，这里显示的就是作者自己写的东西，
+ *   而系统那份收成一行细条（`.state-bar-collapsed`，样式与手动收起时一致）。
+ * ☆ 字段名一律等宽：作者用的键名五花八门（中文、下划线、驼峰），
+ *   排成两列"键 → 值"比硬套成血条诚实，也更容易一眼扫过。
+ * ☆ 值可能是对象/数组：统一走等宽 + 可换行，绝不截断成 "Object"（那等于没显示）。 */
+.card-state {
+  margin: 2px 16px 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.card-state-head {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 600; color: var(--text);
+  margin-bottom: 6px; white-space: nowrap; overflow: hidden;
+}
+.card-state-src {
+  font-weight: 400; font-size: 11px; color: var(--text-faint);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 6px;
+}
+.card-state-body {
+  display: grid; grid-template-columns: minmax(72px, max-content) 1fr;
+  gap: 2px 12px; align-items: baseline;
+}
+.card-state-row { display: contents; }
+.card-state-key { font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); }
+.card-state-val { word-break: break-word; }
+.card-state-json { font-size: 11.5px; white-space: pre-wrap; }
+.card-state-drift { margin-top: 6px; color: var(--warn, #d9a441); }
+.card-state-hint { margin-top: 6px; line-height: 1.5; }
+.card-state-collapsed {
+  margin: 2px 16px 10px; padding: 4px 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 12.5px; color: var(--text-faint);
+  display: flex; align-items: center; gap: 8px;
+}
 .state-bar code { font-family: var(--mono); font-size: 11.5px; }
 .state-bar-line {
   display: flex; align-items: center; gap: 8px;

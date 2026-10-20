@@ -426,6 +426,73 @@ def test_prose_line_breaks_are_preserved_in_every_rich_render() -> None:
         )
 
 
+def test_translation_never_overwrites_a_rich_body() -> None:
+    """★ 「能不能换正文」必须处处用 `needsRichRender`，不许退回 `looksLikeHtml`。
+
+    ==================== 这条守着一个真实的回归 ====================
+    分段渲染上线后，「哪条消息是富文本」有了两套判据：
+      · `hydrateRichMessages` 用 `needsRichRender`（含围栏卡片 ```` ``` ```` + `<body>`）
+      · 切译文那几处仍在用 `looksLikeHtml`（**不认** `<body>`）
+    于是围栏卡片消息会：① 给出一个点下去毫无反应的「看看另一份」按钮
+    （`toggleTranslation` 在 `dataset.rawContent` 上提前 return）；
+    ② 一旦点了逐条 🌐 翻译，`body.textContent = 译文` 会把挂好的 iframe 一起抹掉。
+    探针实测抓到的就是①：{"切到原文": True, "切回译文": False}。
+
+    教训与 `keepProseLineBreaks` 那条同源：**判据分叉 = 漏改**。
+    所以凡是要动 `.msg-body` 正文的地方，一律要求走同一个判据。
+    """
+    src = _read(CHAT_JS)
+    for offender in (
+        "if (looksLikeHtml(String(m.content || '')) || looksLikeHtml(alt)) return '';",
+        "if (body && !looksLikeHtml(original)) {",
+        "if (body && !looksLikeHtml(rawText)) {",
+    ):
+        assert offender not in src, (
+            "切译文/逐条翻译的富文本判据又退回 looksLikeHtml 了；"
+            "必须用 needsRichRender，否则围栏卡片会被就地覆盖成纯文本"
+        )
+    assert src.count("needsRichRender(") >= 4, "needsRichRender 的调用点少了一处（判据没接上？）"
+
+
+def test_raw_body_text_is_read_from_dataset_not_textcontent() -> None:
+    """★ 凡是需要"模型原话"的地方都要走 `rawBodyText`，不能直接 `textContent`。
+
+    分段渲染后 `.msg-body` 里是若干个分段 div（卡片部分是清洗过的 DOM），
+    `textContent` 拼出来的**不是原文**。复制、编辑、重新生成、翻译原文
+    全都靠这份文本 —— 拿错了就是静默的数据损坏（界面看着正常）。
+    """
+    src = _read(CHAT_JS)
+    assert "function rawBodyText(body)" in src, "rawBodyText 不见了"
+    # msgOf 是复制/编辑/重新生成的统一入口
+    assert "content: rawBodyText(node.querySelector('.msg-body'))" in src, (
+        "msgOf 又直接用 textContent 取正文了：分段消息复制出来会是清洗过的假原文"
+    )
+    assert "const original = rawBodyText(body);" in src, (
+        "translateOneMessage 取原文没走 rawBodyText"
+    )
+
+
+def test_fenced_card_blocks_are_split_before_html_fast_path() -> None:
+    """★ 围栏卡片（```` ``` ```` + `<body>`）必须在混排消息里也能被切出来。
+
+    ==================== 这条守着一个"只认整条"的退化 ====================
+    最初只处理"整条消息就是一个围栏"这一种写法，探针一测就露出两个症状：
+      · 「正文 + ```html 卡片 + 正文」的卡完全不分段，页面上是一大段源码；
+      · 用户在会话里看到多余的 ```` ``` ```` 和标签，只会以为渲染坏了。
+    酒馆助手的事实标准只要求"在代码块里 + 有 `<body>`"，与消息里还有多少
+    正文无关。所以判据必须**逐块**做，而且要在 `looksLikeHtml` 那条快路
+    **之前**做 —— `<body>` 不在 `_HTML_HINTS` 里，先走快路会直接漏判。
+    """
+    src = _read(UI_JS)
+    assert "function fencedInnerIsCard(" in src, "围栏卡片的判据函数不见了"
+    assert "function splitFencedBlocks(" in src, "混排围栏块的分段函数不见了"
+    assert "/<body[\\s>]/i.test(inner)" in src, "`<body>` 这条强判据被改掉了"
+    # 顺序即语义：先切围栏块，再考虑"整段 HTML"快路
+    assert src.index("const blocks = splitFencedBlocks(src);") < src.index(
+        "if (!looksLikeHtml(src)) return [{ kind: 'text', html: src }];"
+    ), "splitFencedBlocks 被挪到了 looksLikeHtml 快路之后：围栏卡片会被漏判成源码"
+
+
 def test_sanitize_html_converts_prose_newlines_after_rebuilding() -> None:
     """★ `proseLineBreaks` 的转换必须发生在 `clean()` **之后**。
 

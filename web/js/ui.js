@@ -498,6 +498,262 @@ function _sanitizeCss(css) {
 const _SAFE_IMG_SRC =
   /^(?:https?:\/\/|data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml);base64,|\/(?!\/))/i;
 
+/* ---------------- 分段：把一条消息切成「正文」与「卡片」 ---------------- */
+
+/**
+ * 这条消息里"能不能被当成卡片"的标签。
+ *
+ * ★ 为什么和 `_HTML_HINTS` 分开：那个是**粗检测**（整段文本里有没有标签），
+ *   用来回答"要不要渲染"；这个用来回答"**哪一段**该渲染"。
+ *   判据也更严：只认块级容器，不认 `<b>`/`<br>` 这类行内标签 ——
+ *   否则一句 `这是<b>重点</b>` 会被切成正文+卡片+正文，碎得没法看。
+ */
+const _BLOCK_TAGS = new Set([
+  'div', 'p', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'caption',
+  'section', 'article', 'header', 'footer', 'blockquote', 'pre', 'ul', 'ol', 'dl',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'figure', 'figcaption', 'details',
+  'center', 'style', 'img',
+]);
+
+/** 这些标签出现在**行内**时不算分段边界（正文里夹一个 <b> 不该被切开） */
+const _INLINE_TAGS = new Set([
+  'b', 'strong', 'i', 'em', 'u', 's', 'small', 'span', 'code', 'font', 'br', 'a',
+]);
+
+/**
+ * 判断一段**纯文本**是不是"围栏卡片"（酒馆助手的 ```` ``` ```` + `<body>` 约定）。
+ *
+ * ==================== 为什么要有这条规则 ====================
+ * 中文区做"前端卡"的作者，事实标准是把整页 HTML 放进代码围栏里：
+ *
+ *     ```html
+ *     <html><body>…</body></html>
+ *     ```
+ *
+ * 酒馆助手（JS-Slash-Runner）的判据是**两条同时成立**：在代码块里、且有
+ * `<body>` 标签。我们照抄这个口径 —— 好处是作者按同一套习惯写，两边都认。
+ *
+ * ★ 为什么还要认"没有 `<body>`、但整段就是一个 `<html>`/`<style>`+结构"的情况：
+ *   作者手写时经常省掉 body。这种整段被围栏包住、且里面是块级 HTML 的，
+ *   其实就是一张卡片，不认会让用户看到一坨源码 + 两个孤零零的 ```。
+ *   （与 `stripFences` 的老行为一致，那个函数当初就是为这种卡写的。）
+ *
+ * @returns {{html: string} | null} 认出来就返回围栏里的 HTML，否则 null
+ */
+function fencedCardBody(text) {
+  const s = String(text ?? '').trim();
+  const m = s.match(/^```[a-zA-Z0-9_-]*[ \t]*\r?\n([\s\S]*?)\r?\n?```$/);
+  if (!m) return null;
+  return fencedInnerIsCard(m[1]) ? m[1] : null;
+}
+
+/** 围栏**里面**的内容算不算一张卡片（判据口径见 `fencedCardBody` 的注释） */
+function fencedInnerIsCard(inner) {
+  // 强判据：有 <body> 就是卡片（与酒馆助手完全一致）
+  if (/<body[\s>]/i.test(inner)) return true;
+  // 弱判据：整段是一个 html 文档、或有 <style>、或首尾都是块级标签
+  const trimmed = inner.trim();
+  if (!trimmed) return false;
+  if (/^<!doctype\s+html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) return true;
+  if (/<style[\s>]/i.test(inner)) return true;
+  const firstTag = trimmed.match(/^<\s*([a-zA-Z][\w-]*)/)?.[1]?.toLowerCase();
+  const lastTag = trimmed.match(/<\s*\/\s*([a-zA-Z][\w-]*)\s*>\s*$/)?.[1]?.toLowerCase();
+  // ★ 必须是块级容器：`<span>` 之类的行内标签包住了也不算卡片
+  return Boolean(firstTag && lastTag && firstTag === lastTag && _BLOCK_TAGS.has(firstTag));
+}
+
+/**
+ * 逐块扫出"围栏里是卡片"的代码块（支持一条消息里混排多张）。
+ *
+ * ★ 为什么不能只在"整条就是一个围栏"时才认：
+ *   作者实际写法经常是「正文 + 围栏卡片 + 正文」。按整条判会漏掉，
+ *   用户看到的是一大段带 ``` 的源码 —— 这正是这条规则要消灭的症状。
+ * ★ 不是卡片的围栏（```js 代码块、普通引用）**原样留在正文里**，
+ *   否则会把"模型给的代码片段"也当成卡片渲染掉。
+ */
+function splitFencedBlocks(src) {
+  const out = [];
+  let last = 0;
+  let found = false;
+  _FENCED_BLOCK.lastIndex = 0;
+  let m;
+  while ((m = _FENCED_BLOCK.exec(src)) !== null) {
+    if (!fencedInnerIsCard(m[1])) continue;
+    found = true;
+    const before = src.slice(last, m.index);
+    if (before) out.push({ kind: 'text', html: before });
+    out.push({ kind: 'card', html: m[1] });
+    last = m.index + m[0].length;
+  }
+  if (!found) return null;
+  const tail = src.slice(last);
+  if (tail) out.push({ kind: 'text', html: tail });
+  return out;
+}
+
+/** 围栏块的正则（内容非贪婪；语言标记可省略） */
+const _FENCED_BLOCK = /```[a-zA-Z0-9_-]*[ \t]*\r?\n([\s\S]*?)\r?\n?```/g;
+
+/**
+ * 把一条消息切成按**原始顺序**排列的若干段。
+ *
+ * ==================== 为什么要有这个函数（真实需求）====================
+ * 模型的实际输出经常是**混排**的：
+ *
+ *     你推开门，风灌了进来。
+ *
+ *     <div class="status-bar">…状态栏…</div>
+ *
+ *     她抬起眼。
+ *
+ * 以前只有两条路：整条渲染成卡片（正文被塞进 iframe，排版全由卡片样式决定），
+ * 或者整条按纯文本显示（状态栏只剩一堆标签源码）。用户要的是
+ * **正文照原样排版，卡片在它出现的位置显示成卡片** —— 也就是分段渲染。
+ *
+ * ==================== 为什么按 DOM 切而不是按字符串切 ====================
+ * 早期想法是用正则找 `<div …>…</div>`，但 HTML 嵌套很深、还有 `<details>`
+ * 和 `<table>`，正则找闭合标签**必然出错**（而且错得很隐蔽：多切一段，
+ * 剩下的文本会带着半个标签显示出来）。
+ * 这里改成：把整段文本交给 `DOMParser` 解析（惰性文档，不执行、不加载），
+ * 然后按**顶层节点**分组 —— 连续的非块级节点算"正文"，连续的块级节点算"卡片"。
+ * 这样嵌套问题交给浏览器，我们只做分组。
+ *
+ * @param {string} text 消息正文（已去掉外层围栏时传剥过的内容）
+ * @returns {Array<{kind:'text'|'card', html:string}>}
+ *   调用方按顺序渲染即可；`kind:'card'` 的 `html` 是要交给 `mountRich` 的。
+ *   没有卡片时**只返回一段 text**（调用方据此走原来的单段老路，行为不变）。
+ */
+export function splitRichSegments(text) {
+  const src = String(text ?? '');
+  if (!src.trim()) return [{ kind: 'text', html: src }];
+
+  // ★ 围栏卡片（酒馆助手的 ```` ``` ```` + `<body>` 约定）先判：
+  //   整条消息就是一个围栏包裹的页面时，它是**一张卡片**，
+  //   不该让用户看到两个孤零零的 ``` 和一堆源码。剥出来的内容按卡片走，
+  //   走的是同一条沙箱渲染路径（安全边界完全不变）。
+  //   ★ 必须在 looksLikeHtml 之前判：围栏里的 `<body>` 不在 `_HTML_HINTS`
+  //   的提示词表里（那张表是给"裸标签"用的），先走快路会漏判。
+  const fenced = fencedCardBody(src);
+  if (fenced !== null) {
+    // 空卡片（围栏里什么都没有）当正文处理，别给用户一个空白框
+    return fenced.trim() ? [{ kind: 'card', html: fenced }] : [{ kind: 'text', html: src }];
+  }
+
+  // ★ 围栏卡片混在正文里（作者常见写法：正文 + ```html 卡片 + 正文）：
+  //   先把围栏块切出来，剩下的正文再按 DOM 细分（一段正文里可能还有裸 HTML 卡片）。
+  const blocks = splitFencedBlocks(src);
+  if (blocks) {
+    const out = [];
+    for (const seg of blocks) {
+      if (seg.kind !== 'text') {
+        out.push(seg);
+      } else if (looksLikeHtml(seg.html)) {
+        out.push(...splitHtmlSegments(seg.html));
+      } else {
+        out.push(seg);
+      }
+    }
+    return finalizeSegments(out, src);
+  }
+
+  // 没有任何 HTML 迹象就不用解析了（绝大多数消息走这条快路）
+  if (!looksLikeHtml(src)) return [{ kind: 'text', html: src }];
+  return finalizeSegments(splitHtmlSegments(src), src);
+}
+
+/**
+ * 按 DOM 顶层节点把**纯 HTML** 切成正文段与卡片段（`splitRichSegments` 的内部实现）。
+ */
+function splitHtmlSegments(src) {
+  const doc = new DOMParser().parseFromString(src, 'text/html');
+  // ★ 必须把 <head> 里的 <style> 一起算进来：
+  //   DOMParser 会把 `<style>` 这种"head 才许有的元素"自动挪进 `<head>`，
+  //   只遍历 body 的话，卡片作者写在最前面的样式表会**静默消失**
+  //   （卡片渲染出来没样式，且没有任何报错 —— 正是最难排查的那类）。
+  const headStyles = Array.from(doc.head.querySelectorAll('style')).map((n) => n.outerHTML);
+  const nodes = Array.from(doc.body.childNodes).filter(
+    // 注释、纯空白文本节点不参与分段（但它们要保留在相邻正文里）
+    (n) => n.nodeType === Node.ELEMENT_NODE ||
+      (n.nodeType === Node.TEXT_NODE && String(n.nodeValue || '').trim()),
+  );
+  // ★ 连 head 里的 <style> 都没有、body 也空 → 没什么可切的，退回老路
+  if (!nodes.length && !headStyles.length) return [{ kind: 'text', html: src }];
+
+  /** @type {Array<{kind:'text'|'card'|'style', html:string}>} */
+  const segments = [];
+  // 先把 head 里的 <style> 放进来（作者一般把样式写在结构前面，
+  // 保持这个顺序，后面"并进相邻卡片"才能对上）。
+  for (const css of headStyles) segments.push({ kind: 'style', html: css });
+  /** 当前累积中的那一段（kind 相同就继续追加） */
+  let current = null;
+  const push = (kind, html) => {
+    if (current && current.kind === kind) current.html += html;
+    else {
+      current = { kind, html };
+      segments.push(current);
+    }
+  };
+
+  for (const node of nodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      push('text', node.nodeValue || '');
+      continue;
+    }
+    const tag = node.tagName.toLowerCase();
+    // ★ <style> 永远跟卡片走：单独一段 <style> 渲染出来是一片空白，
+    //   而样式与它要作用的元素分进两个 iframe 就彻底失效了（等于没美化）。
+    //   ★ 这里**必须单独成段**（不能 push 进当前正文段）：
+    //     一旦并进"正文+style"的混合段，第二步就认不出它是纯 style 了，
+    //     于是样式留在正文里、卡片在 iframe 里 —— 实测就是这个失效。
+    if (tag === 'style') {
+      segments.push({ kind: 'style', html: node.outerHTML });
+      current = null; // 打断连续合并：style 是独立段
+      continue;
+    }
+    // 块级 → 卡片；行内 / 未知 → 正文（未知标签保持原样，交给清洗去管）
+    push(_BLOCK_TAGS.has(tag) ? 'card' : 'text', node.outerHTML);
+  }
+
+  // 第二步：把**独立成段的 `<style>`** 并进相邻的卡片段。
+  for (let i = 0; i < segments.length; i += 1) {
+    const seg = segments[i];
+    if (seg.kind !== 'style') continue;
+    // 优先并到**后面**的卡片（作者一般把 <style> 写在结构前面）
+    const next = segments[i + 1];
+    const prev = segments[i - 1];
+    if (next && next.kind === 'card') {
+      next.html = seg.html + next.html;
+      seg.html = '';
+    } else if (prev && prev.kind === 'card') {
+      prev.html += seg.html;
+      seg.html = '';
+    } else {
+      // 两边都没有卡片：这条 style 只能当正文（清洗时 <style> 会被保留，
+      // 样式在聊天区里也能生效 —— 虽然它没东西可作用，至少不丢内容）
+      seg.kind = 'text';
+    }
+  }
+
+  // 丢掉空的正文段（比如标签之间的纯缩进）
+  return segments.filter((s) => s.kind === 'card' || s.html.trim());
+}
+
+/** 收尾：合并相邻正文段、去掉空段；没切出东西时退回整条原文（老行为） */
+function finalizeSegments(list, src) {
+  const out = [];
+  for (const seg of list) {
+    if (seg.kind === 'text' && !seg.html.trim()) continue;
+    const prev = out[out.length - 1];
+    if (prev && prev.kind === 'text' && seg.kind === 'text') prev.html += seg.html;
+    else out.push({ ...seg });
+  }
+  // ★ 一段都没切出来的话退回老路，让调用方保持原行为
+  if (!out.length || (out.length === 1 && out[0].kind === 'text')) {
+    return [{ kind: 'text', html: src }];
+  }
+  return out;
+}
+
 /**
  * 去掉包裹在整段 HTML 外面的 markdown 代码围栏。
  *
@@ -536,9 +792,17 @@ function stripFences(text) {
  */
 export function mountRich(host, html, opts = {}) {
   if (!host) return;
-  const { char = '', user = '', view = 'html', keepProseLineBreaks = false } = opts;
+  const {
+    char = '',
+    user = '',
+    view = 'html',
+    keepProseLineBreaks = false,
+    // ★ 已经剥过围栏的内容（分段渲染切出来的段）不要再剥一次：
+    //   分段是按 DOM 顶层节点切的，正文段里如果恰好在首尾有 ``` 是真实内容。
+    noStrip = false,
+  } = opts;
 
-  let text = stripFences(html);
+  let text = noStrip ? String(html ?? '') : stripFences(html);
   if (char) text = text.replace(/\{\{\s*char\s*\}\}/gi, char);
   if (user) text = text.replace(/\{\{\s*user\s*\}\}/gi, user);
 
@@ -603,6 +867,87 @@ export function mountRich(host, html, opts = {}) {
 
   host.append(bar, pane, raw);
   select(view === 'raw' ? 'raw' : 'html');
+}
+
+/**
+ * 把一条**混排**消息按原始顺序渲染：正文照原样排版，卡片在自己出现的位置渲染。
+ *
+ * ==================== 与 mountRich 的分工 ====================
+ * `mountRich` 管"一段内容怎么画"（沙箱、清洗、源码切换）；
+ * 这个函数管"一条消息怎么排"（切段、按序摆开）。
+ *
+ * ★ 关键约束：`.msg-body` 里必须始终有一份能 `textContent` 读回原文的东西。
+ *   聊天区有多处（复制、编辑、重新生成、切换译文）靠
+ *   `body.textContent` 拿模型原话 —— 如果整条只剩 iframe，那些功能
+ *   会拿到空字符串，**而且不报错**（静默失效，这是本项目最忌讳的一类 bug）。
+ *   所以这里把**原始的完整文本**放在一个隐藏的 `<pre class="msg-raw">` 里，
+ *   由调用方决定是挂在 .msg-body 下还是别处；正文段则正常渲染。
+ *
+ * ★ 为什么不用「渲染视图 / 源码」这对页签承载整条消息：
+ *   混排消息里正文和卡片是**不同性质**的内容，把整条塞进一个 iframe 会
+ *   让正文的排版完全由卡片的 CSS 决定（实测正文会被卡片样式带跑）。
+ *   分段后正文用聊天区原本的 `pre-wrap` 排版，卡片才进 iframe，各自独立。
+ *
+ * @param host     容器（会被清空重填）
+ * @param segments `splitRichSegments()` 的返回值
+ * @param opts     { char, user, keepProseLineBreaks }
+ * @returns {boolean} 是否**真的分段了**（只有一个正文段时返回 false，
+ *   调用方据此走原来的 mountRich 老路，保持"整段卡片"的既有体验）
+ */
+export function mountSegmented(host, segments, opts = {}) {
+  if (!host) return false;
+  const list = Array.isArray(segments) ? segments : [];
+  const cards = list.filter((s) => s.kind === 'card');
+  const texts = list.filter((s) => s.kind === 'text' && s.html.trim());
+  // 没有卡片、或只有卡片没有正文 → 不算混排，交回调用方按老路整体渲染。
+  // （纯卡片的消息保持「一个卡片 + 渲染/源码切换」的老体验更好，
+  //   而且能省一层 iframe。）
+  if (!cards.length || !texts.length) return false;
+
+  const { char = '', user = '', keepProseLineBreaks = true } = opts;
+  host.textContent = '';
+  // ★ 标在宿主上而不是靠 :has()：外层 .msg-body 是 pre-wrap（给整条纯文本用的），
+  //   分段后必须取消，否则段与段之间的空白会被显形出来，多出一堆空行。
+  host.classList.add('has-segs');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-segs';
+
+  for (const seg of list) {
+    // ★ 防御：`style` 段按设计在切分阶段就被并进卡片了，走不到这里。
+    //   真漏过来时当正文画——总比整条不显示强（宁可样式失效，也不许吞内容）。
+    if (seg.kind === 'style') {
+      const styleEl = document.createElement('style');
+      styleEl.textContent = seg.html.replace(/^<style[^>]*>|<\/style>$/gi, '');
+      wrap.appendChild(styleEl);
+      continue;
+    }
+    const box = document.createElement('div');
+    if (seg.kind === 'card') {
+      box.className = 'msg-seg msg-seg-card';
+      wrap.appendChild(box);
+      // ★ 每一处 mountRich 都开 keepProseLineBreaks：卡里的正文常是裸换行
+      mountRich(box, seg.html, {
+        char,
+        user,
+        noStrip: true,
+        keepProseLineBreaks: true,
+      });
+    } else {
+      if (!seg.html.trim()) continue;
+      // 正文段：用聊天区原本的换行排版，**不进 iframe** —— 保持聊天区的字体、
+      // 行距与主题一致，也让 .msg-body 里的文字能被复制选中。
+      box.className = 'msg-seg msg-seg-text';
+      let prose = seg.html;
+      if (char) prose = prose.replace(/\{\{\s*char\s*\}\}/gi, char);
+      if (user) prose = prose.replace(/\{\{\s*user\s*\}\}/gi, user);
+      // 正文里可能夹着行内标签（<b>、<i>）：清洗后按 HTML 排版，
+      // 裸换行也要转成 <br>（否则 div 会把它们折叠成空格）。
+      box.innerHTML = sanitizeHtml(prose, { proseLineBreaks: keepProseLineBreaks });
+      wrap.appendChild(box);
+    }
+  }
+  host.appendChild(wrap);
+  return true;
 }
 
 /**
