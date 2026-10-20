@@ -28,6 +28,11 @@
 > 也不需要事先建库建表 —— 表由后端启动时自动创建，密钥由后端首次运行自动生成。
 > 仍然需要你自备的只有一样：**你自己要用的那个大模型 API Key**。
 
+**下载安装包（Windows x64，不想碰 Python 就走这条）：**
+[**→ 云梦枢 安装包（最新版）**](https://github.com/tangyu233-7312/yunmeng-hub/releases/latest)
+—— 在 Assets 里下载 `云梦枢 Setup <版本>.exe`，运行后按向导装即可（无需 Python、无需数据库服务）。
+安装包**未做代码签名**，首次运行 SmartScreen 会提示"未知发布者"，点「更多信息 → 仍要运行」。
+
 ## 数据存哪里：SQLite（默认）与 MySQL（可选）
 
 云梦枢是**单机桌面应用**，所以默认用 SQLite —— 数据是**一个文件**，
@@ -1805,6 +1810,24 @@ npm test
 `tests/test_db_sqlite.py` 则**始终**测 SQLite 那条路（即使当前后端是 MySQL）。
 
 ## 桌面版（Electron 壳 + 安装包）
+
+### ★ 直接用：下载装好的版本
+
+不想装 Python、不想配环境，**只想要能用的界面**，来这里：
+
+> [**→ 云梦枢 Releases（最新为 v0.3.0）**](https://github.com/tangyu233-7312/yunmeng-hub/releases)
+>
+> 在最新 Release 的 **Assets** 里下载形如 `云梦枢 Setup 0.3.0.exe` 的安装包（约 235 MB），
+> 双击运行 → 按安装向导选目录 → 装完从开始菜单或桌面图标打开。
+> 只出 **Windows x64**；macOS / Linux 未做。
+>
+> 首次运行会被 SmartScreen 提示"未知发布者"——安装包没有代码签名，属预期行为，
+> 点「更多信息 → 仍要运行」即可。
+>
+> 每个 Release 页面附有该安装包的 **SHA256**，下载后可用
+> `certutil -hashfile "云梦枢 Setup 0.3.0.exe" SHA256` 核对。
+
+### 自己从源码构建
 
 见 **`desktop/README.md`**（§0 首次打开会发生什么 / §7 打包后端 / §8 安装包）。
 三个阶段的用法各一句话：
