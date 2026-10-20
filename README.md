@@ -30,7 +30,7 @@
 
 **下载安装包（Windows x64，不想碰 Python 就走这条）：**
 [**→ 云梦枢 安装包（最新版）**](https://github.com/tangyu233-7312/yunmeng-hub/releases/latest)
-—— 在 Assets 里下载 `云梦枢 Setup <版本>.exe`，运行后按向导装即可（无需 Python、无需数据库服务）。
+—— 在 Assets 里下载 `YunMengHub-Setup-<版本>.exe`，运行后按向导装即可（无需 Python、无需数据库服务）。
 安装包**未做代码签名**，首次运行 SmartScreen 会提示"未知发布者"，点「更多信息 → 仍要运行」。
 
 ## 数据存哪里：SQLite（默认）与 MySQL（可选）
@@ -1817,7 +1817,7 @@ npm test
 
 > [**→ 云梦枢 Releases（最新为 v0.3.0）**](https://github.com/tangyu233-7312/yunmeng-hub/releases)
 >
-> 在最新 Release 的 **Assets** 里下载形如 `云梦枢 Setup 0.3.0.exe` 的安装包（约 235 MB），
+> 在最新 Release 的 **Assets** 里下载形如 `YunMengHub-Setup-0.3.0.exe` 的安装包（约 235 MB），
 > 双击运行 → 按安装向导选目录 → 装完从开始菜单或桌面图标打开。
 > 只出 **Windows x64**；macOS / Linux 未做。
 >
@@ -1825,7 +1825,9 @@ npm test
 > 点「更多信息 → 仍要运行」即可。
 >
 > 每个 Release 页面附有该安装包的 **SHA256**，下载后可用
-> `certutil -hashfile "云梦枢 Setup 0.3.0.exe" SHA256` 核对。
+> `certutil -hashfile "YunMengHub-Setup-0.3.0.exe" SHA256` 核对。
+> （本地构建出来的文件名是中文的 `云梦枢 Setup 0.3.0.exe`，上传 GitHub 后
+> 中文与空格会被清洗成 ASCII，两者内容完全相同。）
 
 ### 自己从源码构建
 
@@ -1915,3 +1917,22 @@ HNE_DEFAULT_LLM_MODEL=deepseek-chat
 - 数据库密码、JWT 密钥、API Key 加密密钥只存放于 `.env`，已被 `.gitignore` 忽略。
 - 用户自配的 LLM API Key 采用 Fernet 对称加密后入库，**不存明文**。
 - 密码使用 bcrypt 哈希存储，不可逆。
+
+## 许可与免责
+
+本项目**不是开源项目**，而是「源码可见、保留权利」：代码公开是为便于学习、教学与
+学术评审，但**不允许未授权分发或商业使用**。完整条款见根目录 [`LICENSE`](LICENSE)。
+
+摘要：
+- ✅ 可在线阅读、克隆、本地修改（修改版不得对外分发）；学术引用请注明出处
+- ✅ Release 中的安装包可个人非商业下载使用
+- ❌ 不得分发衍生版本、不得商业使用
+- 商业授权请联系作者
+
+**免责声明**：本软件按「现状」提供，不附带任何担保；著作权人不承担因使用本软件
+产生的任何责任。特别提示三点（详见 `LICENSE` 第三节）：
+
+1. 软件会把你配置后产生的对话内容**发送至你自行指定的第三方 API 服务商**，
+   数据合规性由你自行判断；
+2. 你的 API Key 与本机数据只存在本地，**请自行备份**，作者无法访问也无法帮你找回；
+3. 安装包**未做代码签名**，运行前请核对 Release 页标注的 SHA256。
