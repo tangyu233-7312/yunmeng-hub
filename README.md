@@ -6,9 +6,16 @@
 并且**你随时能看见它到底发了什么**（提示词预览与真实请求走同一个函数，不是两套代码）。
 
 **下载装好的版本（Windows x64，不想碰 Python 就走这条）**：
-[**→ 最新 Release**](https://github.com/tangyu233-7312/yunmeng-hub/releases/latest) —— 在 Assets 里下
-`YunMengHub-Setup-<版本>.exe`，装完即用（不需要 Python、不需要数据库服务）。
-安装包**未做代码签名**，首次运行 SmartScreen 会提示"未知发布者"，点「更多信息 → 仍要运行」。
+[**→ 最新 Release**](https://github.com/tangyu233-7312/yunmeng-hub/releases/latest) —— 两种形态，同一个后端、同一份数据格式，**按喜好二选一**：
+
+| 形态 | 适合 | 怎么用 |
+|---|---|---|
+| **Web 版**（免安装压缩包）<br>`YunMengHub-Web-<版本>.zip` | 不想安装、想用自己熟悉的浏览器 | 解压到任意目录 → 双击「启动云梦枢.cmd」→ 浏览器自动打开控制台。不写注册表、不需要管理员权限 |
+| **安装版**（Windows 安装包）<br>`YunMengHub-Setup-<版本>.exe` | 想要开始菜单图标、独立窗口 | 双击运行，按向导装完即可 |
+
+两者都**不需要 Python、不需要数据库服务**：数据默认存为本机一个 SQLite 文件，表与密钥由后端首次启动时自建。
+两种形态都没做代码签名，首次运行 SmartScreen 会提示"未知发布者"，点「更多信息 → 仍要运行」。
+
 
 ## 技术栈
 

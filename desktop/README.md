@@ -351,3 +351,62 @@ userData 换了位置、`.env` 从仓库根消失）。任何一条对不上，�
 `git check-ignore` 复查这件事 —— 因为 `.gitignore` 里那条 Python 的 `build/`
 一旦漏掉前导斜杠，就会**静默**把图标也忽略掉（本轮为此返工三次，
 详见 `.gitignore` 里的注释）。
+
+---
+
+## 9. Web 版压缩包（绿色免安装，已完成）
+
+Release 里的 `YunMengHub-Web-<版本>.zip` 与安装包是**同一个后端**（`dist/backend` 原样复用），
+只把"启动方式"换掉：Electron 开窗口 → 启动器起服务 + 打开浏览器。
+
+```
+release\云梦枢 Web <版本>.zip
+  ├─ 启动云梦枢.cmd       cmd 只做两件事：cd 到本目录、调 start.ps1
+  ├─ start.ps1            预检 → 选端口 → 起 backend.exe → 等 /health → 开浏览器
+  ├─ 使用说明.txt
+  └─ backend\             ← 与安装版的 resources\backend 完全相同
+```
+
+### 为什么复用 `dist/backend` 而不是另外打一份
+
+"安装版和 Web 版功能要一致"是**结构上保证的**，不是靠两边同步维护的承诺。
+再打一份后端，迟早会出现"安装版有这个功能、Web 版没有"。
+这与本项目"壳只是壳、后端契约一行未改"是同一条原则。
+
+### 构建
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_web_bundle.ps1 -Verify
+# 需要先重建后端时：-Rebuild -Verify
+```
+
+`-Verify` 会解压到临时目录、用**临时数据目录**真起一次后端，探 `/health`（组件必须全 ok）
+与 `/console`（必须 200），不通过即失败。不做这一步，"打包成功"只是一句话。
+
+### 启动器的两个约定（改目录结构时必须同步）
+
+1. **`backend.exe` 在 `backend\` 子目录里**，不是解压根目录。
+   `start.ps1` 用 `$backendDir` 一处推导 `backend.exe` 与 `_internal`，
+   不要在别处再拼 `$here\backend.exe` —— 本轮就是在这里错了一次（启动器报"缺少 backend.exe"）。
+2. **`启动云梦枢.cmd` 必须是纯 ASCII**。`.cmd` 按 OEM 代码页（中文系统是 936）读取，
+   写中文会在别的区域设置的机器上变乱码；所有给人看的文字放在 `start.ps1`（UTF-8 BOM）里。
+   同理，`.cmd` 先 `cd /d "%~dp0"` 再调脚本，避免把中文路径当参数传给 `cmd.exe`。
+
+### 启动前环境预检
+
+预检分两类，**只读、不改用户环境**：
+
+| 类别 | 检查 | 行为 |
+|---|---|---|
+| 阻断 | 缺 `backend\backend.exe` / 缺 `backend\_internal` / `_internal` 里没有组件、非 64 位或非 x64、PowerShell < 5、数据目录不可写、`-Port` 指定的端口被占 | 红字列出并**退出 1** |
+| 提醒 | 首次运行（无库文件）、8000 被占（会自动换）、已有实例在跑、磁盘 < 1 GB | 黄字列出后**照常启动** |
+
+就绪后还会核对 `/health` 的 `components.*.status`：接口 200 不等于组件可用，
+降级时窗口里直接写明是哪个组件 —— 不在 `health` 这一步掩盖问题。
+
+### 数据位置与共存
+
+启动器设的是 `HNE_DATA_DIR`（数据**根**），**不传** `--data-dir` ——
+后者在后端的语义是 `<userData>\data`（见 `backend_entry.py` 的注释），传了会多出一层 `data`。
+所以 Web 版与安装版的数据布局完全一致，默认都在 `%APPDATA%\云梦枢`，
+可以换着用；但**不能同时开两个**（SQLite 单写者）。
