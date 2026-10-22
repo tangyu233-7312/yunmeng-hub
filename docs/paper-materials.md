@@ -53,7 +53,7 @@ Select-String -Path app/narrative/*.py -Pattern 'anthropic|x-api-key|content_blo
 | 思考强度 | `reasoning_effort: "high"` | `thinking: {budget_tokens: N}` | `anthropic.py:174-241` |
 | 思考与采样 | 无约束 | **开启思考时禁止改 `temperature` / `top_p`** | 移除参数并写进 `notes` |
 
-> 更完整的版本（含 14 行差异）见 `README.md` 的「两个协议的差异有多大」一节，以及 `app/llm/anthropic.py` 顶部的对照表注释。
+> 更完整的版本（含 14 行差异）见 `docs/大模型适配.md` 的「两个协议的差异有多大」一节，以及 `app/llm/anthropic.py` 顶部的对照表注释。
 
 ### 2.2 一个统一枚举，三种协议表达
 
@@ -130,8 +130,8 @@ Anthropic 的两条硬约束（`anthropic.py:36-37`）：
 .\.venv\Scripts\python.exe -c "from app.llm.params import compute_context_budget as f; b=f(65536,2048); print(b.safety_margin, b.input_budget, b.describe())"
 ```
 
-> 注：`README.md` 里的 `58164` 用的是 `max_tokens=4096` 的示例（`65536−4096−3276=58164`）。
-> **论文里写到具体数字时，务必先跑上面这条命令**，不要抄 README 的例子。
+> 注：`docs/大模型适配.md` 里的 `58164` 用的是 `max_tokens=4096` 的示例（`65536−4096−3276=58164`）。
+> **论文里写到具体数字时，务必先跑上面这条命令**，不要照抄文档里的示例。
 
 ### 3.2 token 估算（不引入 tiktoken 的理由）
 
@@ -890,7 +890,7 @@ v4 **160、亮点占比 0.161%（3.2 倍密度）**，仍暗于正文（230）�
 - [ ] `scripts/benchmark.py` 与 `benchmark.py --from-db` → **退出码 0**
 - [ ] `scripts/token_accuracy.py` → 有样本时给出"估算 vs 厂商 prompt_tokens"比值
       （**已有首批样本 n=3**：比值均值 **1.185**、中位 1.172、低估 0 条；思考占输出 **53.6%** —— 论文里只能写"初步观测"）
-- [ ] 第 3.1 节的预算数字用命令复算过，不是抄 README
+- [ ] 第 3.1 节的预算数字用命令复算过，不是照抄文档里的示例
 - [ ] 第 5 节的每个数字都能指回文件行号或复现命令
 - [ ] 没有任何"大概是/应该是"的表述
 - [ ] `http://127.0.0.1:8000/docs` 上每个接口的 summary / 描述都是中文且能看懂

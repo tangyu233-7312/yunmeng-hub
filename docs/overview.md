@@ -215,7 +215,9 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 | 文档 | 给谁看 / 看什么 |
 |---|---|
-| `README.md` | 总览 + 每个接口与界面的**实现细节**（最详细的一份） |
+| `README.md` | 首页：一句话定位、技术栈、当前状态数字、**文档索引** |
+| **`docs/快速开始.md`** | 装依赖 / 起服务 / 选 SQLite 还是 MySQL / 跑测试 |
+| `docs/大模型适配.md` · `docs/对话与流式.md` · `docs/角色卡与世界书.md` 等 | 按主题拆开的**实现细节**（每个接口、每个界面为什么这么做），完整清单见 README 的「文档」表 |
 | **`docs/overview.md`（本文）** | 一页看懂：做了什么、有哪些功能、用了什么技术 |
 | `docs/dev-notes/handoff.md`（本机，不公开） | 逐轮开发日志：每轮改了什么、为什么、验证数字 |
 | `docs/dev-notes/handoff-quick.md`（本机，不公开） | 交接速查：当前状态、坑、命令 |
