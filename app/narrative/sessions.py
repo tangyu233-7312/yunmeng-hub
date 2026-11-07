@@ -47,7 +47,7 @@ from app.schemas.narrative import (
     SessionBrief,
     SessionDetail,
 )
-from app.services import character_card_service, plugin_service, provider_service
+from app.services import character_card_service, imagegen_service, plugin_service, provider_service
 
 #: 会话列表默认/最大分页
 DEFAULT_LIMIT = 12
@@ -362,6 +362,8 @@ def serialize_message(row: Message) -> MessageOut:
         latency_ms=row.latency_ms,
         # ★ 骰点直接读落库的那一份（不重掷）：界面刷新后点数必须还是同一个
         rolls=dice_mod.loads(getattr(row, "rolls_json", None)),
+        # ★ 生图插件的配图（没有就是空数组）：界面按 URL 直接渲染，不从 content 反解
+        images=imagegen_service.load_images(row),
         # ★ 翻译中间件：原文/译文 + 该显示哪一份（界面据此渲染切换按钮）
         translation=translate_mod.loads(getattr(row, "translation_json", None)),
         # ★ 模型输出的 <state> 原文（界面「看作者原格式」；解析成字段后原排版就没了）
@@ -1133,10 +1135,20 @@ def delete_session(db: Session, user_id: int, session_id: int) -> int:
     message_count = session.message_count or 0
     # ★ 记下它的世界线组，删完之后要重排剩下的线（见下面的说明）
     group_id = session.branch_group_id
+    # ★ 生图文件不是数据库事务的一部分：先收引用，提交后 best-effort 删。
+    #   不删的话，删会话只删了数据库里的 URL，磁盘上的图片会永远留下。
+    stale_images = [
+        imagegen_service.load_images(row)
+        for row in db.scalars(
+            select(Message).where(Message.session_id == session.id)
+        ).all()
+    ]
     # messages.session_id 的外键是 ON DELETE CASCADE + relationship 的
     # cascade="all, delete-orphan"，所以能自动删干净（这一点由测试真删一次验证）
     db.delete(session)
     db.commit()
+    for images in stale_images:
+        imagegen_service.remove_files(images)
     logger.info(
         "删除叙事会话 | user_id={} session_id={} messages={}",
         user_id,
@@ -1284,9 +1296,14 @@ def delete_messages_from(
                 select(Message).where(Message.session_id == session.id, condition)
             ).all()
         )
+    # ★ 生图文件不是数据库事务的一部分：先把引用收起来，提交后再 best-effort 删
+    #   （撤回 / 编辑 / 重新生成都会走到这里）。
+    stale_images = [imagegen_service.load_images(message) for message in targets]
     for message in targets:
         db.delete(message)
     db.commit()
+    for images in stale_images:
+        imagegen_service.remove_files(images)
     if targets:
         _recalculate_stats(db, session)
     return len(targets)

@@ -9,7 +9,7 @@
     prompt_presets   提示词预设（酒馆式规则/破甲，规范模型行为）
     character_cards  角色卡管理（含公共卡库与 V2 规范导入导出）
     world_books      世界书管理（可被多张角色卡共用的世界观设定集）
-    plugins          插件（声明式：正则替换 / 提示词注入 / CSS 主题，仅从 GitHub 安装）
+    plugins          插件（正则替换 / 提示词注入 / CSS 主题 / 骰点 / 内置生图，仅从 GitHub 安装声明式部分）
     narrative        叙事会话与对话（含 SSE 流式输出）
     （向量长期记忆的接口也在 narrative 里：/narrative/sessions/{id}/memories）
 
@@ -69,7 +69,7 @@ api_router.include_router(
 api_router.include_router(world_books.router, prefix="/world-books", tags=["世界书"])
 
 # ---------------- 插件（需登录）----------------
-# 声明式插件：正则替换 / 提示词注入（作用于发给模型的提示词）+ CSS 主题（作用于控制台）。
+# 插件：正则替换 / 提示词注入 / CSS 主题 / 跑团骰点 / 生图（生图是内置插件，需用户自配图像 Key）。
 # 安装来源只允许 GitHub；清单是纯数据，不执行任何第三方 JS。
 api_router.include_router(plugins.router, prefix="/plugins", tags=["插件"])
 

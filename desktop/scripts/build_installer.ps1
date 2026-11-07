@@ -10,7 +10,7 @@
   到底哪一步出了问题。缺 sidecar 就直接停下并告诉你该先跑什么。
 
   产物（都在仓库根的 release/，已被 .gitignore 忽略）：
-    · 云梦枢 Setup 0.4.0.exe   ← 双击可装的安装包
+    · YunMengHub-Setup-0.4.0.exe   ← 双击可装的安装包
     · win-unpacked/            ← 安装包解出来的样子（用来核对内容，不必真装）
 
 .NOTES
@@ -257,6 +257,16 @@ Initialize-NsisToolset
 Write-Section '调 electron-builder'
 Write-Host "[i] 工作目录：$DesktopDir"
 Write-Host '[i] 目标：Windows x64 · NSIS 安装包（不签名）'
+
+# ★ 修补 electron-builder 的 NSIS 中间产物环境：
+#   26.15.3 在 Windows 上给中间产物只传 {__COMPAT_LAYER}，导致它拿不到 TEMP，
+#   NSIS 会弹「Error writing temporary file」。补丁脚本幂等，可重复执行。
+$patchScript = Join-Path $ScriptDir "patch-electron-builder.js"
+if (Test-Path $patchScript) {
+  Write-Host "[i] 修补 electron-builder（NSIS 中间产物环境）…" -ForegroundColor DarkGray
+  & node $patchScript
+  if ($LASTEXITCODE -ne 0) { Fail "修补 electron-builder 失败" "删除桌面端 node_modules 后重新 npm install，再重跑本脚本" }
+}
 
 # ★ 不用管道接输出：管道会把退出码变成 0，从而"构建失败了却报成功"
 #   （上一轮在 build_backend.ps1 里踩过这个坑，这里从一开始就避开）。

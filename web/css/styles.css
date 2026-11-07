@@ -871,6 +871,28 @@ body.log-open .topbar {
 .roll-chip .roll-judge.ok { color: var(--ok); }
 .roll-chip .roll-judge.bad { color: var(--danger); }
 
+/* ---------------- 生图配图（生图插件） ----------------
+   ★ 图片单独一格而不是塞进正文：正文是会被发给模型的历史，图片标记会污染叙事。
+     这里只负责显示后端 images_json 里的站内 URL。 */
+.msg-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.msg-image { margin: 0; }
+.msg-image a {
+  display: block; border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+.msg-image img { display: block; width: 100%; height: auto; }
+.msg-image a:hover { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-soft); }
+.msg-image-status {
+  margin-top: 8px; font-size: 12px; color: var(--text-dim);
+  display: flex; align-items: center; gap: 6px;
+}
+.msg.user .msg-image-status { justify-content: flex-end; }
+
 /* ---------------- 翻译中间件（原文 / 译文） ----------------
    ★ 默认显示"给人看的那一份"（输出侧是译文、输入侧是原文），
      另一份留在 DOM 里，点一下就地切换 —— 不发请求、不改数据。 */

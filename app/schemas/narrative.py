@@ -23,6 +23,11 @@ class MessageOut(BaseModel):
         "[{source, expression, label, total, faces, terms, compare, target, success, error, text}]；"
         "没有启用骰子插件时一律为空数组",
     )
+    images: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="★ 生图插件生成的配图：[{url, prompt, model, protocol, size, created_at}]；"
+        "没有启用生图插件时为空的数组",
+    )
     translation: dict[str, Any] | None = Field(
         default=None,
         description="★ 翻译中间件的「另一份文本」（没译过就是 null）："

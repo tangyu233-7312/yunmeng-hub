@@ -38,8 +38,9 @@ const KIND_LABEL = {
   prompt: '提示词注入',
   css: 'CSS 主题',
   dice: '跑团骰点',
+  imagegen: '生图配图',
 };
-const KIND_BADGE = { regex: 'info', prompt: 'ok', css: 'warn', dice: 'ok' };
+const KIND_BADGE = { regex: 'info', prompt: 'ok', css: 'warn', dice: 'ok', imagegen: 'warn' };
 const POSITION_LABEL = { start: '提示词开头', before_guard: '守卫之前', end: '提示词末尾（推荐）' };
 
 let state = { items: [], note: '', hosts: [] };
@@ -379,7 +380,7 @@ async function movePlugin(root, id, delta) {
   await renderList(root, activeSignal?.signal);
 }
 
-function configFieldsHTML(kind, config) {
+function configFieldsHTML(kind, config, plugin) {
   const c = config || {};
   if (kind === 'regex') {
     const rules = Array.isArray(c.rules) ? c.rules : [];
@@ -471,6 +472,102 @@ function configFieldsHTML(kind, config) {
         </label>
       </div>`;
   }
+  if (kind === 'imagegen') {
+    const hasKey = Boolean(plugin?.has_api_key);
+    const decryptable = plugin?.api_key_decryptable !== false;
+    const extra = c.extra_body && typeof c.extra_body === 'object' ? JSON.stringify(c.extra_body, null, 2) : '{}';
+    return `
+      <div class="form-section">
+        <div class="alert info">
+          🎨 生图是**内置插件**：只有你自己填了图像接口与 Key 并启用后才会花钱调用。
+          生图 Key 与模型 Key 一样用 Fernet 加密入库，保存后只显示脱敏形式，绝不回传前端。
+          不填 Key 也可以保存（本地无鉴权服务），但调用 OpenAI 这类接口会 401。
+        </div>
+        <div class="row mt8">
+          <div style="flex:2">
+            <label class="small muted">接口地址 base_url</label>
+            <input type="text" name="base_url" value="${esc(c.base_url || '')}"
+                   placeholder="https://api.openai.com/v1" />
+          </div>
+          <div style="flex:1">
+            <label class="small muted">模型名</label>
+            <input type="text" name="model" value="${esc(c.model || '')}"
+                   placeholder="gpt-image-1 / dall-e-3" />
+          </div>
+        </div>
+        <div class="row mt8">
+          <div style="flex:1">
+            <label class="small muted">协议</label>
+            <select name="protocol">
+              <option value="openai-images" ${(c.protocol || 'openai-images') === 'openai-images' ? 'selected' : ''}>OpenAI Images（/images/generations）</option>
+              <option value="openai-chat" ${c.protocol === 'openai-chat' ? 'selected' : ''}>OpenAI Chat（/chat/completions，部分中转站）</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label class="small muted">触发方式</label>
+            <select name="trigger">
+              <option value="auto" ${(c.trigger || 'auto') === 'auto' ? 'selected' : ''}>每轮自动配图</option>
+              <option value="model" ${c.trigger === 'model' ? 'selected' : ''}>模型写 &lt;image&gt; 时才画</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label class="small muted">间隔（每 N 轮）</label>
+            <input type="number" name="interval" min="1" max="50" value="${esc(c.interval ?? 1)}" />
+          </div>
+        </div>
+        <div class="mt8">
+          <label class="small muted">生图 Key</label>
+          <input type="password" name="api_key" autocomplete="new-password"
+                 value=""
+                 placeholder="${hasKey ? `已配置：${plugin?.api_key_masked || '已保存'}（留空保持不变）` : 'sk-…'}" />
+          ${hasKey ? `<label class="checkbox-line mt8"><input type="checkbox" name="clear_api_key" /> <span>清除已保存的 Key</span></label>` : ''}
+          ${decryptable ? '' : '<div class="hint" style="color:var(--danger)">已保存的 Key 解不开（加密密钥变过），请重新填写。</div>'}
+        </div>
+        <div class="row mt8">
+          <div style="flex:1">
+            <label class="small muted">尺寸</label>
+            <input type="text" name="size" value="${esc(c.size || '1024x1024')}" placeholder="1024x1024 / auto" />
+          </div>
+          <div style="flex:1">
+            <label class="small muted">质量（可空）</label>
+            <input type="text" name="quality" value="${esc(c.quality || '')}" placeholder="留空 = 不发送该字段" />
+          </div>
+          <div style="flex:1">
+            <label class="small muted">每轮最多几张</label>
+            <input type="number" name="max_images" min="1" max="4" value="${esc(c.max_images ?? 1)}" />
+          </div>
+        </div>
+        <div class="mt8">
+          <label class="small muted">画风 / 统一风格</label>
+          <textarea name="style" rows="2">${esc(c.style || '')}</textarea>
+        </div>
+        <div class="mt8">
+          <label class="small muted">提示词模板（可空）</label>
+          <textarea name="prompt_template" rows="4" placeholder="可用占位符：{char} {user} {scene} {style}">${esc(c.prompt_template || '')}</textarea>
+          <div class="hint mt8">留空 = 用内置模板（英文、强调“无文字/无水印/无 UI”）。auto 模式的 {scene} 是这一轮正文；model 模式是模型写的描述。</div>
+        </div>
+        <div class="row mt8">
+          <div style="flex:1">
+            <label class="small muted">超时（秒）</label>
+            <input type="number" name="timeout_seconds" min="10" max="600" value="${esc(c.timeout_seconds ?? 120)}" />
+          </div>
+          <div style="flex:1">
+            <label class="small muted">正文截取字数</label>
+            <input type="number" name="max_chars" min="100" max="4000" value="${esc(c.max_chars ?? 1200)}" />
+          </div>
+        </div>
+        <div class="mt8">
+          <label class="small muted">额外请求字段（JSON，可空）</label>
+          <textarea name="extra_body" rows="3" class="mono" placeholder='{"watermark": false}'>${esc(extra)}</textarea>
+          <div class="hint mt8">会原样合并进请求体（可覆盖 size / quality 等）；不允许写 api_key / authorization。</div>
+        </div>
+        <div class="hint mt8">
+          ★ 「每轮自动配图」默认每 1 轮画一张：**每次都会消耗图像 API 的额度**。
+          想省钱就把间隔调大，或改成「模型写 &lt;image&gt; 时才画」。
+          新建的生图插件默认停用，填好 Key 后再到列表里打开。
+        </div>
+      </div>`;
+  }
   return `
     <div class="form-section">
       <div class="hint mb8">
@@ -525,6 +622,39 @@ function readConfig(root, kind) {
       max_sides: Number($('[name=max_sides]', root)?.value || 1000),
     };
   }
+  if (kind === 'imagegen') {
+    const extraText = $('[name=extra_body]', root)?.value?.trim() || '';
+    let extra = {};
+    if (extraText) {
+      try {
+        extra = JSON.parse(extraText);
+      } catch (err) {
+        throw new Error('「额外请求字段」不是合法 JSON：' + (err?.message || err));
+      }
+      if (!extra || typeof extra !== 'object' || Array.isArray(extra)) {
+        throw new Error('「额外请求字段」必须是 JSON 对象，例如 {"watermark": false}');
+      }
+    }
+    const key = $('[name=api_key]', root)?.value?.trim() || '';
+    const config = {
+      base_url: $('[name=base_url]', root)?.value?.trim() || '',
+      model: $('[name=model]', root)?.value?.trim() || '',
+      protocol: $('[name=protocol]', root)?.value || 'openai-images',
+      trigger: $('[name=trigger]', root)?.value || 'auto',
+      interval: Number($('[name=interval]', root)?.value || 1),
+      size: $('[name=size]', root)?.value?.trim() || '',
+      quality: $('[name=quality]', root)?.value?.trim() || '',
+      style: $('[name=style]', root)?.value || '',
+      prompt_template: $('[name=prompt_template]', root)?.value || '',
+      max_images: Number($('[name=max_images]', root)?.value || 1),
+      timeout_seconds: Number($('[name=timeout_seconds]', root)?.value || 120),
+      max_chars: Number($('[name=max_chars]', root)?.value || 1200),
+      extra_body: extra,
+    };
+    if (key) config.api_key = key;
+    if ($('[name=clear_api_key]', root)?.checked) config.clear_api_key = true;
+    return config;
+  }
   return { css: $('[name=css]', root)?.value || '' };
 }
 
@@ -553,7 +683,7 @@ function openEditor(root, existing) {
         </div>
       </div>
       ${textField('说明（可选）', 'description', existing?.description || '', {})}
-      <div id="config-box">${configFieldsHTML(kind, existing?.config)}</div>
+      <div id="config-box">${configFieldsHTML(kind, existing?.config, existing)}</div>
       <div class="hint mt8">顺序值越小越先应用（默认 100）。</div>
       <div class="row" style="max-width:200px">
         <div>
@@ -569,7 +699,7 @@ function openEditor(root, existing) {
   if (!isEdit && kindSelect) {
     kindSelect.addEventListener('change', () => {
       kind = kindSelect.value;
-      $('#config-box', m.root).innerHTML = configFieldsHTML(kind, {});
+      $('#config-box', m.root).innerHTML = configFieldsHTML(kind, {}, null);
       bindRuleBox(m.root);
     });
   }
@@ -609,7 +739,8 @@ function openEditor(root, existing) {
         await api.patch(`/plugins/${existing.id}`, body);
         toastOk('插件已保存');
       } else {
-        await api.post('/plugins', { ...body, kind, enabled: true });
+        await api.post('/plugins', { ...body, kind, enabled: kind !== 'imagegen' });
+        if (kind === 'imagegen') toastOk('生图插件已创建，默认停用；请填好 Key 后到列表里打开');
         toastOk('插件已创建');
       }
       m.close();

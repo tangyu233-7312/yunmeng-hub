@@ -1,6 +1,6 @@
 """插件的请求 / 响应模型。
 
-==================== 四种插件的配置形状 ====================
+==================== 五种插件的配置形状 ====================
     regex  : {"rules": [{"pattern": "…", "replacement": "…", "flags": "i"}, …]}
              —— 对**发给模型的提示词**做替换（不改数据库、不改界面显示）
     prompt : {"position": "start|before_guard|end", "content": "…"}
@@ -12,6 +12,14 @@
               "max_dice": 100, "max_sides": 1000}
              —— 跑团骰点：用户用指令掷、模型用 `<roll>` 标签请求系统掷，
                 **由后端受控求值**（不执行任何代码），点数是既成事实
+    imagegen: {"base_url": "https://api.openai.com/v1", "model": "gpt-image-1",
+               "protocol": "openai-images|openai-chat", "trigger": "auto|model",
+               "interval": 1, "size": "1024x1024", "quality": "",
+               "style": "…", "prompt_template": "…", "max_images": 1,
+               "timeout_seconds": 120, "max_chars": 1200, "extra_body": {},
+               "api_key_enc": "<Fernet 密文，绝不回前端>"}
+             —— 生图：auto = 每轮（或每 N 轮）自动配图；model = 模型写
+                `<hne-image>…</hne-image>` 请求。调用用户自配的图像 API。
 
 ★ 配置的具体校验在 `app/services/plugin_service.py`：
   手工新建与"从 GitHub 安装"两条路必须走**同一套**校验，
@@ -25,7 +33,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PluginKind = Literal["regex", "prompt", "css", "dice"]
+PluginKind = Literal["regex", "prompt", "css", "dice", "imagegen"]
 #: 提示词注入的位置：开头 / 身份守卫之前 / 整条提示词末尾（越靠后权重越高）
 PromptPosition = Literal["start", "before_guard", "end"]
 
@@ -88,6 +96,10 @@ class PluginOut(BaseModel):
     updated_at: datetime | None = None
     #: 给界面看的一句话摘要（例如"3 条替换规则""位置：末尾"），省得前端自己解析 config
     summary: str = ""
+    #: 生图插件的 Key 脱敏形式（其它类型为空）。明文绝不返回。
+    api_key_masked: str = ""
+    has_api_key: bool = False
+    api_key_decryptable: bool = True
 
 
 class PluginCatalogItem(BaseModel):

@@ -16,7 +16,8 @@ FastAPI 按注册顺序匹配，先匹配到 `/{plugin_id}` 就会把 "install" 
 
 ==================== 安全边界 ====================
 详见 `app/services/plugin_service.py` 顶部说明：只允许 GitHub、只下载数据不执行代码、
-有体积与条数上限、失败隔离、CSS 过白名单清洗。
+有体积与条数上限、失败隔离、CSS 过白名单清洗。生图是**内置插件**：
+它需要用户自配图像 Key（Fernet 加密入库、只回脱敏），从 GitHub 下载的清单带密钥会被拒绝。
 """
 
 from __future__ import annotations

@@ -1,17 +1,22 @@
-"""插件模型（声明式插件：正则替换 / 提示词注入 / CSS 主题 / 跑团骰点）。
+"""插件模型（声明式插件 + 内置生图插件）。
 
-==================== 为什么只做"声明式"这四种？====================
-用户要一个"极简插件市场"，但他真正需要的能力只有四类：
+==================== 五种插件类型 ====================
+用户要一个"极简插件市场"，真正需要的能力是这几类：
     1. 正则替换   —— 把发给模型的提示词里某些词换掉（改口癖、屏蔽词、术语统一）
     2. 提示词注入 —— 在世界书/回忆之外再插一段固定文本（风格约束、文风样例）
     3. CSS 主题   —— 换控制台的配色/字号（纯样式，不碰数据）
     4. 跑团骰点   —— 需要随机数时由**后端**掷（解析器在 app/narrative/dice.py），
                      模型与用户都只能"请求"点数，不能自己造
+    5. 生图       —— 每轮（或模型按 <hne-image> 标签请求时）调用用户自配的
+                     图像 API，把图片挂到这一轮回复上（执行层在
+                     app/services/imagegen_service.py）
 
-★ **绝不执行第三方 JS**：插件的载体只有"数据"（JSON 清单 + 正则/文本/CSS/骰子参数），
-  没有可执行代码，因此也就拿不到 API Key、发不出请求、读不到会话内容。
+★ **绝不执行第三方 JS**：插件的载体只有"数据"（JSON 清单 + 正则/文本/CSS/骰子参数）。
+  生图虽然要发 HTTP，但那段代码是**我们自己写的、有界的内置插件**，不是从 GitHub
+  下载来执行的脚本；它只读取本插件的配置（含用户自配的生图 Key，Fernet 加密入库），
+  不会把 Key 返回给前端。
   这是刻意的取舍：能跑 JS 的插件系统等于把用户的 key 交给陌生人。
-  骰子是唯一"带逻辑"的一种，但那份逻辑是我们自己写的、有界的求值器。
+  骰子与生图是仅有的两种"带逻辑"的插件，逻辑都在本项目代码里。
 
 ==================== 为什么配置存 JSON？====================
 理由与 prompt_presets 相同：插件的结构会随能力扩展而变，
@@ -30,15 +35,15 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.types import LongText, PkInt
 from app.db.base import Base, TimestampMixin
 
-#: 四种插件类型（与前端 tab、schema 的 Literal 保持一致）
-PLUGIN_KINDS = ("regex", "prompt", "css", "dice")
+#: 五种插件类型（与前端 tab、schema 的 Literal 保持一致）
+PLUGIN_KINDS = ("regex", "prompt", "css", "dice", "imagegen")
 
 
 class Plugin(Base, TimestampMixin):
     """一个声明式插件（属于某个用户）。"""
 
     __tablename__ = "plugins"
-    __table_args__ = {"comment": "插件表（声明式：正则替换 / 提示词注入 / CSS 主题）"}
+    __table_args__ = {"comment": "插件表（声明式：正则替换 / 提示词注入 / CSS 主题 / 骰点 / 生图）"}
 
     id: Mapped[int] = mapped_column(
         PkInt, primary_key=True, autoincrement=True, comment="插件ID"
@@ -55,7 +60,7 @@ class Plugin(Base, TimestampMixin):
         String(120), nullable=False, comment="插件名（允许重名，理由同角色卡）"
     )
     kind: Mapped[str] = mapped_column(
-        String(16), nullable=False, comment="插件类型：regex / prompt / css / dice"
+        String(16), nullable=False, comment="插件类型：regex / prompt / css / dice / imagegen"
     )
     description: Mapped[str | None] = mapped_column(
         String(500), nullable=True, comment="一句话说明这个插件做什么"
@@ -88,7 +93,7 @@ class Plugin(Base, TimestampMixin):
     config: Mapped[dict[str, Any]] = mapped_column(
         JSON,
         nullable=False,
-        comment="插件配置（regex.rules / prompt.{position,content} / css.css / dice.{triggers,…}）",
+        comment="插件配置（regex.rules / prompt.{position,content} / css.css / dice.{triggers,…} / imagegen.{base_url,model,api_key_enc,…}）",
     )
     #: 原始清单（导入时的原样保留：导出/排查时能看到作者写了什么，不丢字段）
     raw_manifest: Mapped[str | None] = mapped_column(

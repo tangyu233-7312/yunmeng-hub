@@ -19,14 +19,16 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db.models import User
+from app.core.exceptions import BadRequestError
+from app.db.models import Message, NarrativeSession, User
 from app.db.mysql import session_scope
 from app.llm.params import GenerationParams, compute_context_budget
 from app.llm.schema import ChatResult, StreamChunk, TokenUsage
 from app.main import app
 from app.narrative import engine
+from app.narrative import imagegen as imagegen_rules
 from app.narrative.presets import GUARD_IDENTITY_MARKER
-from app.services import plugin_service
+from app.services import imagegen_service, plugin_service
 from app.services.plugin_service import PLUGIN_CATALOG
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
@@ -283,6 +285,180 @@ def test_summary_is_human_readable() -> None:
     assert plugin_service.summary_of("regex", {"rules": [{"pattern": "a"}]}) == "1 条替换规则"
     assert "末尾" in plugin_service.summary_of("prompt", {"position": "end", "content": "abc"})
     assert "主题样式" in plugin_service.summary_of("css", {"css": "a{}"})
+
+
+# ==================================================================
+#  生图插件（imagegen）
+# ==================================================================
+IMAGE_CONFIG = {
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-image-1",
+    "protocol": "openai-images",
+    "trigger": "auto",
+    "interval": 1,
+    "size": "1024x1024",
+    "style": "watercolor",
+    "max_images": 1,
+    "timeout_seconds": 120,
+    "max_chars": 1200,
+    "extra_body": {"watermark": False},
+}
+
+
+def test_imagegen_key_is_encrypted_and_never_returned(
+    client: TestClient, user: dict
+) -> None:
+    """生图 Key 的对外行为必须与模型 Key 同一套：只回脱敏，绝不回密文。"""
+    plain = "sk-imagegen-secret-123456"
+    created = client.post(
+        PLUGINS,
+        headers=user["headers"],
+        json={
+            "name": "我的生图",
+            "kind": "imagegen",
+            "enabled": False,
+            "config": {**IMAGE_CONFIG, "api_key": plain},
+        },
+    )
+    assert created.status_code == 201, created.text
+    plugin = created.json()["data"]
+    assert plugin["has_api_key"] is True
+    assert "****" in plugin["api_key_masked"]
+    assert "api_key_enc" not in plugin["config"]
+    assert plain not in json.dumps(plugin, ensure_ascii=False)
+
+    # 只改画风、不传 Key：旧密钥必须保留
+    updated = client.patch(
+        f"{PLUGINS}/{plugin['id']}",
+        headers=user["headers"],
+        json={"config": {**IMAGE_CONFIG, "style": "oil painting"}},
+    )
+    assert updated.status_code == 200, updated.text
+    row = updated.json()["data"]
+    assert row["has_api_key"] is True
+    assert row["config"]["style"] == "oil painting"
+    assert plain not in json.dumps(row, ensure_ascii=False)
+
+    # 列表接口同样不能泄漏
+    listed = client.get(PLUGINS, headers=user["headers"]).json()["data"]
+    assert plain not in json.dumps(listed, ensure_ascii=False)
+
+
+def test_imagegen_catalog_entry_is_added_disabled(client: TestClient, user: dict) -> None:
+    """生图必须由用户填好 Key 再打开；目录添加时默认停用。"""
+    added = client.post(
+        f"{PLUGINS}/catalog/imagegen", headers=user["headers"]
+    )
+    assert added.status_code == 201, added.text
+    plugin = added.json()["data"]
+    assert plugin["kind"] == "imagegen"
+    assert plugin["enabled"] is False
+    assert plugin["has_api_key"] is False
+
+    # ★ 配置型插件：用户一定会改 base_url/model/style，目录不能显示"有更新"
+    #   再用模板覆盖一遍（那会把用户填好的设置重置）。
+    listed = client.get(PLUGINS, headers=user["headers"]).json()["data"]
+    entry = next(item for item in listed["catalog"] if item["key"] == "imagegen")
+    assert entry["installed"] is True
+    assert entry["update_available"] is False
+    again = client.post(f"{PLUGINS}/catalog/imagegen", headers=user["headers"])
+    assert again.status_code == 400
+    assert "配置型" in again.text
+
+
+def test_imagegen_auto_mode_attaches_picture_to_reply(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient, user: dict
+) -> None:
+    """每轮自动配图：图片必须挂到这一轮 assistant 消息上（刷新后还在）。"""
+    created = client.post(
+        PLUGINS,
+        headers=user["headers"],
+        json={
+            "name": "每轮生图",
+            "kind": "imagegen",
+            "enabled": True,
+            "config": {**IMAGE_CONFIG, "api_key": "sk-imagegen-test"},
+        },
+    )
+    assert created.status_code == 201, created.text
+    session_id = _make_session(client, user)
+
+    def fake_generate(spec, api_key, prompt):
+        assert api_key == "sk-imagegen-test", "调用时必须解出明文 Key"
+        return {
+            "url": "/media/imagegen/test-image.png",
+            "prompt": prompt,
+            "model": spec["model"],
+            "protocol": spec["protocol"],
+            "size": spec.get("size"),
+        }
+
+    monkeypatch.setattr(imagegen_service, "_generate_one", fake_generate)
+    sent = client.post(
+        f"{BASE}/{session_id}/messages",
+        json={"content": "我推开雨夜的城门"},
+        headers=user["headers"],
+    )
+    assert sent.status_code == 201, sent.text
+    reply = sent.json()["data"]["assistant_message"]
+    assert reply["images"], "这一轮必须带上配图"
+    assert reply["images"][0]["url"] == "/media/imagegen/test-image.png"
+
+    # 刷新会话：配图必须还在（说明写进了 messages.images_json）
+    detail = client.get(f"{BASE}/{session_id}", headers=user["headers"]).json()["data"]
+    assistants = [m for m in detail["messages"] if m["role"] == "assistant"]
+    assert assistants[-1]["images"][0]["url"] == "/media/imagegen/test-image.png"
+
+
+def test_generated_media_is_served_without_login(client: TestClient) -> None:
+    """图片走 <img src>，浏览器不会带 Authorization；随机文件名 + 不列目录是边界。"""
+    from app.core.config import data_root
+
+    directory = data_root() / "data" / "media" / "imagegen"
+    directory.mkdir(parents=True, exist_ok=True)
+    name = f"{uuid.uuid4().hex}.png"
+    target = directory / name
+    payload = b"\x89PNG\r\n\x1a\n" + b"test"
+    target.write_bytes(payload)
+    try:
+        response = client.get(f"/media/imagegen/{name}")
+        assert response.status_code == 200, response.text
+        assert response.content == payload
+    finally:
+        target.unlink(missing_ok=True)
+
+
+def test_imagegen_failure_does_not_break_the_reply(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient, user: dict
+) -> None:
+    """生图失败只提示，正文与这一轮本身都必须完好。"""
+    created = client.post(
+        PLUGINS,
+        headers=user["headers"],
+        json={
+            "name": "会失败的生图",
+            "kind": "imagegen",
+            "enabled": True,
+            "config": {**IMAGE_CONFIG, "api_key": "sk-imagegen-test"},
+        },
+    )
+    assert created.status_code == 201, created.text
+    session_id = _make_session(client, user)
+
+    def boom(spec, api_key, prompt):
+        raise imagegen_service.ImageGenError("上游返回 HTTP 401：invalid key")
+
+    monkeypatch.setattr(imagegen_service, "_generate_one", boom)
+    sent = client.post(
+        f"{BASE}/{session_id}/messages",
+        json={"content": "我推门进去"},
+        headers=user["headers"],
+    )
+    assert sent.status_code == 201, sent.text
+    data = sent.json()["data"]
+    assert data["assistant_message"]["content"], "正文不能因为生图失败而丢"
+    assert data["assistant_message"]["images"] == []
+    assert any("配图失败" in note for note in data["notes"])
 
 
 # ==================================================================
@@ -596,6 +772,42 @@ def test_preview_matches_the_real_request(client: TestClient, user: dict, fake_l
 # ==================================================================
 #  六、内置示例目录（对照 SillyTavern 的内置扩展挑出来的）
 # ==================================================================
+def test_imagegen_manifest_is_rejected_from_github_install() -> None:
+    """生图是内置插件：远程清单不能决定"故事正文发到哪个图像服务器"。"""
+    with pytest.raises(BadRequestError) as exc:
+        plugin_service.manifest_to_fields(
+            {
+                "spec": "hne_plugin_v1",
+                "name": "远程生图",
+                "kind": "imagegen",
+                "config": {**IMAGE_CONFIG, "base_url": "https://evil.example/v1"},
+            }
+        )
+    assert "内置插件" in str(exc.value)
+
+
+def test_imagegen_model_contract_is_in_preview_and_request(
+    client: TestClient, user: dict, fake_llm
+) -> None:
+    """model 模式的 <hne-image> 协议必须同时出现在预览与真实请求里（同一份装配）。"""
+    session_id = _make_session(client, user)
+    _create(
+        client,
+        user,
+        name="生图协议",
+        kind="imagegen",
+        config={**IMAGE_CONFIG, "trigger": "model"},
+    )
+    _send(client, user, session_id, text="我推门进去")
+    sent_system = fake_llm.script["requests"][-1].messages[0].content
+    assert "<hne-image>" in sent_system and "生图协议" in sent_system
+
+    preview = client.get(
+        f"{BASE}/{session_id}", params={"with_prompt": "true"}, headers=user["headers"]
+    ).json()["data"]["prompt"]
+    assert preview["system_prompt"] == sent_system
+
+
 def test_every_catalog_entry_is_valid_and_declarative() -> None:
     """目录里的每一条都必须是合法配置 —— 否则用户点「添加」才发现装不上。
 
@@ -604,7 +816,7 @@ def test_every_catalog_entry_is_valid_and_declarative() -> None:
       而这条测试真正要守的是"**每一种**都必须是声明式能力、且配置校验能过"。
     """
     assert plugin_service.PLUGIN_CATALOG, "目录不能是空的"
-    assert set(plugin_service.PLUGIN_KINDS) == {"regex", "prompt", "css", "dice"}
+    assert set(plugin_service.PLUGIN_KINDS) == {"regex", "prompt", "css", "dice", "imagegen"}
     for spec in plugin_service.PLUGIN_CATALOG:
         assert spec["kind"] in plugin_service.PLUGIN_KINDS
         assert spec["source"], "每条都要写清楚对应酒馆的哪个能力"
@@ -619,10 +831,12 @@ def test_every_catalog_entry_is_valid_and_declarative() -> None:
 def test_unsupported_sillytavern_extensions_are_listed_honestly(
     client: TestClient, user: dict
 ) -> None:
-    """做不到的就如实列出来（TTS / 生图 / 快捷回复…），不能装作支持。"""
+    """做不到的就如实列出来（TTS / 快捷回复…），不能装作支持。"""
     data = client.get(PLUGINS, headers=user["headers"]).json()["data"]
     names = " ".join(item["name"] for item in data["unsupported"])
-    assert "Text To Speech" in names and "Image Generation" in names
+    assert "Text To Speech" in names
+    # 生图已经由内置 imagegen 插件提供，不应再出现在"刻意不做"的清单里
+    assert "Image Generation" not in names
     assert all(item["reason"] for item in data["unsupported"])
     assert len(data["catalog"]) == len(plugin_service.PLUGIN_CATALOG)
 

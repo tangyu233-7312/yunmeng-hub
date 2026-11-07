@@ -26,6 +26,7 @@
   "build": {
     "appId": "com.yunmeng.hub",
     "productName": "云梦枢",
+    "artifactName": "YunMengHub-Setup-${version}.${ext}",
     "directories": {
       "output": "../release"
     },

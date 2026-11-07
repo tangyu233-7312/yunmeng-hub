@@ -93,6 +93,17 @@ class Message(Base):
         Text, nullable=True, comment="骰点 JSON 数组（骰子插件：点数与骰面）"
     )
 
+    # ★ 生图插件：这一轮生成的配图。
+    #   为什么单独一列而不是把 <img> 塞进 content：
+    #     ① content 会作为历史发给模型，图片标记会浪费 token 并污染叙事；
+    #     ② 图片文件与消息是两种生命周期（撤回/重新生成要能删文件）；
+    #     ③ 界面渲染图片需要 alt/caption/模型名，结构化字段比从正文反解可靠。
+    #   形状：[{"url": "/media/imagegen/xxx.png", "prompt": "...", "model": "...",
+    #          "protocol": "openai-images", "size": "1024x1024", "created_at": "..."}]
+    images_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="生图插件的配图 JSON 数组（图片 URL 与生成信息）"
+    )
+
     # ★ 翻译中间件（第十五轮）：这条消息的"另一份文本"。
     #   形状：{"text", "direction", "lang", "display", "used_model", "skipped",
     #          "tokens", "model", "provider_id", "error"}

@@ -6,8 +6,10 @@
    （网页地址与 gist 页面地址会自动转成 raw 地址）。其它域名一律拒绝，
    并且在**跟随重定向之后**再校验一次最终域名（且只认 raw 类域名）——
    否则一个 302 就能把"只允许 GitHub"绕过去。
-2. **只下载数据，不执行代码**：插件清单是 JSON，能力只有三种（正则/注入/CSS），
-   没有 JS 执行入口，因此插件拿不到 API Key、发不出请求、读不到会话。
+2. **只下载数据，不执行代码**：插件清单是 JSON，声明式能力是正则/注入/CSS/骰点。
+   生图是**内置插件**（app/services/imagegen_service.py），不是从 GitHub 下载来执行的脚本；
+   它只读自己的配置（含用户自配的生图 Key，Fernet 加密入库），不发往别处。
+   因此从 GitHub 下载的第三方清单仍然拿不到 API Key、发不出请求、读不到会话。
 3. **体积与条数都有上限**：清单 ≤ 256KB、正则规则 ≤ 50 条、单条正则 ≤ 300 字、
    CSS ≤ 20KB。超限直接拒绝，不"截断后照用"（截断会静默改变语义）。
 4. **失败隔离**：下载/解析/校验任何一步出错都只影响这次安装，
@@ -18,6 +20,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import random
 import re
@@ -29,7 +32,8 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ConfigurationError, NotFoundError
+from app.core.security import get_api_key_cipher, mask_api_key
 from app.db.models import Plugin, User
 from app.db.models.plugin import PLUGIN_KINDS
 
@@ -61,12 +65,20 @@ MAX_PROMPT_CHARS = 8 * 1024
 MAX_TRIGGERS = 8
 MAX_TRIGGER_CHARS = 8
 MAX_EXPR_CHARS = 60
+#: 生图插件：地址 / 模型名 / 画风 / 模板 / 额外请求字段的长度上限
+MAX_IMAGE_URL_CHARS = 500
+MAX_IMAGE_MODEL_CHARS = 128
+MAX_IMAGE_STYLE_CHARS = 1000
+MAX_IMAGE_TEMPLATE_CHARS = 4000
+MAX_IMAGE_EXTRA_CHARS = 4000
+MAX_IMAGE_KEY_CHARS = 500
 
 _SECURITY_NOTE = (
-    "插件只支持四种声明式能力（正则替换 / 提示词注入 / CSS 主题 / 跑团骰点），"
-    "**不执行任何第三方 JS**，因此拿不到你的 API Key、也读不到你的会话内容。"
-    "骰点由服务端受控求值（自己写的解析器，不用 eval、不放开 JS），"
-    "点数与骰面会记进消息里，可复核。"
+    "插件支持五种能力：正则替换 / 提示词注入 / CSS 主题 / 跑团骰点 / 生图。"
+    "**不执行任何第三方 JS**：从 GitHub 下载的清单只有数据，拿不到你的 API Key、"
+    "也读不到你的会话内容。骰点由服务端受控求值（自己写的解析器，不用 eval）。"
+    "生图是内置插件，只读取本插件配置里的生图 Key（Fernet 加密入库）并调用你填的图像接口；"
+    "Key 不会返回给前端，也不会随插件导出或上传。"
     "安装来源只允许 GitHub（仓库与 gist 都行，gist 是最轻的分享方式）；"
     "CSS 里的 url() 仍可能让作者看到你的 IP（与角色卡美化同一取舍）。"
 )
@@ -165,12 +177,13 @@ def _starfield_css() -> str:
 
 
 # ==================================================================
-#  ★ 挑选原则：只收录**本项目四种声明式能力能真做到**的东西。
-#    SillyTavern 的内置扩展里，TTS / 图片生成 / 图片描述 / 快捷回复 /
-#    自动摘要 / 聊天向量化 / 令牌计数这些要么必须执行 JS、要么必须接外部服务，
+#  ★ 挑选原则：只收录**本项目能真做到**的东西。
+#    SillyTavern 的内置扩展里，TTS / 图片描述 / 快捷回复 / 自动摘要 /
+#    聊天向量化 / 令牌计数这些要么必须执行 JS、要么必须接外部服务，
 #    本项目的插件**不执行任何第三方代码**，所以一律不做 —— 但不装看不见：
 #    下面 UNSUPPORTED_ST_EXTENSIONS 会在界面上如实列出来（并说明"本项目已有原生替代"）。
 #    「掷骰」在 ST 里是 JS 扩展，这里改成了声明式骰子插件（服务端受控求值）。
+#    「生图」由内置 imagegen 插件提供（需要用户自配图像 API Key），不执行第三方代码。
 #  ★ 这些条目只是"目录"，**不会自动生效**：用户点了「添加」才会变成自己的插件。
 PLUGIN_CATALOG: tuple[dict[str, Any], ...] = (
     {
@@ -436,13 +449,42 @@ radial-gradient(900px 600px at 110% 110%,rgba(0,229,255,.12),transparent 58%),#0
             )
         },
     },
+    {
+        "key": "imagegen",
+        "name": "生图 · 每轮配图（Image Generation）",
+        "kind": "imagegen",
+        "source": "SillyTavern 内置扩展 · Image Generation（本项目改为内置插件）",
+        "description": (
+            "根据每一轮正文自动生成一张配图（也可改成模型写 <hne-image> 时再画）。"
+            "需要你自己填图像 API 的 base_url / 模型名 / Key —— Key 加密保存，不会回传前端。"
+            "添加后默认**停用**：先编辑填好再打开。"
+        ),
+        "default_enabled": False,
+        # ★ 配置型插件：目录内容只是"初始模板"，用户一定会改成自己的接口/Key。
+        #   不允许「更新到最新」覆盖用户设置（那会把 base_url/model/style 一起重置）。
+        "updatable": False,
+        "config": {
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-image-1",
+            "protocol": "openai-images",
+            "trigger": "auto",
+            "interval": 1,
+            "size": "1024x1024",
+            "quality": "",
+            "style": "cinematic digital illustration, consistent character design, detailed lighting, no text, no watermark",
+            "prompt_template": "",
+            "max_images": 1,
+            "timeout_seconds": 120,
+            "max_chars": 1200,
+            "extra_body": {},
+        },
+    },
 )
 
 #: SillyTavern 里**本项目不做**的内置扩展（需要执行代码或接外部服务），界面上如实列出。
 #: 结构：(名称, 为什么不做 / 本项目有什么替代)
 UNSUPPORTED_ST_EXTENSIONS: tuple[tuple[str, str], ...] = (
     ("Text To Speech（语音朗读）", "需要调用 TTS 服务并播放音频，得执行代码"),
-    ("Image Generation / Image Captioning（生图与看图）", "需要接外部图像 API"),
     ("Expression Images（表情立绘）", "需要在对话旁叠加图片资源"),
     ("Quick Reply（快捷回复/脚本）", "本质是脚本执行器 —— 本项目插件不执行第三方代码"),
     ("Summarize（自动摘要）", "已有原生实现：上下文裁剪时自动写滚动摘要"),
@@ -481,10 +523,20 @@ def sanitize_css(css: str) -> str:
     return text.strip()
 
 
-def validate_config(kind: str, config: Any) -> dict[str, Any]:
+def validate_config(
+    kind: str,
+    config: Any,
+    *,
+    allow_secrets: bool = False,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """把插件配置校验成"可信的配置"，返回规范化后的副本。
 
     ★ 手工新建与从 URL 安装走的是**同一个**函数：两套校验迟早会打架。
+    ★ `allow_secrets` 只在"用户自己填配置"时为 True：从 GitHub 下载的清单
+      不允许携带任何密钥（否则一个远程清单就能往你库里塞它的 Key）。
+    ★ `existing` 用于更新时保留旧密文：前端拿到的配置里没有 `api_key_enc`，
+      如果每次都从空开始，用户只改一个画风就会把 Key 抹掉。
     """
     if kind not in PLUGIN_KINDS:
         raise BadRequestError(f"插件类型必须是 {' / '.join(PLUGIN_KINDS)} 之一")
@@ -586,6 +638,9 @@ def validate_config(kind: str, config: Any) -> dict[str, Any]:
             ),
         }
 
+    if kind == "imagegen":
+        return _validate_imagegen(config, allow_secrets=allow_secrets, existing=existing)
+
     # kind == "css"（唯一剩下的分支，所以不写 if）
     raw_css = config.get("css")
     if raw_css is None:
@@ -595,6 +650,106 @@ def validate_config(kind: str, config: Any) -> dict[str, Any]:
     if len(raw_css) > MAX_CSS_CHARS:
         raise BadRequestError(f"CSS 太长（上限 {MAX_CSS_CHARS} 字符，当前 {len(raw_css)}）")
     return {"css": sanitize_css(raw_css)}
+
+
+def _validate_imagegen(
+    config: Any,
+    *,
+    allow_secrets: bool,
+    existing: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """生图插件配置。"""
+    from app.narrative import imagegen as rules
+
+    if not isinstance(config, dict):
+        raise BadRequestError("生图插件的配置必须是一个 JSON 对象")
+
+    existing_config = existing if isinstance(existing, dict) else {}
+    api_key_enc = str(existing_config.get("api_key_enc") or "")
+
+    if not allow_secrets:
+        # 远程清单只允许带"怎么调"的参数，绝不允许带密钥。
+        for key in ("api_key", "api_key_enc", "clear_api_key"):
+            if config.get(key):
+                raise BadRequestError(
+                    "插件清单里不能携带密钥（api_key / api_key_enc）。"
+                    "请在「插件」页手动填写自己的生图 Key。"
+                )
+    else:
+        if config.get("clear_api_key"):
+            api_key_enc = ""
+        elif str(config.get("api_key") or "").strip():
+            plain = str(config.get("api_key")).strip()
+            if len(plain) > MAX_IMAGE_KEY_CHARS:
+                raise BadRequestError(f"生图 Key 太长（上限 {MAX_IMAGE_KEY_CHARS} 字符）")
+            api_key_enc = get_api_key_cipher().encrypt(plain)
+        # ★ 客户端不允许直接提交 api_key_enc（只有服务端从旧配置里取）
+        if "api_key_enc" in config and str(config.get("api_key_enc") or "") not in ("", api_key_enc):
+            raise BadRequestError("生图 Key 只能通过 api_key 字段填写，不能直接提交密文")
+
+    base_url = _as_text(
+        config.get("base_url"), limit=MAX_IMAGE_URL_CHARS, field="base_url"
+    ).strip().rstrip("/")
+    if base_url and not re.match(r"^https?://", base_url, re.I):
+        raise BadRequestError("生图接口地址必须以 http:// 或 https:// 开头")
+    model = _as_text(
+        config.get("model"), limit=MAX_IMAGE_MODEL_CHARS, field="model"
+    ).strip()
+    protocol = str(config.get("protocol") or "openai-images").strip()
+    if protocol not in rules.PROTOCOLS:
+        raise BadRequestError(f"生图协议只能是 {' / '.join(rules.PROTOCOLS)} 之一")
+    trigger = str(config.get("trigger") or "auto").strip()
+    if trigger not in rules.TRIGGERS:
+        raise BadRequestError("生图触发方式只能是 auto（每轮自动）或 model（模型请求）")
+
+    size = _as_text(config.get("size"), limit=32, field="size").strip()
+    if size and not re.fullmatch(r"auto|\d{2,5}x\d{2,5}", size, re.I):
+        raise BadRequestError(
+            "尺寸格式应为 1024x1024 这样的“宽x高”，或 auto（留空表示不发送该字段）"
+        )
+    quality = _as_text(config.get("quality"), limit=32, field="quality").strip()
+    style = _as_text(
+        config.get("style"), limit=MAX_IMAGE_STYLE_CHARS, field="style"
+    ).strip()
+    template = _as_text(
+        config.get("prompt_template"),
+        limit=MAX_IMAGE_TEMPLATE_CHARS,
+        field="prompt_template",
+    ).strip()
+
+    extra = config.get("extra_body")
+    if extra is None or extra == "":
+        extra = {}
+    if not isinstance(extra, dict):
+        raise BadRequestError("额外请求字段（extra_body）必须是 JSON 对象，例如 {\"watermark\": false}")
+    try:
+        extra_text = json.dumps(extra, ensure_ascii=False)
+    except (TypeError, ValueError) as exc:
+        raise BadRequestError(f"额外请求字段里有无法序列化的值：{exc}") from exc
+    if len(extra_text) > MAX_IMAGE_EXTRA_CHARS:
+        raise BadRequestError(
+            f"额外请求字段太长（上限 {MAX_IMAGE_EXTRA_CHARS} 字符，当前 {len(extra_text)}）"
+        )
+    lowered = {str(key).lower() for key in extra}
+    if lowered & {"api_key", "authorization"}:
+        raise BadRequestError("额外请求字段里不要写 api_key / authorization，Key 由插件单独管理")
+
+    return {
+        "base_url": base_url,
+        "model": model,
+        "protocol": protocol,
+        "trigger": trigger,
+        "interval": _as_int(config.get("interval"), 1, 50, 1),
+        "size": size,
+        "quality": quality,
+        "style": style,
+        "prompt_template": template,
+        "max_images": _as_int(config.get("max_images"), 1, rules.MAX_IMAGES, 1),
+        "timeout_seconds": _as_int(config.get("timeout_seconds"), 10, 600, 120),
+        "max_chars": _as_int(config.get("max_chars"), 100, 4000, 1200),
+        "extra_body": extra,
+        "api_key_enc": api_key_enc,
+    }
 
 
 def _as_int(value: Any, low: int, high: int, fallback: int) -> int:
@@ -625,6 +780,14 @@ def summary_of(kind: str, config: dict[str, Any]) -> str:
         triggers = " / ".join(str(item) for item in config.get("triggers") or []) or "（无）"
         mode = "模型也能请求掷骰" if config.get("allow_model_roll", True) else "只认玩家指令"
         return f"触发词 {triggers}，默认 {config.get('default_expr')}，{mode}"
+    if kind == "imagegen":
+        trigger = "模型按 <hne-image> 请求配图" if config.get("trigger") == "model" else "自动配图"
+        interval = int(config.get("interval") or 1)
+        if config.get("trigger") != "model" and interval > 1:
+            trigger = f"每 {interval} 轮自动配图"
+        model = str(config.get("model") or "").strip() or "未填模型"
+        key = "Key 已配置" if config.get("api_key_enc") else "Key 未配置"
+        return f"{trigger} · {model} · {key}"
     size = len(str(config.get("css") or ""))
     return f"主题样式 {size} 字符" if size else "主题样式为空（暂不生效）"
 
@@ -755,7 +918,7 @@ def create_plugin(db: Session, user_id: int, payload: Any) -> Plugin:
         kind=payload.kind,
         description=(payload.description or None),
         version=(payload.version or None),
-        config=validate_config(payload.kind, payload.config),
+        config=validate_config(payload.kind, payload.config, allow_secrets=True),
         priority=int(payload.priority),
         enabled=bool(payload.enabled),
         is_builtin=False,
@@ -780,7 +943,14 @@ def update_plugin(db: Session, user_id: int, plugin_id: int, payload: Any) -> Pl
     if "priority" in touched and payload.priority is not None:
         row.priority = int(payload.priority)
     if "config" in touched and payload.config is not None:
-        row.config = validate_config(row.kind, payload.config)
+        # ★ existing 必须传：生图插件的 Key 密文不在前端返回的 config 里，
+        #   不传的话"只改画风"会把 Key 抹掉。
+        row.config = validate_config(
+            row.kind,
+            payload.config,
+            allow_secrets=True,
+            existing=row.config if isinstance(row.config, dict) else None,
+        )
     db.commit()
     db.refresh(row)
     return row
@@ -793,8 +963,24 @@ def delete_plugin(db: Session, user_id: int, plugin_id: int) -> None:
 
 
 def serialize(row: Plugin) -> dict[str, Any]:
-    config = row.config if isinstance(row.config, dict) else {}
-    return {
+    # ★ 深拷贝：下面要 pop 掉 api_key_enc，不能动 ORM 里那份配置
+    config = copy.deepcopy(row.config) if isinstance(row.config, dict) else {}
+    # ★ 摘要必须在 pop 掉 api_key_enc **之前**算：
+    #   否则界面永远显示「Key 未配置」，用户会以为保存失败。
+    summary = summary_of(row.kind, config)
+    api_key_masked = ""
+    has_api_key = False
+    api_key_decryptable = True
+    if row.kind == "imagegen":
+        ciphertext = str(config.pop("api_key_enc", "") or "")
+        has_api_key = bool(ciphertext)
+        if ciphertext:
+            try:
+                api_key_masked = mask_api_key(get_api_key_cipher().decrypt(ciphertext))
+            except ConfigurationError:
+                # 加密密钥换过 / 密文损坏：列表接口不能因此 500，如实告诉界面可重填
+                api_key_decryptable = False
+    payload = {
         "id": row.id,
         "name": row.name,
         "kind": row.kind,
@@ -808,8 +994,12 @@ def serialize(row: Plugin) -> dict[str, Any]:
         "config": config,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
-        "summary": summary_of(row.kind, config),
+        "summary": summary,
+        "api_key_masked": api_key_masked,
+        "has_api_key": has_api_key,
+        "api_key_decryptable": api_key_decryptable,
     }
+    return payload
 
 
 def theme_css(db: Session, user_id: int) -> str:
@@ -900,10 +1090,18 @@ def catalog_for(db: Session, user_id: int) -> list[dict[str, Any]]:
     rows = {row.name: row for row in list_plugins(db, user_id)}
     items: list[dict[str, Any]] = []
     for spec in PLUGIN_CATALOG:
-        config = validate_config(spec["kind"], spec["config"])
         row = rows.get(spec["name"])
         same_kind = row is not None and row.kind == spec["kind"]
-        up_to_date = same_kind and (row.config or {}) == config
+        # ★ existing 必须传：生图插件的 Key 密文不在目录内容里，
+        #   不传的话"有 Key 的用户"会永远显示「有更新」。
+        config = validate_config(
+            spec["kind"],
+            spec["config"],
+            existing=row.config if same_kind and isinstance(row.config, dict) else None,
+        )
+        up_to_date = bool(same_kind) and (
+            not spec.get("updatable", True) or (row.config or {}) == config
+        )
         items.append(
             {
                 "key": spec["key"],
@@ -938,15 +1136,26 @@ def add_from_catalog(db: Session, user_id: int, key: str) -> tuple[Plugin, bool]
             f"内置示例里没有 {key!r}",
             detail={"available": [item["key"] for item in PLUGIN_CATALOG]},
         )
-    config = validate_config(spec["kind"], spec["config"])
     exists = db.scalar(
         select(Plugin).where(Plugin.user_id == user_id, Plugin.name == spec["name"])
+    )
+    # ★ existing 用于保留生图 Key 密文：目录内容里没有 Key，
+    #   不保留的话「更新到最新」会把用户填好的 Key 抹掉。
+    config = validate_config(
+        spec["kind"],
+        spec["config"],
+        existing=exists.config if exists is not None and isinstance(exists.config, dict) else None,
     )
     if exists is not None:
         if exists.kind != spec["kind"]:
             raise BadRequestError(
                 f"你已有一个同名的「{exists.kind}」插件，内置示例是「{spec['kind']}」类型，"
                 "不会覆盖它 —— 请先改名或删掉你自己的那个"
+            )
+        if not spec.get("updatable", True):
+            raise BadRequestError(
+                f"「{spec['name']}」是配置型插件：目录内容不会覆盖你填好的接口与 Key，"
+                "请直接编辑这一条。"
             )
         if (exists.config or {}) == config:
             raise BadRequestError(f"「{spec['name']}」已经是最新版")
@@ -968,7 +1177,9 @@ def add_from_catalog(db: Session, user_id: int, key: str) -> tuple[Plugin, bool]
         author=None,
         source_url=None,
         is_builtin=False,
-        enabled=True,
+        # ★ 生图目录项默认停用：它必须先填 Key 和接口地址才能真正工作，
+        #   直接启用只会在每轮弹「未配置」。其它目录项保持原来的默认启用。
+        enabled=bool(spec.get("default_enabled", True)),
         priority=100,
         config=config,
         raw_manifest=None,
@@ -1134,6 +1345,13 @@ def manifest_to_fields(manifest: dict) -> dict[str, Any]:
         raise BadRequestError(
             f"清单里的 kind 必须是 {' / '.join(PLUGIN_KINDS)} 之一（收到 {kind!r}）"
         )
+    if kind == "imagegen":
+        # ★ 生图是内置插件：远程清单若指定 base_url，就等于让清单作者决定
+        #   "故事正文发到哪个服务器"。不允许从 GitHub 安装这类插件，
+        #   用户必须在插件页自己填接口。
+        raise BadRequestError(
+            "生图是内置插件，不能从 GitHub 清单安装；请在「插件」页新建或添加内置示例。"
+        )
     name = str(manifest.get("name") or "").strip()
     if not name:
         raise BadRequestError("清单里没有 name")
@@ -1173,7 +1391,6 @@ def install_from_url(
         # 同一来源也可能改了名字：按 source_url 认，不按名字认
         existing = Plugin(user_id=user_id, source_url=raw_url, priority=100, enabled=True)
         db.add(existing)
-
     existing.name = fields["name"]
     existing.kind = fields["kind"]
     existing.description = fields["description"]

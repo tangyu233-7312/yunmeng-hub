@@ -55,6 +55,7 @@ from app.narrative import sessions
 from app.narrative import anchors as anchors_mod
 from app.narrative import card_state as card_state_mod
 from app.narrative import dice as dice_mod
+from app.narrative import imagegen as imagegen_rules
 from app.narrative import memory as memory_mod
 from app.narrative import plugin_runtime
 from app.narrative import presets
@@ -66,8 +67,7 @@ from app.narrative import tavern_regex
 from app.narrative import translate as translate_mod
 from app.narrative import world_book_scanner
 from app.narrative.prompt_builder import PromptPlan, build_prompt
-from app.services import plugin_service
-from app.services import provider_service
+from app.services import imagegen_service, plugin_service, provider_service
 
 # ==================================================================
 #  适配器
@@ -1040,6 +1040,11 @@ def save_assistant_reply(
 
     dice_spec = plugin_runtime.dice_spec(plugin_service.load_enabled(db, session.user_id))
     content, dice_rolls = dice_mod.resolve_model_rolls(content, dice_spec)
+    # ★ 生图标签无论插件是否启用都要剥掉（与 <roll> 同一条纪律）：
+    #   绝不能让用户看到 <hne-image>…</hne-image> 这种原始协议文本。
+    #   真正生成图片在回复落库之后（见 reply / stream_reply），
+    #   这里只是最后一道兜底。
+    content, _image_requests = imagegen_rules.split_requests(content)
     if notes is not None and dice_spec is not None:
         notes.extend(_dice_notes(dice_rolls))
 
@@ -1127,10 +1132,13 @@ def reply(db: Session, session: NarrativeSession, user_message: Message) -> tupl
         turn.adapter.close()
 
     latency_ms = result.latency_ms or int((time.perf_counter() - started) * 1000)
+    # ★ 先取出模型请求的配图描述，再把标签从正文里剥掉；
+    #   图片在回复落库之后才生成（失败也不能影响这条回复）。
+    content, image_requests = imagegen_rules.split_requests(result.content)
     message = save_assistant_reply(
         db,
         session,
-        content=result.content,
+        content=content,
         model_name=result.model or turn.provider_row.model_name,
         token_count=result.usage.completion_tokens or estimate_tokens(result.content),
         latency_ms=latency_ms,
@@ -1154,6 +1162,19 @@ def reply(db: Session, session: NarrativeSession, user_message: Message) -> tupl
         assistant_message=_display_message(message),
         char_name=getattr(turn.card, "name", None),
     )
+    # ★ 生图放在"落库 + 翻译 + 记忆"之后：
+    #   前面三步任何一步失败都不该让用户连配图都看不到；反过来，配图失败也不该
+    #   影响已经保存/已经译好的正文。
+    image_outcome = imagegen_service.maybe_generate(
+        db,
+        session,
+        message,
+        card_name=str(getattr(turn.card, "name", "") or ""),
+        user_name=current_user_name(db, session.user_id),
+        requests=image_requests,
+    )
+    if image_outcome is not None and image_outcome.error:
+        result.notes.append(image_outcome.error)
     return message, result, turn
 
 
@@ -1235,6 +1256,9 @@ def stream_reply(
         adapter.close()
 
     content = "".join(buffer)
+    # ★ 先剥掉生图标签，再做"空回复"判断：
+    #   一条只写了 <hne-image>…</hne-image> 的回复，剥完就是空正文 —— 不能当成正常回复落库。
+    content, image_requests = imagegen_rules.split_requests(content)
 
     # ★ 与适配层的 _raise_if_no_content 保持同一套语义，只是这里不能"抛"
     #   （已经 yield 过内容，抛异常只会让前端看到一个断掉的流）：
@@ -1255,7 +1279,7 @@ def stream_reply(
             "reasoning_preview": "".join(reasoning)[:200],
         }
         # ★ 同上：只想着、还没写正文也要留（否则用户看到的是"什么都没有"）
-        if buffer or reasoning:
+        if content.strip() or reasoning:
             _keep_partial(db, session, turn, content, reasoning, usage, started)
         else:
             touch_session(db, session)
@@ -1303,6 +1327,29 @@ def stream_reply(
         char_name=getattr(turn.card, "name", None),
     )
 
+    # ------------------------------------------------------------------
+    #  ★ 生图：正文已经完整流给用户了，这里才开始画。
+    #  先发 image_start 让界面显示"正在配图…"，再同步执行（最多 timeout 秒），
+    #  最后用 image 事件把结果送回。失败只发 image.error + 一条提示，
+    #  绝不让整条 SSE 变成 error（用户已经看到正文了）。
+    # ------------------------------------------------------------------
+    image_plan = imagegen_service.plan_turn(
+        db,
+        session,
+        message,
+        card_name=str(getattr(turn.card, "name", "") or ""),
+        user_name=current_user_name(db, session.user_id),
+        requests=image_requests,
+    )
+    if image_plan is not None:
+        yield "image_start", {"count": len(image_plan.prompts)}
+        image_outcome = imagegen_service.execute_plan(db, session, message, image_plan)
+        # ★ 错误只走 image 事件：再塞进 done.notes 会在气泡里显示两遍。
+        yield "image", {
+            "images": image_outcome.images,
+            "error": image_outcome.error,
+        }
+
     truncated = finish_reason == "length"
     if truncated:
         notes.append(
@@ -1326,6 +1373,9 @@ def stream_reply(
         # ★ 翻译中间件：译好了就随 "done" 一起回，前端立刻切成"给人看的那一份"
         #   （否则用户要先看到外语原文，等下一次刷新才变中文）
         "translation": translate_mod.loads(getattr(message, "translation_json", None)),
+        # ★ 生图结果也随 done 带一份：即使前端错过了 image 事件，
+        #   收尾时仍能按这一份把图片画出来。
+        "images": imagegen_service.load_images(message),
         "session": {
             "message_count": session.message_count,
             "total_tokens": session.total_tokens,

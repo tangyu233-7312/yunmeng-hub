@@ -27,6 +27,7 @@ from loguru import logger
 
 from app.llm.schema import ChatMessage
 from app.narrative import dice as dice_mod
+from app.narrative import imagegen as imagegen_mod
 from app.narrative.presets import GUARD_IDENTITY_MARKER
 
 #: flags 字符串 → re 标志
@@ -109,6 +110,7 @@ def apply_to_plan(plan: Any, plugins: list[Any] | None) -> dict[str, Any]:
         "regex_plugins": 0,
         "replacements": 0,
         "dice_rules": 0,
+        "image_rules": 0,
     }
     if not plugins:
         return stats
@@ -125,6 +127,17 @@ def apply_to_plan(plan: Any, plugins: list[Any] | None) -> dict[str, Any]:
         if contract.strip():
             system_prompt = _inject(system_prompt, "end", contract, notes)
             stats["dice_rules"] = 1
+
+    # ---------------- 0.5 生图协议（只在"模型请求配图"模式生效）----------------
+    # ★ 与骰子相同的分层：这里只贡献"怎么请求"的指令；
+    #   真正的图片生成在 app/services/imagegen_service.py，发生在回复落库之后。
+    image_found = imagegen_mod.find_spec(plugins)
+    if image_found is not None:
+        _row, image_spec = image_found
+        contract = imagegen_mod.render_contract(image_spec)
+        if contract.strip():
+            system_prompt = _inject(system_prompt, "end", contract, notes)
+            stats["image_rules"] = 1
 
     # ---------------- 1. 提示词注入 ----------------
     for row in plugins:

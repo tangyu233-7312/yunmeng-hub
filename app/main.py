@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from app.api.v1.router import api_router
-from app.core.config import get_settings
+from app.core.config import data_root, get_settings
 from app.core.context import new_request_id, set_request_id
 from app.core.exceptions import ConfigurationError, register_exception_handlers
 from app.core.logging import setup_logging
@@ -359,6 +359,20 @@ def create_app() -> FastAPI:
             timestamp=datetime.now(timezone.utc),
             components=components,
         )
+
+    # ---------------- 生图插件的图片（无需登录，随机文件名）----------------
+    # ★ 为什么单独挂 /media 而不是放进 /console：
+    #   图片要走 <img src>，浏览器不会给 <img> 带 Authorization 头；
+    #   而文件名是 uuid4（不可猜），目录也不开列表，因此本地部署下风险可控。
+    #   ★ 不要把它们放进 web/：那是前端源码目录，生成物会混进版本库。
+    media_root = data_root() / "data" / "media"
+    media_root.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/media",
+        StaticFiles(directory=str(media_root)),
+        name="media",
+    )
+    logger.info("生图媒体目录已挂载: /media -> {}", media_root)
 
     # ---------------- 可视化控制台（前端）----------------
     # 把 web/ 目录挂成静态站点，浏览器打开 /console 就能用图形界面操作所有功能。

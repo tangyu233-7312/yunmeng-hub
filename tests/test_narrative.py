@@ -46,6 +46,7 @@ from app.llm.schema import ChatMessage, ChatResult, StreamChunk, TokenUsage
 from app.main import app
 from app.narrative import context_manager, engine, streaming, world_book_scanner
 from app.narrative.prompt_builder import build_prompt
+from app.services import imagegen_service
 
 BASE = "/api/v1/narrative/sessions"
 CARDS = "/api/v1/character-cards"
@@ -1020,6 +1021,70 @@ def test_stream_sends_deltas_then_done(client: TestClient, user: dict) -> None:
     detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
     assert detail["messages"][-1]["content"] == "你好，旅人"
     assert [m["role"] for m in detail["messages"]] == ["assistant", "user", "assistant"]
+
+
+def test_stream_image_events_are_sent_and_persisted(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient, user: dict
+) -> None:
+    """生图走 SSE：正文流完之后先 image_start，再 image，最后 done 也带一份。"""
+    created = client.post(
+        "/api/v1/plugins",
+        headers=user["headers"],
+        json={
+            "name": "流式生图",
+            "kind": "imagegen",
+            "enabled": True,
+            "config": {
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-image-1",
+                "protocol": "openai-images",
+                "trigger": "auto",
+                "interval": 1,
+                "size": "1024x1024",
+                "style": "watercolor",
+                "max_images": 1,
+                "timeout_seconds": 120,
+                "max_chars": 1200,
+                "extra_body": {},
+                "api_key": "sk-stream-imagegen",
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    FakeAdapter.script["stream"] = ["雨夜。", "你推开城门。"]
+    card = make_card(client, user)
+    provider = make_provider(client, user)
+    session = make_session(client, user, card["id"], provider["id"])
+
+    def fake_generate(spec, api_key, prompt):
+        return {
+            "url": "/media/imagegen/stream-test.png",
+            "prompt": prompt,
+            "model": spec["model"],
+        }
+
+    monkeypatch.setattr(imagegen_service, "_generate_one", fake_generate)
+    response = client.get(
+        f"{BASE}/{session['id']}/stream",
+        params={"content": "我推门进去"},
+        headers=user["headers"],
+    )
+    assert response.status_code == 200, response.text
+    events = parse_sse(response.text)
+    names = [name for name, _ in events]
+    assert "image_start" in names, names
+    assert "image" in names, names
+    assert names[-2:] == ["done", "end"], names
+
+    image_event = dict(events)["image"]
+    assert image_event["error"] is None
+    assert image_event["images"][0]["url"] == "/media/imagegen/stream-test.png"
+    done = dict(events)["done"]
+    assert done["images"][0]["url"] == "/media/imagegen/stream-test.png"
+
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    assert detail["messages"][-1]["images"][0]["url"] == "/media/imagegen/stream-test.png"
 
 
 def test_stream_reports_notes_from_adapter(client: TestClient, user: dict) -> None:

@@ -1171,6 +1171,7 @@ function renderMessages(detail) {
         <div class="msg-body">${esc(displayText(m))}</div>
         ${translationChipHTML(m)}
         ${rollsHTML(m.rolls)}
+        ${imagesHTML(m.images)}
         ${messageActions(m, { forkable: forkableAt(detail.messages, index) })}
       </div>`,
       )
@@ -1337,6 +1338,56 @@ function rollsHTML(rolls) {
     })
     .join('');
   return `<div class="msg-rolls">${chips}</div>`;
+}
+
+/**
+ * 生图插件的配图。
+ *
+ * ★ 图片不进正文（content）里：正文会被作为历史发给模型，<img> 标记既浪费
+ *   token 又污染叙事；这里只渲染后端单独存在 images_json 里的 URL。
+ * ★ 只接受 /media/imagegen/ 下的站内路径：后端虽然已经只存随机文件名，
+ *   前端再挡一次，避免哪天数据被改成外链（隐私 / 混合内容）。
+ * ★ 用 <a> 包一层：点开看原图，不在气泡里撑出巨大的高度。
+ */
+function imagesHTML(images) {
+  if (!Array.isArray(images) || !images.length) return '';
+  const figures = images
+    .map((img) => {
+      const url = String(img?.url || '');
+      if (!/^\/media\/imagegen\/[A-Za-z0-9._-]+$/.test(url)) return '';
+      const prompt = String(img?.prompt || '').trim();
+      const alt = prompt ? prompt.slice(0, 120) : '配图';
+      const title = prompt ? ` title="${esc(prompt.slice(0, 500))}"` : '';
+      return `<figure class="msg-image"><a href="${esc(url)}" target="_blank" rel="noreferrer noopener"><img src="${esc(url)}" alt="${esc(alt)}"${title} loading="lazy" /></a></figure>`;
+    })
+    .filter(Boolean)
+    .join('');
+  return figures ? `<div class="msg-images">${figures}</div>` : '';
+}
+
+/** 把配图放进气泡（先移除旧的，避免 image 事件与 done 各画一遍）。 */
+function putImages(bubble, images) {
+  if (!bubble) return;
+  bubble.querySelector('.msg-images')?.remove();
+  const html = imagesHTML(images);
+  if (html) bubble.insertAdjacentHTML('beforeend', html);
+}
+
+/** 生图是同步等待（可能十几秒）：必须让用户看见"在画"，而不是以为卡住了。 */
+function showImageGenerating(bubble, count) {
+  if (!bubble) return;
+  let hint = bubble.querySelector('.msg-image-status');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.className = 'msg-image-status';
+    bubble.appendChild(hint);
+  }
+  const n = Number(count) || 0;
+  hint.textContent = `🎨 正在生成配图${n > 1 ? `（${n} 张）` : ''}…`;
+}
+
+function clearImageGenerating(bubble) {
+  bubble?.querySelector('.msg-image-status')?.remove();
 }
 
 /**
@@ -2648,8 +2699,21 @@ function streamHandlers(root, bubble) {
     // ★ 正文已经流完了，但译文还要等**一次完整的模型调用**（实测好几秒）。
     //   不提示的话用户看完外语原文就干等，以为界面卡住了（真实反馈）。
     onTranslating: (data) => showTranslating(bubble, data.lang, data.direction),
+    onImageStart: (data) => {
+      showImageGenerating(bubble, data?.count);
+      scrollBottom(root, false);
+    },
+    onImage: (data) => {
+      clearImageGenerating(bubble);
+      putImages(bubble, data?.images);
+      if (bubble && data?.error) {
+        bubble.insertAdjacentHTML('beforeend', `<div class="msg-warn">⚠ ${esc(data.error)}</div>`);
+      }
+      scrollBottom(root, false);
+    },
     onDone: (data) => {
       clearTranslating(bubble);
+      clearImageGenerating(bubble);
       finishBubble(bubble, data);
       // ★ 记下来：silentReload 会重建头部，统计条要能补回来
       state.usage = data.usage || null;
@@ -3352,7 +3416,9 @@ function appendDelta(bubble, delta) {
   // ★ 状态块是"给系统看的"，不该在聊天里滚出来（流式时会看到一串原始 JSON）。
   //   协议规定它在回复末尾，所以一出现 `<state>` 就把可见部分截到它之前；
   //   最终正文以服务端落库的为准（save_assistant_reply 已经把它剥掉了）。
-  const cut = body.textContent.search(/<state>/i);
+  // ★ 生图标签也在这里截掉：model 模式约定它放在末尾；
+  //   不截的话流式期间用户会先看到一串 <hne-image>…</hne-image> 原始协议。
+  const cut = body.textContent.search(/<state>|<hne-image\b/i);
   if (cut >= 0) body.textContent = body.textContent.slice(0, cut).trimEnd();
 }
 
@@ -3458,6 +3524,10 @@ function finishBubble(bubble, data) {
   // 骰子气泡：随 "done" 事件一起到（不等刷新，用户立刻看到点数）
   const rolls = rollsHTML(data.rolls);
   if (rolls) bubble.insertAdjacentHTML('beforeend', rolls);
+  // 生图：image 事件通常先到；done 再补一次（同一份数据，putImages 会去重）
+  clearImageGenerating(bubble);
+  // 只有后端真的带了数组才重画：老响应没有 images 字段时不要抹掉已有的图
+  if (Array.isArray(data.images)) putImages(bubble, data.images);
   // 翻译中间件：译好了就把正文切成"给人看的那一份"，并给出切换按钮。
   // ★ 两份文本都留在 DOM 里（data-alt-text），切换是纯前端的 —— 不发请求、不改数据。
   if (data.translation?.text) {
@@ -3575,6 +3645,8 @@ async function consumeStream(response, handlers) {
     else if (name === 'reason') handlers.onReason?.(data.delta || '');
     else if (name === 'delta') handlers.onDelta?.(data.delta || '');
     else if (name === 'translating') handlers.onTranslating?.(data);
+    else if (name === 'image_start') handlers.onImageStart?.(data);
+    else if (name === 'image') handlers.onImage?.(data);
     else if (name === 'done') handlers.onDone?.(data);
     else if (name === 'error') handlers.onError?.(data);
   };

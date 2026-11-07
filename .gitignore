@@ -55,6 +55,8 @@ htmlcov/
 /dist/
 
 # ---------- 项目运行期数据 ----------
+# 生图插件生成的图片（可重新生成，且可能含用户故事内容）
+data/media/
 data/chroma/
 data/logs/
 data/exports/
