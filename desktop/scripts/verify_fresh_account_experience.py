@@ -193,7 +193,7 @@ def main() -> int:
 
         listed = http_json(f"http://127.0.0.1:{port}/api/v1/plugins", token=token)
         items = ((listed.get("data") or {}).get("items")) or []
-        print(f"      新账号的插件：")
+        print("      新账号的插件：")
         for item in items:
             print(f"        · {item['name']}（kind={item['kind']}，enabled={item['enabled']}）")
         themes = [i for i in items if i["kind"] == "css"]

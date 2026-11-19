@@ -24,10 +24,23 @@ def test_health_ok(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     body = response.json()
-    # 数据库正常时为 ok；若数据库不可用则降级为 degraded（此处不应发生）
-    assert body["status"] in {"ok", "degraded"}
-    assert body["app"] == "HeteroNarrativeEngine"
+    assert body["status"] == "ok", body["components"]
+    assert body["app"] == "YunMengHub"
     assert body["version"]
+
+
+@pytest.mark.parametrize("component", ["database", "vector_store"])
+def test_health_reports_degraded_dependency(client: TestClient, monkeypatch, component: str) -> None:
+    """A failed dependency must be visible in both its component and overall status."""
+    from app import main as app_main
+
+    target = "check_connection" if component == "database" else "check_vector_store"
+    monkeypatch.setattr(app_main, target, lambda **kwargs: {"status": "error", "message": "test outage"})
+    response = client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["components"][component]["status"] == "error"
 
 
 def test_health_reports_database_component(client: TestClient) -> None:

@@ -61,7 +61,6 @@ from app.narrative import plugin_runtime
 from app.narrative import presets
 from app.narrative import retrieval as retrieval_mod
 from app.narrative import state as state_mod
-from app.narrative import state_schema as schema_mod
 from app.narrative import summary as summary_mod
 from app.narrative import tavern_regex
 from app.narrative import translate as translate_mod
@@ -1222,7 +1221,6 @@ def stream_reply(
     usage: TokenUsage | None = None
     finish_reason: str | None = None
     notes: list[str] = []
-    emitted_any = False
 
     try:
         for chunk in adapter.stream_chat(build_request(adapter=adapter, plan=turn.context)):
@@ -1235,7 +1233,6 @@ def stream_reply(
                 yield "reason", {"delta": chunk.reasoning_delta}
             if chunk.delta:
                 buffer.append(chunk.delta)
-                emitted_any = True
                 yield "delta", {"delta": chunk.delta}
             if chunk.usage is not None:
                 usage = chunk.usage

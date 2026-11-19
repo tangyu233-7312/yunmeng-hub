@@ -25,7 +25,6 @@ from app.core.exceptions import ConfigurationError
 from app.llm import (
     ChatMessage,
     ChatRequest,
-    Role,
     TokenUsage,
     create_provider,
 )

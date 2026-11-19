@@ -1,6 +1,6 @@
 """3.2 数据库集成测试。
 
-这些测试会**真实连接 MySQL 并写入数据**（属于集成测试，不是纯单元测试）。
+这些测试会**真实连接选定的数据库并写入数据**（属于集成测试，不是纯单元测试）。
 每个用例都使用随机用户名并在结束时清理，可以反复执行。
 
 运行： .\\.venv\\Scripts\\python.exe -m pytest tests/test_db.py -v
@@ -26,9 +26,12 @@ def _unique(prefix: str) -> str:
 
 # ==================== 表结构 ====================
 def test_all_tables_registered() -> None:
-    """确认 5 张表都已注册到 metadata（漏 import 模型是常见坑）。"""
-    expected = {"users", "llm_providers", "character_cards", "narrative_sessions", "messages"}
-    assert expected <= set(Base.metadata.tables)
+    """All nine application tables must be registered, including later additions."""
+    expected = {
+        "users", "llm_providers", "character_cards", "world_books", "prompt_presets",
+        "plugins", "narrative_sessions", "messages", "card_states",
+    }
+    assert expected == set(Base.metadata.tables)
 
 
 # ==================== 连接池 ====================

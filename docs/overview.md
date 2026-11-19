@@ -96,16 +96,16 @@ CSS 过白名单清洗（挡 `@import` / `expression()` / `javascript:` / `</sty
 
 | 层 | 选型 | 说明 |
 |---|---|---|
-| 语言/环境 | **Python 3.13.12**（Windows x64）、MySQL **8.0.28** | 依赖全部锁精确版本 |
-| Web 框架 | **FastAPI 0.141.1** + **uvicorn 0.53.0** | 全异步、自动 OpenAPI 文档（`/docs`） |
+| 语言/环境 | **Python 3.13.12**（Windows x64）、MySQL **8.0.28** | 直接依赖固定版本；MySQL 为历史验证环境 |
+| Web 框架 | **FastAPI 0.141.1** + **uvicorn 0.53.0** | 支持同步 / 异步路由、自动 OpenAPI 文档（`/docs`） |
 | 数据校验/配置 | **pydantic 2 / pydantic-settings 2.15** | `.env` + 类型校验；统一响应壳 `{code,message,data}` |
-| 持久层 | **SQLAlchemy 2.0.54**（SQLite 默认 / MySQL 可选）+ **PyMySQL 1.2.3** + **cryptography 50** | ORM + 连接池；8 张表；迁移走 `scripts/migrate_db.py`（只加不删） |
+| 持久层 | **SQLAlchemy 2.0.54**（SQLite 默认 / MySQL 可选）+ **PyMySQL 1.2.3** + **cryptography 50** | ORM + 连接池；9 张表；迁移走 `scripts/migrate_db.py`（只加不删） |
 | 向量库 | **ChromaDB 1.5.9**（PersistentClient） | 余弦距离；嵌入用 **ONNX 本地模型 all-MiniLM-L6-v2（384 维）**，也可切到 API 嵌入后端 |
 | LLM 调用 | **httpx 0.28.1**（自写重试/退避） | 两个协议适配器；SSE 流式；failover |
 | 认证 | **PyJWT 2.14** + **bcrypt 5.0** | 访问/刷新双令牌；密码哈希直接调用 bcrypt（不用已停维护的 passlib） |
 | 日志 | **loguru 0.7.3** | 分文件、可读 |
-| 前端 | **原生 ES Module + CSS 变量**（无框架、无 npm、无构建） | 11 个 JS 文件（4 核心 + 7 视图）+ 1 张样式表 |
-| 测试 | **pytest 9.1.1**（28 个测试文件） | 全部同步（`TestClient`），无 `pytest-asyncio` |
+| 前端 | **原生 ES Module + CSS 变量**（无框架、无 npm、无构建） | 核心模块、8 个视图模块与共享样式表 |
+| 测试 | **pytest 9.1.1**（单元与集成测试） | 全部同步（`TestClient`），无 `pytest-asyncio` |
 
 > ★ 依赖清单在 2026-10-03 做过一次**实证清理**：删掉 `tenacity` / `tiktoken` / `orjson` / `pytest-asyncio`
 > —— 用 AST 解析全仓库 import 证明它们**零引用**（重试是自己手写的；token 估算刻意不用 tiktoken）。
@@ -115,17 +115,17 @@ CSS 过白名单清洗（挡 `@import` / `expression()` / `javascript:` / `</sty
 ```
 app/
   api/v1/        auth · character_cards · world_books · providers · prompt_presets · narrative · plugins · system
-  llm/           协议适配器(openai_compatible/anthropic) · factory · failover · params · errors · diagnostics
+  llm/           协议适配器(openai_compatible/anthropic) · factory · failover · params · errors · whole_reply
   narrative/     engine · prompt_builder · context_manager · memory · retrieval · summary · state · state_drift
                  presets · translate · dice · vn · anchors · plugin_runtime
   services/      各资源的业务逻辑（角色卡/世界书/预设/模型配置/插件/用户）
-  db/models/     8 张表的 ORM 模型
+  db/models/     9 张表的 ORM 模型
   embeddings/    本地 ONNX / API 两种嵌入后端
-web/             index.html + css/styles.css + js/{api,app,boot,ui}.js + js/views/(7 个页面)
+web/             index.html + css/styles.css + js/{api,app,boot,ui,about,diagnostics}.js + js/views/
 scripts/         init_db · migrate_db · smoke_test · ui_probe · benchmark · token_accuracy
                  fake_openai_server · cleanup_demo_data · make_icon_assets
-tests/           28 个 pytest 文件
-docs/            handoff(逐轮日志) · handoff-quick(交接) · paper-materials(论文素材) · pitfalls(踩坑) · overview(本文)
+tests/           单元、接口与本地数据库 / ONNX 集成测试
+docs/            使用文档 · 测试与验证 · paper-materials(历史论文素材) · pitfalls(历史记录)
 ```
 
 ---
@@ -161,11 +161,11 @@ API 层（鉴权 → 校验 → 组装）
 
 | 资产 | 规模 | 作用 |
 |---|---|---|
-| `pytest` | **1090 项通过**（40 个测试文件：采集 1090 项，跑通 1087 项 + 按环境跳过 3 项） | 接口契约、数据一致性、提示词装配、安全边界、状态/记忆/翻译/插件 |
-| `scripts/smoke_test.py` | **184 项通过** | 对**运行中的服务**做真实 HTTP 冒烟，并直连数据库核对"接口说的与库里发生的"一致 |
-| `scripts/ui_probe.py` | **189 项通过** | 无头 Edge + **CDP** 真实点击：起假模型、造数据、点界面、读计算样式、留档截图 |
-| `scripts/benchmark.py` | 退出码 0 | 检索/状态的混合与可复现 benchmark（固定种子） |
-| `scripts/token_accuracy.py` | 退出码 0 | 本地 token 估算 vs 厂商真实 `prompt_tokens`（首批样本 n=3：比值 **1.185**、思考占输出 **53.6%**） |
+| `pytest` | 当前结果见 [测试与验证](测试与验证.md) | 接口契约、数据一致性、提示词装配、安全边界、状态/记忆/翻译/插件 |
+| `scripts/smoke_test.py` | 历史记录为 184 项；本轮未重跑 | 对**运行中的服务**做真实 HTTP 冒烟，并直连数据库核对"接口说的与库里发生的"一致 |
+| `scripts/ui_probe.py` | 历史记录为 189 项；本轮未重跑 | 无头 Edge + **CDP** 真实点击：起假模型、造数据、点界面、读计算样式、留档截图 |
+| `scripts/benchmark.py` | 结果取决于所选数据与模式 | 检索/状态的混合与可复现 benchmark（固定种子） |
+| `scripts/token_accuracy.py` | 历史实验，需真实 API | 本地 token 估算 vs 厂商真实 `prompt_tokens`（首批样本 n=3：比值 **1.185**、思考占输出 **53.6%**） |
 | `scripts/fake_openai_server.py` | — | 本地假 OpenAI 服务：**不花钱、不联网**跑通流式全链路 |
 
 **三条反复自我约束的原则**（每条都对应真实事故，详见 `docs/pitfalls.md`）：
@@ -199,8 +199,7 @@ API 层（鉴权 → 校验 → 组装）
 python -m pip install -r requirements.txt
 # 2) 配置：复制 .env.example 为 .env（**默认 SQLite，什么都不用填**；
 #    想用 MySQL 就设 HNE_DB_BACKEND=mysql 并填 HNE_MYSQL_* ）
-# 3) 建表
-python scripts/init_db.py
+# 3) 默认启动时自动建表，无需预先运行建表脚本
 # 4) 起服务（代码改动用重启；只改前端刷新页面即可）
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 # 5) 打开控制台
@@ -216,7 +215,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 | 文档 | 给谁看 / 看什么 |
 |---|---|
-| `README.md` | 首页：一句话定位、技术栈、当前状态数字、**文档索引** |
+| `README.md` | 首页：定位、运行命令与**文档索引** |
 | **`docs/快速开始.md`** | 装依赖 / 起服务 / 选 SQLite 还是 MySQL / 跑测试 |
 | `docs/大模型适配.md` · `docs/对话与流式.md` · `docs/角色卡与世界书.md` 等 | 按主题拆开的**实现细节**（每个接口、每个界面为什么这么做），完整清单见 README 的「文档」表 |
 | **`docs/overview.md`（本文）** | 一页看懂：做了什么、有哪些功能、用了什么技术 |

@@ -47,6 +47,11 @@ FORBIDDEN_PATHS: tuple[tuple[str, str], ...] = (
     (".dsh-drop", "「丢给 AI 的文件」暂存目录（个人截图/设计稿）"),
     (".venv", "本地虚拟环境"),
     ("node_modules", "前端依赖（本仓库零构建，不需要它）"),
+    ("config", "本机密钥与路径历史"),
+    (".pytest-data", "测试数据库、日志与密钥"),
+    (".env-backups", "本机配置备份"),
+    ("desktop/node_modules", "桌面端依赖"),
+    ("desktop/.build-venv", "打包用虚拟环境"),
 )
 
 #: 允许出现在仓库里的 `data/` 子路径（白名单，其余 data/ 都算运行期数据）
@@ -72,26 +77,30 @@ PERSONAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 #: 数据库转储（schema.sql 是建表脚本，允许）
-DB_DUMP_PATTERNS: tuple[str, ...] = ("*.sql.gz", "*.sqlite3", "*.db", "*.dump", "*.bak.sql")
+DB_DUMP_PATTERNS: tuple[str, ...] = (
+    "*.sql.gz", "*.sqlite3", "*.db", "*.dump", "*.bak.sql",
+    "*.sqlite3-wal", "*.sqlite3-shm", "*.db-wal", "*.db-shm",
+)
 
 #: 文本文件后缀（只在这些文件里扫内容）
 TEXT_SUFFIXES = {
     ".py", ".js", ".ts", ".css", ".html", ".json", ".md", ".txt", ".yml", ".yaml",
-    ".toml", ".ini", ".cfg", ".env", ".example", ".ps1", ".sh", ".sql", ".jsonl",
+    ".toml", ".ini", ".cfg", ".env", ".example", ".ps1", ".sh", ".sql", ".jsonl", ".cmd", ".bat",
 }
 #: 单个文件最大扫描体积（超过就跳过，避免读进大二进制）
 MAX_SCAN_BYTES = 2 * 1024 * 1024
 
 
 def _git(root: Path, *args: str) -> str:
-    """跑一条 git 命令并返回 stdout（不在仓库里就返回空串）。"""
+    """读取 UTF-8 Git 输出；枚举失败必须中止检查，不能当作空仓库。"""
     try:
         out = subprocess.run(
-            ["git", *args], cwd=root, capture_output=True, text=True, timeout=60
+            ["git", *args], cwd=root, capture_output=True, text=True,
+            encoding="utf-8", timeout=60, check=True,
         )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return out.stdout if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("无法枚举 Git 文件，发布检查未完成") from exc
+    return out.stdout
 
 
 def _git_ignored(root: Path, rel: str) -> bool:
@@ -141,7 +150,8 @@ def published_files(root: Path) -> tuple[list[Path], bool]:
       它们的"存在"会被单独报出来）。
     """
     if (root / ".git").exists():
-        tracked = [line for line in _git(root, "ls-files").splitlines() if line.strip()]
+        # -z prevents Git from quoting Chinese names and handles embedded newlines.
+        tracked = [name for name in _git(root, "ls-files", "-z").split("\0") if name]
         return [root / p for p in tracked], True
 
     skip_dirs = {name.rstrip("/") for name, _ in FORBIDDEN_PATHS}
@@ -185,6 +195,12 @@ def scan(args: argparse.Namespace) -> dict:
     for path in files:
         rel = path.relative_to(root).as_posix()
 
+        if any(rel == prefix or rel.startswith(prefix + "/") for prefix, _ in FORBIDDEN_PATHS):
+            blockers.append(f"敏感文件被纳入发布：{rel}")
+            continue
+        if path.name == ".env" or (path.name.startswith(".env.") and path.name != ".env.example"):
+            blockers.append(f"环境配置或备份被纳入发布：{rel}")
+            continue
         if rel.startswith("data/") and not rel.startswith(DATA_ALLOWLIST):
             blockers.append(f"运行期数据进仓库：{rel}")
             continue
@@ -206,7 +222,6 @@ def scan(args: argparse.Namespace) -> dict:
             warns.append(f"读取失败：{rel}（{exc}）")
             continue
 
-        lines = text.splitlines()
         # ★ 测试范围（tests/ 与假模型/冒烟脚本）里的密钥形状降级为 WARN：
         #   那里本来就写着大量**故意的**假密钥（而且项目有测试专门断言密钥不被回显）。
         #   但**不忽略** —— 真有人把真密钥粘进测试里，它仍会以 WARN 出现在报告里等人看。
@@ -214,14 +229,14 @@ def scan(args: argparse.Namespace) -> dict:
         for label, pattern in SECRET_PATTERNS:
             for m in pattern.finditer(text):
                 line_no = text[: m.start()].count("\n") + 1
-                snippet = (lines[line_no - 1].strip() if line_no <= len(lines) else "")[:80]
-                if _looks_like_placeholder(m.group(0)) or _looks_like_placeholder(snippet):
-                    notes.append(f"疑似占位值（不算 BLOCKER）：{rel}:{line_no} → {snippet}")
+                # Reports are often shared: report locations, never credential values.
+                if _looks_like_placeholder(m.group(0)):
+                    notes.append(f"疑似占位值（不算 BLOCKER）：{rel}:{line_no}")
                     continue
                 if is_test_scope:
-                    warns.append(f"{label}（测试范围内，请人工确认是假值）：{rel}:{line_no} → {snippet}")
+                    warns.append(f"{label}（测试范围内，请人工确认是假值）：{rel}:{line_no}")
                     continue
-                blockers.append(f"{label}：{rel}:{line_no} → {snippet}")
+                blockers.append(f"{label}：{rel}:{line_no}")
         for label, pattern in PERSONAL_PATTERNS:
             for m in pattern.finditer(text):
                 hit = m.group(0)
@@ -231,7 +246,7 @@ def scan(args: argparse.Namespace) -> dict:
                 if "@example.com" in hit or "@example.org" in hit:
                     continue
                 line_no = text[: m.start()].count("\n") + 1
-                warns.append(f"{label}：{rel}:{line_no} → {hit}")
+                warns.append(f"{label}：{rel}:{line_no}")
         for name in names:
             if name in text:
                 line_no = text.index(name)

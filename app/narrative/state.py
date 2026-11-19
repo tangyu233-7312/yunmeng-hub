@@ -290,7 +290,6 @@ def _clean_meter(
     """
     name = field["name"]
     max_field = field.get("max_field") or "max"
-    is_hp = name == "hp"
     prev_max = _number(previous.get(max_field))
     if prev_max is None or prev_max <= 0:
         prev_max = _number(field.get("initial_max")) or DEFAULT_MAX

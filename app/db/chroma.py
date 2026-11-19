@@ -175,7 +175,6 @@ def get_user_collection(user_id: int, create: bool = True) -> Any:
     参数 create=False 时，若集合不存在则抛出 NotFoundError 风格的错误，
     调用方可用 has_user_collection() 先做判断。
     """
-    settings = get_settings()
     client = get_chroma_client()
     embedding = get_embedding()
 

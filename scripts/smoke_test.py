@@ -610,7 +610,7 @@ def main() -> int:
         other_headers = {"Authorization": f"Bearer {other_token}"}
 
         resp = client.get(f"{api}/character-cards/{png_card_id}", headers=other_headers)
-        check(resp.status_code == 404, f"读别人的私有卡 -> 404（而不是 403）")
+        check(resp.status_code == 404, "读别人的私有卡 -> 404（而不是 403）")
         resp = client.patch(
             f"{api}/character-cards/{png_card_id}",
             json={"name": "被改了"},

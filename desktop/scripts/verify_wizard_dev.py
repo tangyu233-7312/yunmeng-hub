@@ -397,7 +397,6 @@ async def main() -> int:
                 return true;
               })()
             """)
-            before = await cdp.run("document.getElementById('status').textContent")
             await cdp.run("document.getElementById('form').requestSubmit()")
             await asyncio.sleep(2.0)
             after = await cdp.run("document.getElementById('status').textContent")

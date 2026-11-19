@@ -132,15 +132,6 @@ def test_console_assets_are_served(
     assert len(response.text) > 0
 
 
-def test_frontend_files_exist_on_disk() -> None:
-    assert (WEB_DIR / "index.html").is_file()
-    assert (WEB_DIR / "css" / "styles.css").is_file()
-    for name in ("app", "api", "ui"):
-        assert (WEB_DIR / "js" / f"{name}.js").is_file()
-    for view in ("auth", "cards", "providers", "books", "chat"):
-        assert (WEB_DIR / "js" / "views" / f"{view}.js").is_file()
-
-
 def test_root_mentions_console(client: TestClient) -> None:
     assert client.get("/").json()["console"] == "/console"
 
@@ -219,6 +210,7 @@ def test_console_module_urls_are_versioned(client: TestClient) -> None:
     assert "js/boot.js?v=" in html
 
 
+@pytest.mark.static_contract
 def test_every_frontend_module_has_an_importmap_entry() -> None:
     """★ 新增前端模块时，忘了在 importmap 里登记就会白屏 —— 这里守住。
 
@@ -237,6 +229,7 @@ def test_every_frontend_module_has_an_importmap_entry() -> None:
         assert f"hne/{path.stem}" in mapped, f"{path.name} 没有登记进 importmap"
 
 
+@pytest.mark.static_contract
 def test_frontend_modules_do_not_use_relative_imports() -> None:
     """★ 模块之间不许再用 './xxx.js' / '../xxx.js' 这种相对导入。
 
@@ -283,23 +276,10 @@ def test_frontend_version_changes_when_a_frontend_file_changes(
     assert a == b == app_main._frontend_version(tmp_path)
 
 
-def test_boot_guard_exists_and_reloads_on_version_mismatch() -> None:
-    """★ 自动自愈的守卫脚本必须存在，且关键行为不能被删掉。
-
-    boot.js 是"index.html 自己被缓存住"时的最后一道保险：
-    它 no-store 问一次真实版本，发现对不上就自动重载。
-    这里用文本断言守住这个行为，避免以后被当成"没用的文件"删掉。
-    """
-    boot = (WEB_DIR / "js" / "boot.js").read_text(encoding="utf-8")
-    assert "cache: 'no-store'" in boot
-    assert "X-HNE-Web-Version" in boot
-    assert "location.replace" in boot
-    assert "data-web-version" in boot or "dataset" in boot
-
-
 # ==================================================================
 #  一之二、★ 前端排查记录：hidden 属性曾经完全不生效
 # ==================================================================
+@pytest.mark.static_contract
 def test_stylesheet_makes_hidden_attribute_actually_hide() -> None:
     """★ 回归测试：样式表必须保证 `[hidden]` 真的能隐藏元素。
 
@@ -336,6 +316,7 @@ def test_console_panels_start_collapsed(client: TestClient) -> None:
     assert "hidden" in aside.group(0), "请求日志抽屉应当是初始收起的（带 hidden 属性）"
 
 
+@pytest.mark.static_contract
 def test_console_layout_leaves_room_for_drawer() -> None:
     """★ 抽屉打开时应当**挤窄内容区**而不是浮在内容上面。
 
@@ -353,6 +334,7 @@ def test_console_layout_leaves_room_for_drawer() -> None:
 # ==================================================================
 #  一之三、★ 前端排查记录：事件监听器泄漏到其它页面
 # ==================================================================
+@pytest.mark.static_contract
 def test_view_delegated_listeners_are_abortable() -> None:
     """★ 回归测试：挂在常驻 `#view` 上的委托监听器必须带 `{ signal }`。
 
@@ -390,6 +372,7 @@ def test_view_delegated_listeners_are_abortable() -> None:
     )
 
 
+@pytest.mark.static_contract
 def test_view_delegated_actions_are_scoped_to_their_own_view() -> None:
     """★ 回归测试：`#view` 上的委托动作必须**认得出按钮属于哪一页**。
 
@@ -424,6 +407,7 @@ def test_view_delegated_actions_are_scoped_to_their_own_view() -> None:
     )
 
 
+@pytest.mark.static_contract
 def test_presets_view_controllers_are_chained_to_the_route_signal() -> None:
     """★ 回归测试：`nextController` 必须把新控制器接到视图信号上。
 
@@ -449,6 +433,7 @@ def test_presets_view_controllers_are_chained_to_the_route_signal() -> None:
     )
 
 
+@pytest.mark.static_contract
 def test_rich_iframe_document_follows_the_theme() -> None:
     """★ 回归测试：角色卡 HTML 渲染用的 iframe **不能把底色写死成白色**。
 
@@ -479,6 +464,7 @@ def test_rich_iframe_document_follows_the_theme() -> None:
     )
 
 
+@pytest.mark.static_contract
 def test_card_greeting_preview_uses_theme_variables() -> None:
     """★ 回归测试：角色卡列表里的「开场白预览框」不许写死浅色。
 
@@ -509,6 +495,7 @@ def test_card_greeting_preview_uses_theme_variables() -> None:
     )
 
 
+@pytest.mark.static_contract
 def test_no_hardcoded_light_backgrounds_in_stylesheet() -> None:
     """★ 回归测试：`background` 里不许出现**写死的浅色**（走变量才换得掉主题）。
 
@@ -559,6 +546,7 @@ def test_no_hardcoded_light_backgrounds_in_stylesheet() -> None:
     )
 
 
+@pytest.mark.static_contract
 def test_alert_borders_use_theme_variables() -> None:
     """★ 回归测试：提示框 / 失败气泡的**边框色**不许写死。
 
@@ -605,6 +593,7 @@ def test_alert_borders_use_theme_variables() -> None:
         assert f"{var}:" in root.group(0), f":root 缺少 {var} 的浅色默认值"
 
 
+@pytest.mark.static_contract
 def test_no_hardcoded_light_inline_styles_in_js() -> None:
     """★ 回归测试：JS 里**内联**写死的浅色背景同样要判失败。
 
@@ -653,6 +642,7 @@ def test_no_hardcoded_light_inline_styles_in_js() -> None:
     )
 
 
+@pytest.mark.static_contract
 def test_half_variablized_colors_are_rejected() -> None:
     """★ 回归测试：**底色走变量、文字/边框写死深色** 的配色一律判失败。
 
@@ -734,6 +724,7 @@ def test_half_variablized_colors_are_rejected() -> None:
     )
 
 
+@pytest.mark.static_contract
 def test_chat_view_buttons_match_their_delegated_actions() -> None:
     """★ 回归测试：视图里判断的每个 data-act，都必须真的存在这样一个按钮。
 
@@ -775,6 +766,7 @@ def test_chat_view_buttons_match_their_delegated_actions() -> None:
     )
 
 
+@pytest.mark.static_contract
 def test_button_loading_guards_against_double_restore() -> None:
     """★ 回归测试：`buttonLoading` 被连续调用两次时，恢复不能把内容设成 `undefined`。
 

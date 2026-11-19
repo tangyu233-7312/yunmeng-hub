@@ -1,5 +1,8 @@
 # 开发踩坑记录
 
+> **历史资料**：本文保留当时的实验数值与开发过程，不代表当前版本的验收结果。
+> 当前可复现命令、测试范围及结果见 [测试与验证](测试与验证.md)。
+
 > 本文档记录项目开发过程中**实际踩到并修复**的问题。
 > 每一条都包含：现象 → 根因 → 修复 → 为什么难发现。
 > 这些问题不是从教程里抄的，而是在真实运行中被测试与实测逼出来的。
@@ -2164,7 +2167,7 @@ C 档要兼容酒馆的正则脚本。我写完 `tavern_regex.py`，单测全绿
 | 安装包坏了 | 把包发给另一台机器，对方**直接安装成功** | ✗ 包没问题 |
 | 杀软拦截 | 火绒**完全退出**后重试，行为一字不差 | ✗ 不是杀软 |
 | 重启能恢复 | 重启电脑后重试，依旧 | ✗ |
-| 路径太长（260 字符） | 造一条**长度完全相同**的路径 `E:\VSCode\heteroX-narrative-engine\release\`（只差一个字符） | ✗ 那条 23 ms 就跑通 |
+| 路径太长（260 字符） | 造一条**长度完全相同**的路径 `E:\Projects\YunMengTmp\release\`（只差一个字符） | ✗ 那条 23 ms 就跑通 |
 | 中文/连字符特殊字符 | 整目录改名成中文、再改成长英文名 | ✗ 现象跟着**目录**走，不跟着名字走 |
 | 与被安装内容有关 | 自己编一个 **38 KB 的空壳 NSIS 安装器**放进同一目录 | ✗ 空壳同样卡住 |
 
@@ -2175,7 +2178,7 @@ C 档要兼容酒馆的正则脚本。我写完 `tavern_regex.py`，单测全绿
 
 该目录上有一条**显式**（不是继承来的）强制完整性标签：
 
-    E:\VSCode\hetero-narrative-engine
+    E:\Projects\YunMengHub
         … 各正常 ACE …
         Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)
 
@@ -2194,13 +2197,13 @@ C 档要兼容酒馆的正则脚本。我写完 `tavern_regex.py`，单测全绿
 
 ```powershell
 # 1) 顶层目录有当前用户的 (F)，先把标签改回来（括号在 PowerShell 里必须加引号）
-icacls "E:\VSCode\hetero-narrative-engine" /setintegritylevel "(OI)(CI)M"
+icacls "E:\Projects\YunMengHub" /setintegritylevel "(OI)(CI)M"
 
 # 2) 子项不会跟着重算，必须 /T 逐个处理
-icacls "E:\VSCode\hetero-narrative-engine" /setintegritylevel "(OI)(CI)M" /T /C
+icacls "E:\Projects\YunMengHub" /setintegritylevel "(OI)(CI)M" /T /C
 
 # 3) 复核：期望**没有任何输出**
-icacls "E:\VSCode\hetero-narrative-engine" /T /C | Select-String "Low Mandatory Level"
+icacls "E:\Projects\YunMengHub" /T /C | Select-String "Low Mandatory Level"
 ```
 
 ### 执行时踩到的三个坑
@@ -2218,8 +2221,8 @@ icacls "E:\VSCode\hetero-narrative-engine" /T /C | Select-String "Low Mandatory 
    所以"能往里写文件"并不等于"能改它自己的标签"。解法是先补授权让子项拿到 WRITE_OWNER：
 
    ```powershell
-   icacls "E:\VSCode\hetero-narrative-engine" /grant:r "<用户>:(OI)(CI)F"
-   icacls "E:\VSCode\hetero-narrative-engine" /setintegritylevel "(OI)(CI)M" /T /C
+   icacls "E:\Projects\YunMengHub" /grant:r "<用户>:(OI)(CI)F"
+   icacls "E:\Projects\YunMengHub" /setintegritylevel "(OI)(CI)M" /T /C
    # → 已成功处理 47377 个文件；处理 0 个文件时失败
    ```
 

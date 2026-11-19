@@ -131,7 +131,7 @@ def test_added_column_ddl_matches_create_table_ddl(fresh_engine, monkeypatch) ->
 def test_plan_detects_missing_index(fresh_engine, monkeypatch) -> None:
     """模型里有索引、库里没有 → 补一条 CREATE INDEX（索引不影响数据，安全）。"""
     old = MetaData()
-    table = Table(
+    Table(
         "messages",
         old,
         Column("id", Integer, primary_key=True, autoincrement=True),
@@ -327,7 +327,7 @@ def test_apply_upgrade_skips_existing_index(fresh_engine, monkeypatch) -> None:
     这里直接构造"计划里有、但库里已经有了"的情形来钉住这个行为。
     """
     meta = MetaData()
-    table = Table(
+    Table(
         "messages",
         meta,
         Column("id", Integer, primary_key=True, autoincrement=True),
@@ -406,7 +406,7 @@ def test_real_model_old_database_gets_upgraded_in_place(tmp_path) -> None:
     try:
         # ---- 造一个"老库"：只建最初那三列（用整表的列定义，只挑一部分）----
         legacy_meta = MetaData()
-        legacy_table = Table(
+        Table(
             "narrative_sessions",
             legacy_meta,
             *[c._copy() for c in NarrativeSession.__table__.columns

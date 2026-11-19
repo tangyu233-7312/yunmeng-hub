@@ -1,37 +1,15 @@
-# ============================================================
-# 异构大模型交互式叙事引擎 —— Git 忽略规则
-# ============================================================
-
-# ---------- 敏感信息（务必忽略，绝不能提交） ----------
+# Local credentials and configuration
 .env
 .env.*
 !.env.example
-# ★★ 配置备份目录：本项目的运维动作会往这里放带**真实口令**的 .env 副本
-#   （见 docs/handoff.md §35.4：切换存储/改口令前的自动备份）。
-#   `.env.*` 挡不住它 —— 因为被忽略的是**目录**，而目录名不匹配 `*.` 前缀那条规则。
-#   实测确认过：没加这条时 `git check-ignore .env-backups` 返回"没被忽略"，
-#   也就是说一次 `git add -A` 就能把明文数据库口令提交上去。
 .env-backups/
 *.env.bak
 *.bak.env
 *.key
 *.pem
+/config/
 
-# ---------- 只在本机留存的文档（**刻意不提交**） ----------
-# ★ 毕业设计的交接文档：它写的是"我这边怎么做的、接下来要做什么"，
-#   里面会提到本机路径、个人进度、以及论文/答辩的安排 —— 属于**个人材料**，
-#   不属于这个开源项目本身。按用户要求"别提交到 GitHub 上去那种"。
-#
-# ★ 为什么不放在仓库外：文档要和代码放在一起才好用（下一轮 AI 会在仓库里工作）。
-#   放进 .gitignore 是"位置好用"与"不会被提交"两件事的兼得 —— 代价是这条规则本身
-#   要提交一次（无害：它只是一条忽略规则，不含任何个人信息）。
-#   · 开发过程笔记（5000+ 行逐轮记录，含本机路径与个人进度）
-#   · 毕业设计交接文档
-#   公开仓库里只保留 docs/ 下那些**面向读者**的说明（architecture/overview/db…）。
-docs/dev-notes/
-docs/thesis-handoff.md
-
-# ---------- Python ----------
+# Python environments, caches and root build outputs
 __pycache__/
 *.py[cod]
 *$py.class
@@ -40,139 +18,62 @@ __pycache__/
 venv/
 env/
 .pytest_cache/
+.pytest-data/
 .mypy_cache/
 .ruff_cache/
 htmlcov/
 .coverage
 .coverage.*
-# ★ 这两条**必须带前导斜杠**（只匹配仓库根）：
-#   gitignore 里"不含斜杠的模式匹配任意层级"，所以裸写 `build/` 会连
-#   `desktop/build/` 一起忽略掉 —— 而那里有我们要随包发布的 `icon.ico`。
-#   更要紧的是 git 的另一条规则：**父目录被忽略时，里面的文件无法用否定模式放行**，
-#   所以"先被忽略、再 `!` 放行"这条路根本走不通（本轮为此返工三次）。
-#   锚定到根目录才是正解。
+# Anchor these: desktop/build/icon.ico is a versioned source asset.
 /build/
 /dist/
 
-# ---------- 项目运行期数据 ----------
-# 生图插件生成的图片（可重新生成，且可能含用户故事内容）
+# Runtime data; keep data/test-cards/ under version control
 data/media/
 data/chroma/
 data/logs/
 data/exports/
 *.sqlite3
-# ★ SQLite 的 WAL 模式会额外生成 -wal / -shm 两个文件（见 app/db/mysql.py 的 PRAGMA）。
-#   它们和主库文件是一体的，**同样绝不能进版本库** —— 里面是用户数据的最新写入。
-#   实测踩到：`.pytest-data/` 被整目录忽略所以没露出来，但开发态跑一次
-#   `data/app.sqlite3` 就在仓库根留下 `-wal` / `-shm` 两个未跟踪文件。
 *.sqlite3-wal
 *.sqlite3-shm
 *.db
 *.db-wal
 *.db-shm
 *.sql.gz
-# ★ 测试期的数据根目录（tests/conftest.py 把 HNE_DATA_DIR 指到这里）：
-#   它装着 SQLite 文件、向量库、日志，以及**自动生成的密钥**（config/.secrets.env）。
-#   密钥绝不能进版本库，所以整个目录忽略掉。
-.pytest-data/
-
-# ★★ 运行时自动生成的本机密钥 / 路径历史（**绝不进版本库**）。
-#   `config/` 是"数据根目录"下的配置层，后端会自动往里写：
-#     · `config/.secrets.env`            —— JWT 密钥 + Fernet 密钥（泄露=可伪造登录/解 API Key）
-#     · `config/sqlite-path-history.json` —— 存储设置用过的本机路径（**含用户名与盘符**）
-#
-#   ★ 实测踩到（就是加"路径历史"功能那轮）：这个目录**当时没被忽略**，
-#     于是 `git status` 里直接躺着一个未跟踪的 `config/`，
-#     里面是本机绝对路径 —— 一次 `git add -A` 就会把它推上公开仓库。
-#     它没匹配上面任何一条：不是 .env、不是 *.sqlite3、也不是 .pytest-data/。
-#   ★ 只忽略根目录这一层（带前导斜杠）：`desktop/` 等子目录里如果有同名的
-#     源码级 config/ 不该被连带忽略（同 build/ 那条的教训）。
-/config/
-
-# 探针/脚本跑出来的报告与截图（随时可重新生成，不必进版本库）
-# ★ 用通配而不是逐个列文件名：以前是逐个列的，于是**每次新增一个脚本产出就要回来补一行**，
-#   漏掉的那些（benchmark_report / token_accuracy_report / ui_nebula_*.png …）
-#   就变成 git status 里的噪声。现在按"产出物形状"忽略：
-#     · data/*.png            —— 探针的截图（含新主题的 nebula-*.png）
-#     · data/*_report.json/md —— 各脚本的报告
-#     · data/benchmark_drift.svg
-#   ★ 注意别误伤要进库的素材：`data/test-cards/*.json`（测试卡）在子目录里，不受影响。
 data/*.png
 data/*_report.json
 data/*_report.md
 data/benchmark_drift.svg
 data/_*.txt
 
-# ---------- 编辑器 / 操作系统 ----------
+# Editors, OS metadata and local working notes
 .vscode/
 .idea/
 *.swp
 Thumbs.db
 Desktop.ini
-# 提交信息草稿（重建历史时临时写的，不该进库）
 .git-commit-msg.txt
-# ★ AI 协作纪律（省 Token / 交付流程）。这份**只在本机存在、不进公开仓库**：
-#   项目仓库讲项目本身，协作纪律属于本地工作方式。
-#   规则原文放在这里，README / docs/handoff*.md 只保留一行指引
-#   （2026-10-04 从公开仓库移出；当时把那个提交重写了，所以它从未出现在 GitHub 上）。
-docs/ai-session-rules.md
-# ★ 重建历史时把旧 .git 改名保留用的目录。
-#   它**必须被忽略**：改名后它只是普通目录，`git add -A` 会连里面的
-#   613 个旧 git 内部文件（含全部旧提交对象）一起暂存 —— 那等于把
-#   "要清掉的使用痕迹"原封不动搬进新仓库（本轮真的这么踩了一次）。
 .git.old-preserved/
 *.bundle
-
-# ---------- 本地/个人产物（绝不进公开仓库）----------
-# ★ 用户自己写的**本机启动脚本**：里面写着本机绝对路径
-#   （`cd E:\VSCode\hetero-narrative-engine` + `.\.venv\Scripts\python.exe …`），
-#   属于"这台机器怎么跑"而不是"这个项目是什么"。docs/dev-notes 里早就把这
-#   列为待办隐患：它们一直以未跟踪状态出现在 `git status` 里，
-#   谁图省事跑一次 `git add -A` 就会把本机路径推上公开仓库。
-#   ★ 这两个名字是中文，gitignore 支持，但要**逐行写清楚**（不用通配，
-#     免得哪天误伤真要提交的同名文件）。
+docs/dev-notes/
+docs/thesis-handoff.md
+docs/ai-session-rules.md
 启动方式.txt
 启动程序.bat
-
-# ★ .dsh-drop/ 是"丢给 AI 的文件"暂存目录（截图、设计稿等个人痕迹），
-#   2026-10-03 审计发现有文件**已经被跟踪过**：已 git rm --cached 取消跟踪
-#   （磁盘文件保留，备份在仓库外的 hetero-narrative-engine-backup-*/）。
 .dsh-drop/
-# Electron 打包产物 / 依赖 / 中文路径备份
+hetero-narrative-engine-backup-*/
+YunMengHub-backup-*/
+
+# Desktop dependencies and generated packages; retain desktop/build/icon.ico
 node_modules/
 dist_electron/
 out/
 release/
-hetero-narrative-engine-backup-*/
-# ---------- Electron 桌面壳（desktop/）----------
-# ★ 坑一（本轮真的踩了）：上面那条 `build/` 是**不带前导斜杠**的模式，
-#   而 gitignore 的规则是"不含斜杠的模式匹配任意层级"——所以它**会**匹配
-#   `desktop/build/`。第一版我按"只匹配根目录"理解，结果 `desktop/build/icon.ico`
-#   被静默忽略（`git status` 里根本看不到它），而 README 却写着"图标随包发布"。
-#
-# ★ 坑二（紧接着踩了）：修坑一时我写的是 `!desktop/build/**` —— 豁免开得**太宽**，
-#   于是 PyInstaller 的工作目录（234MB：xref、toc、.pkg、临时 exe）与
-#   构建时暂存的模型（87MB）**全都准备进版本库**了。
-#
-# ★ 坑三（第三次才对）：只精确排除生成物子目录也不行 —— 根目录那条裸写的 `build/`
-#   仍然会匹配 `desktop/build/`，而 git 的规则是"**父目录被忽略时，里面的文件无法用
-#   否定模式放行**"，于是 icon.ico 又变成"静默不提交"，与 README 的说法再次相反。
-#   最终做法（两处配合）：
-#     ① 上面 Python 那两条 `build/` / `dist/` 加前导斜杠锚定到**仓库根**（它们本来就只指根目录）；
-#     ② 这里只精确排除 desktop/build/ 下面的生成物子目录。
-#   这样 icon.ico 能被正常纳入，而构建产物一个都进不来。
+desktop/.build-venv/
+desktop/dist/
 desktop/build/pyinstaller/
 desktop/build/model-data/
 desktop/build/selfcheck-model-cache/
-# 依赖与安装包产物（体积大、可重建、不入库）
-desktop/node_modules/
-# 打包专用 venv（不污染验收用的 .venv；约 400MB，绝不入库）
-desktop/.build-venv/
-desktop/dist_electron/
-desktop/release/
-desktop/out/
-desktop/dist/
-# npm / electron 的本地日志与缓存
 desktop/npm-debug.log*
 desktop/.npm/
 desktop/.electron/

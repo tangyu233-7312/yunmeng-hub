@@ -15,6 +15,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.static_contract
+
 REPO = Path(__file__).resolve().parents[1]
 AUTH_JS = REPO / "web" / "js" / "views" / "auth.js"
 CHAT_JS = REPO / "web" / "js" / "views" / "chat.js"

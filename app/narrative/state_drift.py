@@ -28,7 +28,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
 from app.narrative import state as state_mod
@@ -49,7 +49,7 @@ class RoundRecord:
     required: bool = True
     had_block: bool = True
     malformed: bool = False
-    counts: dict[str, int] = field(
+    counts: dict[str, int] = dataclass_field(
         default_factory=lambda: {kind: 0 for kind in KINDS} | {"other": 0}
     )
     #: 自报 vs 校验后落库的偏离度（0~1）

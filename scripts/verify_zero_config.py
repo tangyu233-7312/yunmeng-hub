@@ -1,4 +1,4 @@
-"""端到端验证默认（零配置 / SQLite）路径：起一个真后端，走注册+登录+角色卡+会话。
+"""验证零配置 SQLite 启动、自举、注册、登录与角色卡的 TestClient 集成流程。
 
 ==================== ★ 为什么必须单独验一遍 ====================
 前面所有 SQLite 验证都跑在 **pytest 环境**里（`tests/conftest.py` 装好了隔离环境）。
@@ -8,7 +8,7 @@
 判据（全部要过）：
   1. 全新数据目录下，**不提供任何配置**也能起起来（表自动建、密钥自动生成）；
   2. `/health` 报 `backend=sqlite` 且组件全 ok；
-  3. 注册 → 登录 → 建角色卡 → 建会话 → 发一条消息（用假模型）全通；
+  3. 注册 → 登录 → 建角色卡 → 按标签查询全通；
   4. 数据真的落在 `HNE_DATA_DIR` 下（SQLite 文件 + 密钥文件 + 向量库）。
 
 用法：
@@ -36,6 +36,10 @@ import json, os, sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from app.core.config import Settings
+
+# A fresh installation has no developer .env. Disable that source before app import.
+Settings.model_config["env_file"] = None
 from app.main import app
 
 out = {}
@@ -87,16 +91,14 @@ with TestClient(app) as c:
 
     data_dir = Path(os.environ["HNE_DATA_DIR"])
     out["sqlite_file"] = (data_dir / "data" / "app.sqlite3").is_file()
-    # ★ 密钥文件可能**不存在**：仓库根有 .env 时，那里的真实密钥优先，
-    #   自举就"什么都不用补"，也就不会写这个文件。
-    #   所以要区分"没写"与"写错地方"，并把两种都如实报出来。
+    # Zero configuration must generate its own secrets in the fresh data root.
     from app.db.bootstrap import secrets_file
     from app.core.config import get_settings
 
     resolved_secrets = secrets_file()
     out["secrets_file"] = resolved_secrets.is_file()
     out["secrets_path"] = str(resolved_secrets)
-    out["secrets_in_data_dir"] = str(data_dir) in str(resolved_secrets)
+    out["secrets_in_data_dir"] = resolved_secrets.resolve().is_relative_to(data_dir.resolve())
     # 密钥在本进程里必须真的可用（无论来自 .env 还是自举文件）
     settings = get_settings()
     out["secret_key_ok"] = len(settings.SECRET_KEY) >= 32
@@ -148,6 +150,10 @@ def main() -> int:
             timeout=600,
         )
         stdout = (proc.stdout or "").strip()
+        if proc.returncode != 0:
+            print(f"× 子进程失败（退出码 {proc.returncode}）")
+            print((proc.stderr or "")[-2000:])
+            return 1
         print("---- 子进程 stderr（截断）----")
         for line in (proc.stderr or "").strip().splitlines()[-12:]:
             print(f"  {line}")

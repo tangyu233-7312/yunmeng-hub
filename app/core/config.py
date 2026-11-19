@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     )
 
     # ==================== 应用基础 ====================
-    APP_NAME: str = "HeteroNarrativeEngine"
+    APP_NAME: str = "YunMengHub"
     APP_VERSION: str = "0.4.0"
     APP_ENV: Literal["development", "testing", "production"] = "development"
     DEBUG: bool = True
@@ -148,7 +148,7 @@ class Settings(BaseSettings):
     #   · SQLite 是**单写者**模型：同一时刻只允许一个写事务。单机单用户完全够用，
     #     但如果将来要做"一个服务端多人共用"，必须回到 MySQL。
     #   · 因此 MySQL 路径**必须一直保留可用**，不能被删掉、也不能无人测试
-    #     （tests/test_db_mysql.py + 环境变量开关守着它）。
+    #     （tests/test_db.py + 专用测试库环境变量守着它）。
     #
     # ★★ 旧配置必须留在 MySQL 上（见下面 _infer_db_backend 的校验器）：
     #    老版本只有 MySQL 一种后端，所以老向导写出来的 `.env` **没有**
@@ -245,7 +245,7 @@ class Settings(BaseSettings):
           · 于是 pydantic 的字段默认值 `sqlite` 生效；
           · 结果：老用户升级后**被静默换到一份空的 SQLite 库**，
             打开应用看到的是"用户名或密码错误" —— 他会以为账号被人改了。
-        （真实发生：见 docs/handoff.md §34。数据一条没丢，但表现极具误导性。）
+        数据并未丢失，但切换数据库会让用户误以为原账号和故事消失。
 
         ==================== 为什么必须在 `mode="before"` 做 ====================
         第一版写在 `mode="after"` 里、判据用 `model_fields_set` —— **错的**：

@@ -944,7 +944,7 @@ def test_import_duplicate_of_public_card_is_allowed(
     client: TestClient, user: dict, other_user: dict
 ) -> None:
     """导入不校验重名（角色卡允许同名）。"""
-    theirs = create(client, other_user, is_public=True, name="热门的卡")
+    create(client, other_user, is_public=True, name="热门的卡")
 
     response = client.post(
         f"{BASE}/import",

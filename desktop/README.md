@@ -68,11 +68,11 @@
 # 1) 后端依赖（在仓库根，一次性）
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env      # 然后填 HNE_MYSQL_PASSWORD 等
+# 默认 SQLite，无需 .env；可选 MySQL 配置见 ../docs/快速开始.md
 
-# 2) 桌面壳依赖（只装 electron 一个，一次性）
+# 2) 桌面开发与构建依赖（Electron + electron-builder）
 cd desktop
-npm install
+npm ci
 
 # 3) 起桌面版
 npm start
@@ -82,7 +82,7 @@ npm start
 
 本机实测踩到过两种，**都不是项目代码的问题**，但都会让人以为"代码坏了"：
 
-1. **npm 11 默认不执行安装脚本**，而 Electron 的二进制正是靠 `postinstall` 下载的。
+1. **本机 npm 配置或安装策略禁用了安装脚本**，而 Electron 的二进制正是靠 `postinstall` 下载的。
    症状：装完 `node_modules/electron/dist/` 是空的。修法（二选一）：
 
    ```powershell
@@ -115,7 +115,7 @@ npm start
 
 ```powershell
 cd desktop
-npm test        # Node 自带 test runner，162 条用例
+npm test        # Node 自带 test runner，当前结果见 ../docs/测试与验证.md
 ```
 
 覆盖的都是"起后端"这条路上真正会出错的地方：
@@ -164,7 +164,7 @@ desktop/
     build_installer.ps1   ★ 一键出 NSIS 安装包（含产物核对，见 §8）
     verify_installer.ps1  ★ 装→首启向导→控制台→卸载不删数据 的自动验收
     verify_installer_cdp.py  上面那个脚本里"填真实表单"的那一步（CDP）
-  test/                   Node 自测（npm test，162 条）
+  test/                   Node 自测（npm test）
   build/icon.ico          生成物（16/24/32/48/64/128/256）——★ 要入库，随包发布
   build/pyinstaller 等    构建中间物 —— 不入库（.gitignore）
   dist/backend/           打包产物（backend.exe + _internal/，约 290MB）—— 不入库
@@ -218,7 +218,7 @@ release/                  安装包产物（仓库根）—— 不入库
 
 ## 6. 验收：手工点测清单
 
-自动化能覆盖的东西都写进 `npm test`（162 条）与四件套了；下面这些是**必须手点**的。
+自动化覆盖范围见 [测试与验证](../docs/测试与验证.md)；下面这些交互还需要手工验收。
 
 - [ ] `npm start` 后能进控制台（不是白屏）
 - [ ] 启动阶段能看到加载页；故意把 `.env` 改坏后能看到**可操作**的报错
@@ -332,7 +332,7 @@ userData 换了位置、`.env` 从仓库根消失）。任何一条对不上，�
 > （`nsis.deleteAppDataOnUninstall` 必须是显式的 `false`）——
 > 因为"卸载删数据"是不可逆的，而它写错了只会在"用户卸载后再装"时才发现。
 
-### ★ 打包态不再读安装目录里的 `.env`（本轮补的第二个洞）
+### ★ 打包态不再读安装目录里的 `.env`（配置隔离）
 
 "绝不把 `.env` 打进安装包"只做到了**一半**。另一半在**读取侧**：打包后 `appRoot`
 就是安装目录，如果那里恰好有一份 `.env`（打包时误带、或用户自己复制进去的），

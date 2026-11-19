@@ -1,0 +1,6 @@
+target-version = "py313"
+extend-exclude = [".venv", ".pytest-data", "desktop/.build-venv", "desktop/build", "desktop/dist", "release"]
+
+[lint]
+# Catch undefined names, unused imports/locals and other Pyflakes errors.
+select = ["F"]

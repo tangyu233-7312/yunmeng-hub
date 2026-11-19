@@ -502,8 +502,6 @@ def replay_from_db(
             )
 
     cost = metrics.injection_report(results)
-    total_state = meta["state_messages"] or 1
-    state_total = meta["state_sessions"] or 1
     # ★ 真实遥测的逐轮曲线：跨会话按"落库顺序"编号（同一条会话内就是轮次顺序）。
     #   历史消息没有遥测 → 只能统计新聊出来的轮次，这一点在报告里如实写明。
     from app.narrative import state_drift as drift_mod
@@ -935,7 +933,7 @@ def main() -> int:
     state = metrics.state_consistency(state_cases)
     drift_buckets, drift_totals = run_drift(Path(args.drift_script))
     dice = run_dice(rounds=max(200, int(args.dice_rounds)))
-    text = print_report(
+    print_report(
         ablation=ablation, state=state, semantic_mode=args.semantic, ks=ks
     )
     print_drift_report(drift_buckets, drift_totals)

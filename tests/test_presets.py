@@ -383,6 +383,7 @@ def test_default_config_blocks_are_all_known() -> None:
     """「新建预设」给的起点必须是本系统真的能渲染的块。"""
     config = presets.build_default_config()
 
+    assert config.blocks, "An empty preset must not pass the per-block checks"
     for block in config.blocks:
         assert block.identifier not in presets.UNSUPPORTED_BLOCKS
         assert block.supported is True

@@ -1,0 +1,52 @@
+name: Checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/chroma/onnx_models
+          key: onnx-minilm-l6-v2-${{ runner.os }}-chroma-1.5.9
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Static checks and documentation links
+        run: |
+          python -m ruff check app scripts tests desktop/backend_entry.py desktop/scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/check_docs.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/init_db.py --check-sql
+      - name: Backend regression tests (isolated SQLite, no live APIs)
+        run: python -m pytest -q --junitxml=.pytest-data/results.xml
+      - name: Fresh configuration integration check
+        run: python scripts/verify_zero_config.py
+      - name: Desktop tests
+        working-directory: desktop
+        run: npm test
+      - name: Publish test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-junit
+          path: .pytest-data/results.xml
+          if-no-files-found: warn

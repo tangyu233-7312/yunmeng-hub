@@ -981,10 +981,6 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
     )
 
     # ---------- 5. 重新生成 ----------
-    # ★ 用 _text_of 而不是裸 eval：eval 出错时返回的是 {"__error__": …}（dict），
-    #   直接 `.strip()` 会让**整个探针崩掉**，前面 16 项已通过的检查连报告都写不出来。
-    #   探针的价值在于"跑完给出完整结论"，所以取文本一律走这个安全包装。
-    before = _text_of(cdp, "messages-last")
     # ★ 用户消息数用"重生成前后对比"，不写死 1：
     #   写死数字会在"这一节之前多聊了一轮"时误报（本轮新增状态栏那一步就撞上了），
     #   而这条断言真正要守的是"重新生成不该复制出一条用户消息"。
@@ -2491,7 +2487,6 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
             },
         )
         plain_card.raise_for_status()
-        plain_card_id = plain_card.json()["data"]["id"]
         plain_card_name = plain_card.json()["data"]["name"]
 
     cdp.eval("document.querySelector('#nav [data-route=\"chat\"]').click(); 'ok'")
@@ -2569,7 +2564,7 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
     cdp.wait_for("!!document.querySelector('#modal-root #sel-card')", 20)
     cdp.eval(
         "(() => { const s = document.querySelector('#modal-root #sel-card');"
-        f" const opt = Array.from(s.options).find(o => o.textContent.includes('探针角色'));"
+        " const opt = Array.from(s.options).find(o => o.textContent.includes('探针角色'));"
         " if (opt) s.value = opt.value;"
         " s.dispatchEvent(new Event('change', { bubbles: true }));"
         " const t = document.querySelector('#modal-root [name=title]');"
@@ -2739,7 +2734,6 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
         )
         author_card.raise_for_status()
         author_card_id = author_card.json()["data"]["id"]
-        author_card_name = author_card.json()["data"]["name"]
         author_sid = c.post(
             f"{base}/api/v1/narrative/sessions",
             headers=h,
@@ -2773,7 +2767,7 @@ def run_checks(cdp: Cdp, base: str, data: dict) -> None:
     time.sleep(0.8)
     cdp.eval(
         "(() => { const el = Array.from(document.querySelectorAll('.session-item'))"
-        f"   .find(x => (x.textContent || '').includes('作者状态探针会话'));"
+        "   .find(x => (x.textContent || '').includes('作者状态探针会话'));"
         " if (!el) return '__no_item__'; el.click(); return 'ok'; })()"
     )
     card_panel_ok = cdp.wait_for("!!document.querySelector('#card-state')", 20)

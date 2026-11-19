@@ -11,8 +11,12 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
+import subprocess
 from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,6 +105,7 @@ def test_requested_name_blocker_does_not_echo_the_name(tmp_path: Path) -> None:
       如果报告里复述了真名，那就在"为了排掉使用痕迹"的过程中又把它写了一遍。
     """
     result = _scan(tmp_path, {"docs/x.md": "账号 张三 的数据\n"}, names=["张三"])
+    assert result["blockers"], "An empty report must not pass the redaction check"
     for item in result["blockers"]:
         assert "张三" not in item, item
 
@@ -150,3 +155,40 @@ def test_clean_tree_passes(tmp_path: Path) -> None:
         },
     )
     assert not result["blockers"], result["blockers"]
+
+
+def test_git_scan_includes_chinese_filenames(tmp_path: Path) -> None:
+    """Exercise Git's real path quoting, which previously hid Chinese documents."""
+    document = tmp_path / "说明.md"
+    document.write_text('API_KEY = "sk-9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"', encoding="utf-8")
+    for args in (("init",), ("config", "core.quotePath", "true"), ("add", "说明.md")):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    result = _scan(tmp_path, {})
+    assert result["files"] == 1
+    assert any("说明.md" in item for item in result["blockers"])
+    assert not any("读取失败" in item for item in result["warns"])
+
+
+def test_secret_reports_redact_values_and_ignore_neighboring_comments(tmp_path: Path) -> None:
+    key = "sk-9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
+    result = _scan(tmp_path, {"app.py": f'API_KEY = "{key}"  # test the connection\n'})
+    assert result["blockers"], "A neighboring 'test' comment must not hide a credential"
+    assert key not in json.dumps(result)
+
+
+def test_git_enumeration_failure_cannot_pass(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / ".git").mkdir()
+    def fail(*args, **kwargs):
+        raise OSError("git unavailable")
+    monkeypatch.setattr(checker.subprocess, "run", fail)
+    with pytest.raises(RuntimeError, match="无法枚举"):
+        checker.published_files(tmp_path)
+
+
+def test_config_backups_and_sqlite_sidecars_are_blocked(tmp_path: Path) -> None:
+    result = _scan(tmp_path, {
+        "nested/.env.bak": "local settings",
+        "backup.sqlite3-wal": "database changes",
+    })
+    assert any("nested/.env.bak" in item for item in result["blockers"])
+    assert any("backup.sqlite3-wal" in item for item in result["blockers"])

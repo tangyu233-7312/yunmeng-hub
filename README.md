@@ -1,113 +1,79 @@
-# 云梦枢（YunMeng Hub）· 异构大模型交互式叙事引擎
+# 云梦枢（YunMengHub）
 
-> 支持用户自配任意大模型 API（自定义 URL / Key / 模型名）的交互式叙事引擎 —— 后端服务 + 桌面端。
+支持自配大模型 API 的交互式叙事应用。将角色卡、世界书、长期记忆和可编辑的提示词预设组合成对话上下文，提供浏览器控制台和 Windows 桌面端。
 
-把**角色卡 + 世界书 + 长期记忆 + 可编辑的提示词预设**拼成一台能长期跑下去的叙事引擎，
-并且**你随时能看见它到底发了什么**（提示词预览与真实请求走同一个函数，不是两套代码）。
+支持 OpenAI 兼容接口与 Anthropic 协议、流式输出、提示词预览、对话分支、状态栏、自动翻译、VN 立绘和可选生图插件。前端使用原生 HTML / CSS / JavaScript，无构建步骤。
 
-**下载装好的版本（Windows x64，不想碰 Python 就走这条）**：
-[**→ 最新 Release**](https://github.com/tangyu233-7312/yunmeng-hub/releases/latest) —— 两种形态，同一个后端、同一份数据格式，**按喜好二选一**：
+## 下载与使用
 
-| 形态 | 适合 | 怎么用 |
+[最新 Release](https://github.com/tangyu233-7312/yunmeng-hub/releases/latest) 提供两种 Windows x64 版本：
+
+| 版本 | 文件 | 使用方式 |
 |---|---|---|
-| **Web 版**（免安装压缩包）<br>`YunMengHub-Web-<版本>.zip` | 不想安装、想用自己熟悉的浏览器 | 解压到任意目录 → 双击「启动云梦枢.cmd」→ 浏览器自动打开控制台。不写注册表、不需要管理员权限 |
-| **安装版**（Windows 安装包）<br>`YunMengHub-Setup-<版本>.exe` | 想要开始菜单图标、独立窗口 | 双击运行，按向导装完即可 |
+| Web 版 | `YunMengHub-Web-<版本>.zip` | 解压后双击「启动云梦枢.cmd」，在浏览器中使用 |
+| 桌面版 | `YunMengHub-Setup-<版本>.exe` | 安装后从桌面或开始菜单打开 |
 
-两者都**不需要 Python、不需要数据库服务**：数据默认存为本机一个 SQLite 文件，表与密钥由后端首次启动时自建。
-两种形态都没做代码签名，首次运行 SmartScreen 会提示"未知发布者"，点「更多信息 → 仍要运行」。
+发行包内置 Python 后端，默认使用 SQLite，无需另装数据库。首次启动自动建表和生成本机密钥；使用对话、生图或外部嵌入服务时，需要自行配置相应 API。发行包未签名，下载后可按 Release 提供的 SHA256 核对文件。
 
+## 从源码运行
 
-## 技术栈
+已验证环境：Python 3.13、Windows x64。
 
-| 层次 | 选型 |
-|---|---|
-| 语言 | Python 3.13 |
-| Web 框架 | FastAPI + Uvicorn |
-| 关系数据库 | **默认 SQLite**（一个文件，装完即用）／ **可选 MySQL 8.0**（SQLAlchemy 2.0 一套代码两种后端） |
-| 向量数据库 | ChromaDB 1.5（PersistentClient 持久化） |
-| LLM 接入 | httpx 自研统一适配层，兼容 OpenAI / Anthropic / Ollama 等异构协议 |
-| 认证 | PyJWT + bcrypt |
-| 前端 | 原生 HTML / CSS / JavaScript（无构建步骤，改完刷新即可） |
-| 桌面端 | Electron 壳 + PyInstaller 打包后端 + electron-builder 出 Windows 安装包 |
+```powershell
+git clone https://github.com/tangyu233-7312/yunmeng-hub.git YunMengHub
+cd YunMengHub
+python -m venv .venv
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
+./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
 
-## 当前状态
+打开 [控制台](http://127.0.0.1:8000/console)。接口文档位于 `/docs`、`/redoc`，健康检查位于 `/health`。首次使用本地嵌入模型会下载约 80 MB，缓存后可离线推理。
 
-| | |
-|---|---|
-| 后端功能 | 3.1 ~ 3.14 完成（逐项见 [版本与进度](docs/版本与进度.md)） |
-| 单元测试 | **1121 passed / 3 skipped**（SQLite；MySQL 后端为同一套用例） |
-| 端到端冒烟 | **184 项全过**（真实 HTTP + 直连数据库双通道核对） |
-| 浏览器探针 | **189 项全过**（真实无头 Edge；含 2 条**故意**打出的 401/404 探路，其余控制台报错 0 条） |
-| 桌面壳自测 | **187 项 Node 自测全过** |
-| 存储 | 默认 SQLite 单文件：**表由后端启动时自建、密钥首次运行自动生成**，不需要事先建库建表 |
-| 你仍需自备的 | 只有一样：**你自己要用的那个大模型 API Key** |
+默认无需创建 `.env`。高级配置可参考 [.env.example](.env.example)；环境变量继续使用 `HNE_` 前缀，以兼容已有配置。SQLite 数据默认位于 `data/`，自动生成的密钥位于 `config/.secrets.env`。
+
+详细安装、MySQL 配置及桌面构建见 [快速开始](docs/快速开始.md) 和 [桌面开发说明](desktop/README.md)。
+
+## 测试与质量检查
+
+原 README 的 **“1121 passed / 3 skipped”缺少对应运行报告，不能追认为已验证事实**。测试套件混合了纯函数、接口、SQLite / Chroma 集成、源码契约和真实 API 测试。通过数量也不代表每个测试都能有效发现错误：本轮故意注入错误，发现并修正了两处会漏报的检查。实际运行记录、变异抽查、跳过原因与验证范围见 [测试与验证](docs/测试与验证.md)。历史论文材料里的数字保留为历史记录。
+
+```powershell
+./.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+./.venv/Scripts/python.exe -m pytest -q --junitxml=.pytest-data/results.xml
+./.venv/Scripts/python.exe -m ruff check app scripts tests desktop/backend_entry.py desktop/scripts
+./.venv/Scripts/python.exe scripts/check_docs.py
+cd desktop
+npm test
+```
+
+默认测试使用隔离数据目录 `.pytest-data/`，不读取开发者 `.env`，真实 LLM 请求须显式传入 `--live`。Chroma 集成测试仍使用真实本地 ONNX 模型，首次运行需要下载模型。仓库包含 Windows CI 配置，运行后端回归、桌面测试和静态检查，并保存 JUnit 报告。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [`docs/快速开始.md`](docs/快速开始.md) | **装依赖 / 起服务 / 选 SQLite 还是 MySQL / 配置命名空间 / 跑测试**（新装先看这个） |
-| [`docs/项目结构.md`](docs/项目结构.md) | 目录职责、统一响应格式、数据库表与外键级联策略、建表与迁移脚本 |
-| [`docs/可视化控制台.md`](docs/可视化控制台.md) | 零依赖前端：为什么不用框架、**改代码为什么不会白屏**、能点哪些功能、六个刻意做的交互 |
-| [`docs/大模型适配.md`](docs/大模型适配.md) | 两个协议的**真实差异**、替用户做的决定如何如实回报、思考强度、错误码归一化、重试、推理模型、生成参数 |
-| [`docs/账号与模型配置.md`](docs/账号与模型配置.md) | JWT 双令牌与几处安全取舍、模型配置 CRUD、**API Key 三态更新约定**、响应里的派生诊断信息 |
-| [`docs/提示词预设.md`](docs/提示词预设.md) | 酒馆式 completion preset：导入导出、块启停与深度注入、**内置守卫规则**、两条最容易搞错的规则 |
-| [`docs/角色卡与世界书.md`](docs/角色卡与世界书.md) | 角色卡 CRUD / 公共卡库 / 删除选项 / Character Card V2 互操作 / **PNG 导入**、HTML 分段混排、界面主题、世界书 |
-| [`docs/记忆与检索.md`](docs/记忆与检索.md) | 向量库与可插拔嵌入后端、世界书关键词触发、**RRF 混合检索**、状态漂移曲线、分层剧情总结、记忆锚点 |
-| [`docs/对话与流式.md`](docs/对话与流式.md) | 会话接口、SSE 事件表、卡自带状态块、思考过程落库、消息级编辑/撤回/重生成、提示词是怎么拼的 |
-| [`docs/扩展功能.md`](docs/扩展功能.md) | 骰子插件（随机数由**后端**掷）、**生图插件**（每轮按正文配图，需自配图像 Key）、VN 立绘、自动翻译中间件、对话分支（世界线） |
-| [`docs/桌面版安装.md`](docs/桌面版安装.md) | 下载安装包 / 从源码构建 / 首次设置向导 / 三条诚实边界与验收脚本 |
-| [`docs/版本与进度.md`](docs/版本与进度.md) | v0.4.0（含 2026-11-07 生图插件补充）与 v0.3.0 变更日志、逐项开发进度、真实 API 测试怎么开 |
-| [`docs/踩坑精选.md`](docs/踩坑精选.md) | 最值得一读的十几个坑（静默失败为主），完整记录见 `docs/pitfalls.md` |
+| [快速开始](docs/快速开始.md) | 安装、配置、数据位置与开发命令 |
+| [测试与验证](docs/测试与验证.md) | 可复现命令、实测记录、测试边界 |
+| [项目结构](docs/项目结构.md) | 目录职责、响应格式、数据库结构与迁移 |
+| [系统总览](docs/overview.md) | 功能、技术栈与对话数据流 |
+| [可视化控制台](docs/可视化控制台.md) | 控制台交互与前端缓存机制 |
+| [大模型适配](docs/大模型适配.md) | 协议差异、重试、思考与错误处理 |
+| [账号与模型配置](docs/账号与模型配置.md) | 认证、API Key 与模型管理 |
+| [提示词预设](docs/提示词预设.md) | 导入、块装配与深度注入 |
+| [角色卡与世界书](docs/角色卡与世界书.md) | 卡片、PNG 导入、世界书与主题 |
+| [记忆与检索](docs/记忆与检索.md) | 向量检索、关键词触发、总结与记忆锚点 |
+| [对话与流式](docs/对话与流式.md) | 会话、SSE、消息编辑与状态块 |
+| [扩展功能](docs/扩展功能.md) | 骰子、生图、立绘、翻译与对话分支 |
+| [桌面版安装](docs/桌面版安装.md) | 安装、数据目录和验收 |
+| [版本与进度](docs/版本与进度.md) | 功能变更记录 |
+| [生成参数](docs/generation-params.md) | 参数字段及适用范围 |
+| [踩坑精选](docs/踩坑精选.md) | 常见故障与修复依据 |
+| [维护记录](docs/维护记录.md) | 本轮清理、兼容范围与验证限制 |
 
-## 开发与论文资料
+[论文素材](docs/paper-materials.md) 和 [完整开发记录](docs/pitfalls.md) 保留设计背景与历史实验，引用数值前应按对应条件重跑。
 
-| 文档 | 内容 |
-|---|---|
-| [`docs/overview.md`](docs/overview.md) | **系统总结**：一页看懂"做了什么、有哪些功能、用了什么技术、怎么验证"（给人看的总览） |
-| [`docs/paper-materials.md`](docs/paper-materials.md) | **论文素材**：可直接引用的对比表、公式、实测数据、踩坑表 —— 每条都标注代码出处与复现命令 |
-| [`docs/pitfalls.md`](docs/pitfalls.md) | 开发踩坑记录：30 类真实问题，每条含「现象 → 根因 → 修复 → 为什么难发现」 |
-| [`docs/generation-params.md`](docs/generation-params.md) | 生成参数字段的逐项说明与界面文案 |
-| [`desktop/README.md`](desktop/README.md) | 桌面壳：首次打开会发生什么 / 打包后端 / 出安装包 / 安装后验收 |
-| `docs/thesis-handoff.md`、`docs/dev-notes/` | **本机文件，不在仓库里**（已 gitignore）：交接清单与逐轮开发笔记 |
+## 数据与许可
 
-## 快速开始
+用户密码以 bcrypt 哈希保存；用户配置的 API Key 经 Fernet 加密后入库。手工配置可保存在 `.env`，自动密钥保存在数据根目录的 `config/.secrets.env`。备份数据库时应同时备份配置与密钥，否则已保存的 API Key 可能无法解密。对话会发送给用户选择的第三方 API 服务商。
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-然后打开 **http://127.0.0.1:8000/console** —— 图形界面，直接点着用。
-**不用配 `.env`、不用装数据库**：默认 SQLite 后端，表与密钥由后端首次启动时自建。
-（接口文档 `/docs`、`/redoc`；健康检查 `/health`。）
-
-想换 MySQL、想改配置项、想跑测试套件 —— 见 [`docs/快速开始.md`](docs/快速开始.md)。
-
-## 安全说明
-
-- 数据库密码、JWT 密钥、API Key 加密密钥只存放于 `.env`，已被 `.gitignore` 忽略。
-- 用户自配的 LLM API Key 采用 Fernet 对称加密后入库，**不存明文**，响应里只返回脱敏形式。
-- 密码使用 bcrypt 哈希存储，不可逆。
-
-## 许可与免责
-
-本项目**不是开源项目**，而是「源码可见、保留权利」：代码公开是为便于学习、教学与
-学术评审，但**不允许未授权分发或商业使用**。完整条款见根目录 [`LICENSE`](LICENSE)。
-
-摘要：
-
-- ✅ 可在线阅读、克隆、本地修改（修改版不得对外分发）；学术引用请注明出处
-- ✅ Release 中的安装包可个人非商业下载使用
-- ❌ 不得分发衍生版本、不得商业使用
-- 商业授权请联系作者
-
-**免责声明**：本软件按「现状」提供，不附带任何担保；著作权人不承担因使用本软件
-产生的任何责任。特别提示三点（详见 `LICENSE` 第三节）：
-
-1. 软件会把你配置后产生的对话内容**发送至你自行指定的第三方 API 服务商**，
-   数据合规性由你自行判断；
-2. 你的 API Key 与本机数据只存在本地，**请自行备份**，作者无法访问也无法帮你找回；
-3. 安装包**未做代码签名**，运行前请核对 Release 页标注的 SHA256。
+本项目为**源码可见、保留权利**，不是开源许可。允许阅读、克隆和本地修改；未经授权不得分发衍生版本或用于商业用途。Release 可用于个人非商业使用。完整许可与免责声明见 [LICENSE](LICENSE)。

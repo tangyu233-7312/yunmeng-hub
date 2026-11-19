@@ -47,7 +47,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sqlalchemy import inspect  # noqa: E402
-from sqlalchemy.schema import CreateTable  # noqa: E402
+from sqlalchemy.schema import CreateIndex, CreateTable  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 from app.core.logging import setup_logging  # noqa: E402
@@ -58,8 +58,8 @@ from app.db.mysql import check_connection, dispose_engine, get_engine  # noqa: E
 import app.db.models  # noqa: E402, F401
 
 
-def dump_sql() -> Path:
-    """把所有表的建表语句导出到 scripts/schema.sql。
+def render_sql() -> str:
+    """从 ORM 生成包含表和独立索引的参考 DDL，不连接数据库。
 
     ★ 固定用 **MySQL 方言**导出：这份文件是给论文附录/人工审查看的参考 DDL，
       而 MySQL 是两者中"约束更严"的那个（有 MEDIUMTEXT、有显式字符集）。
@@ -79,10 +79,17 @@ def dump_sql() -> Path:
     for table in Base.metadata.sorted_tables:
         ddl = str(CreateTable(table).compile(dialect=dialect)).strip()
         statements.append(f"{ddl};")
+        for index in sorted(table.indexes, key=lambda item: item.name or ""):
+            statements.append(f"{CreateIndex(index).compile(dialect=dialect)};")
         statements.append("")
 
+    return "\n".join(line.rstrip() for line in "\n".join(statements).splitlines()) + "\n"
+
+
+def dump_sql() -> Path:
+    """更新参考 DDL，不修改运行中的数据库。"""
     target = PROJECT_ROOT / "scripts" / "schema.sql"
-    target.write_text("\n".join(statements), encoding="utf-8")
+    target.write_text(render_sql(), encoding="utf-8")
     return target
 
 
@@ -113,8 +120,12 @@ def print_table_summary() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="初始化数据库（SQLite 或 MySQL，由 HNE_DB_BACKEND 决定）")
-    parser.add_argument(
+    export = parser.add_mutually_exclusive_group()
+    export.add_argument(
         "--dump-sql", action="store_true", help="仅导出建表 SQL 到 scripts/schema.sql"
+    )
+    export.add_argument(
+        "--check-sql", action="store_true", help="检查 scripts/schema.sql 是否与模型一致，不连接数据库"
     )
     parser.add_argument(
         "--drop", action="store_true", help="先删除所有表再重建（会清空数据！）"
@@ -127,15 +138,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    settings = get_settings()
-
-    # 让脚本和 Web 服务使用同一套日志格式（默认 loguru 格式会与项目风格不一致）
-    setup_logging()
-
     if args.dump_sql:
         path = dump_sql()
         print(f"[OK] 建表 SQL 已导出：{path}")
         return 0
+    if args.check_sql:
+        target = PROJECT_ROOT / "scripts" / "schema.sql"
+        matches = target.is_file() and target.read_text(encoding="utf-8") == render_sql()
+        print("[OK] schema.sql 与 ORM 一致" if matches else "[FAIL] 请运行 scripts/init_db.py --dump-sql")
+        return 0 if matches else 1
+
+    settings = get_settings()
+    setup_logging()
 
     print("=" * 64)
     print(f"  数据库初始化  |  {settings.database_label}")

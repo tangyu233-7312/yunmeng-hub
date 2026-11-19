@@ -20,13 +20,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.exceptions import BadRequestError
-from app.db.models import Message, NarrativeSession, User
+from app.db.models import User
 from app.db.mysql import session_scope
 from app.llm.params import GenerationParams, compute_context_budget
 from app.llm.schema import ChatResult, StreamChunk, TokenUsage
 from app.main import app
 from app.narrative import engine
-from app.narrative import imagegen as imagegen_rules
 from app.narrative.presets import GUARD_IDENTITY_MARKER
 from app.services import imagegen_service, plugin_service
 from app.services.plugin_service import PLUGIN_CATALOG

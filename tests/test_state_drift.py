@@ -151,7 +151,7 @@ def test_missing_block_rounds_are_flagged() -> None:
 def test_all_four_kinds_show_up_in_the_script() -> None:
     """脚本覆盖四类机制：越界夹取 / 上限跳变护栏 / 脏值丢弃 / 未知字段忽略。"""
     totals = drift.summary(drift.simulate(_spec()))
-    for kind in drift.KINDS:
+    for kind in ("clamped", "guarded", "rejected", "unknown"):
         assert totals[f"{kind}_total"] > 0, f"脚本没有覆盖 {kind}：{totals}"
 
 
