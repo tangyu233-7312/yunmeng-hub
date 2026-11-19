@@ -11,6 +11,9 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 35
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,4 +52,5 @@ jobs:
         with:
           name: backend-junit
           path: .pytest-data/results.xml
+          include-hidden-files: true
           if-no-files-found: warn
