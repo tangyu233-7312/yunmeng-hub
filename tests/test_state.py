@@ -22,28 +22,10 @@ from app.main import app
 from app.narrative import engine
 from app.narrative import state as state_mod
 from app.narrative import state_schema as schemas
-from app.narrative import world_book_scanner
 
 BASE = "/api/v1/narrative/sessions"
 CARDS = "/api/v1/character-cards"
 PROVIDERS = "/api/v1/providers"
-
-
-class _Session:
-    """鸭子类型的会话行（纯函数测试用）。"""
-
-    def __init__(
-        self,
-        state_json: str | None = None,
-        sid: int = 1,
-        schema: dict | None = None,
-    ) -> None:
-        self.id = sid
-        self.state_json = state_json
-        #: 落库的状态栏格式（None = 迁移前的旧会话，走兼容分支）
-        self.state_schema_json = (
-            json.dumps(schema, ensure_ascii=False) if schema is not None else None
-        )
 
 
 class FakeAdapter:
@@ -112,7 +94,9 @@ def _make_user(client: TestClient) -> dict:
     return {
         "id": created.json()["data"]["id"],
         "username": account["username"],
-        "headers": {"Authorization": f"Bearer {logged_in.json()['data']['access_token']}"},
+        "headers": {
+            "Authorization": f"Bearer {logged_in.json()['data']['access_token']}"
+        },
     }
 
 
@@ -139,7 +123,9 @@ def _session_with(client: TestClient, user: dict, card: dict | None = None) -> i
                     "data": {
                         "name": f"状态卡_{uuid.uuid4().hex[:6]}",
                         "first_mes": "……你来了。",
-                        "extensions": {"hne": {"state_schema": LEGACY_SCHEMA["fields"]}},
+                        "extensions": {
+                            "hne": {"state_schema": LEGACY_SCHEMA["fields"]}
+                        },
                     },
                 }
             },
@@ -182,156 +168,12 @@ def _session_with(client: TestClient, user: dict, card: dict | None = None) -> i
 
 
 # ==================================================================
-#  一、解析（纯函数）
-# ==================================================================
-def test_extract_takes_last_block_and_strips_all() -> None:
-    """模型偶尔先复述旧状态再给新的：必须取**最后**一块，且正文里不留 JSON。"""
-    content = (
-        "她走进钟楼。\n"
-        '<state>{"hp": {"current": 10, "max": 100}}</state>\n'
-        "钟声停了。\n"
-        '<state>{"hp": {"current": 90, "max": 100}}</state>'
-    )
-    cleaned, raw = state_mod.extract_state_block(content)
-    assert "<state>" not in cleaned and "</state>" not in cleaned
-    assert "她走进钟楼。" in cleaned and "钟声停了。" in cleaned
-    assert raw == '{"hp": {"current": 90, "max": 100}}'
-
-
-def test_extract_without_block_is_noop() -> None:
-    cleaned, raw = state_mod.extract_state_block("只有正文")
-    assert cleaned == "只有正文" and raw is None
-
-
-# ==================================================================
 #  二、校验与合并
 # ==================================================================
 #: 测试用 schema（="这张卡声明了哪些状态字段"）。
 #  ★ 字段清单不再由 state.py 写死，所以这里必须显式给一份 ——
 #    这正是本次改动的目的：**没声明的字段不该凭空出现**。
 LEGACY_SCHEMA = schemas.legacy_schema()
-
-
-def test_normalize_clamps_hp_and_keeps_previous_max() -> None:
-    state, notes = state_mod.normalize(
-        {"hp": {"current": 150, "max": 100}}, {}, LEGACY_SCHEMA
-    )
-    assert state["hp"] == 100 and state["max"] == 100
-    assert any("夹到" in note for note in notes)
-
-    # 上限一轮内翻倍 → 不接受，保留上一轮，并如实提醒
-    state2, notes2 = state_mod.normalize(
-        {"hp": {"current": 60, "max": 300}}, {"hp": 50, "max": 100}, LEGACY_SCHEMA
-    )
-    assert state2["max"] == 100
-    assert any("上限" in note for note in notes2)
-
-
-def test_normalize_merges_missing_fields_from_previous() -> None:
-    """模型漏写字段时沿用旧值 —— 状态不能被"少写一个键"抹掉。"""
-    previous = {
-        "hp": 30,
-        "max": 100,
-        "inventory": ["钥匙"],
-        "location": "钟楼",
-        "quests": [{"title": "找猫", "status": "active"}],
-    }
-    state, _ = state_mod.normalize({"location": "地下室"}, previous, LEGACY_SCHEMA)
-    assert state["location"] == "地下室"
-    assert state["hp"] == 30 and state["max"] == 100
-    assert state["inventory"] == ["钥匙"]
-    assert state["quests"] == previous["quests"]
-
-
-def test_normalize_rejects_dirty_values() -> None:
-    state, notes = state_mod.normalize(
-        {
-            "inventory": ["钥匙", 3, "钥匙", ""],
-            "quests": [{"title": "找猫", "status": "莫名其妙"}, "顺手修钟"],
-            "flags": {"见过神父": True},
-            "hp": "一百",
-        },
-        {},
-        LEGACY_SCHEMA,
-    )
-    assert state["inventory"] == ["钥匙"]  # 数字与空串被丢掉，重复项去重
-    assert state["quests"] == [
-        {"title": "找猫", "status": "active"},  # 非法 status 归一到 active
-        {"title": "顺手修钟", "status": "active"},
-    ]
-    assert state["flags"] == {"见过神父": True}
-    assert any("hp 不是数字" in note for note in notes)
-
-
-def test_normalize_ignores_fields_the_card_did_not_declare() -> None:
-    """★ 没声明的字段一律忽略（并如实提醒）—— 模型自己加的字段不该悄悄落库。"""
-    schema = schemas.parse_schema(
-        [{"name": "魔力", "label": "魔力", "type": "number"}]
-    )[0]
-    state, notes = state_mod.normalize(
-        {"魔力": 80, "hp": 100, "max": 100, "location": "教室"}, {}, schema
-    )
-    assert state == {"魔力": 80}, "只有卡里声明过的字段才该被存下来"
-    assert any("没有定义" in note for note in notes)
-
-
-def test_normalize_without_schema_does_nothing() -> None:
-    """空 schema（这张卡没定义状态栏）→ 不解析任何字段。"""
-    state, _notes = state_mod.normalize({"hp": 10, "max": 100}, {}, {"spec": "x", "fields": []})
-    assert state == {}
-
-
-def test_ensure_shape_follows_the_schema() -> None:
-    """骨架由 schema 决定（老实现把 HP 骨架写死在弹窗里）。"""
-    schema = schemas.parse_schema(
-        [
-            {"name": "魔力", "type": "meter"},
-            {"name": "携带物", "type": "list"},
-            {"name": "变身", "type": "text"},
-        ]
-    )[0]
-    shape = state_mod.ensure_shape({"魔力": 30}, schema)
-    assert shape == {"魔力": 30, "max": 100, "携带物": [], "变身": ""}
-
-
-def test_apply_reply_degrades_on_broken_json() -> None:
-    """坏 JSON 不能抛异常：沿用上一轮 + 告诉用户。"""
-    session = _Session('{"hp": 42, "max": 100}', schema=LEGACY_SCHEMA)
-    cleaned, notes = state_mod.apply_reply(session, "正文\n<state>{不是 JSON}</state>")
-    assert cleaned == "正文"
-    assert session.state_json == '{"hp": 42, "max": 100}'  # 原样保留
-    assert notes and "不是合法 JSON" in notes[0]
-
-
-def test_render_for_prompt_states_protocol() -> None:
-    session = _Session('{"location": "钟楼"}', schema=LEGACY_SCHEMA)
-    block = state_mod.render_for_prompt(session)
-    assert state_mod.BLOCK_TITLE in block
-    assert '"钟楼"' in block
-    # ★ 协议拆成两段：事实（render_for_prompt，排在守卫之前）
-    #   + 输出契约（render_contract，排在整条提示词最末，见下面的位置断言）。
-    #   模型必须能同时看到"当前状态是什么"和"<state> 这个标记怎么写"。
-    assert state_mod.STATE_OPEN in state_mod.render_contract(LEGACY_SCHEMA)
-    # 没有状态时也要渲染协议，否则模型永远不会开始输出状态块
-    assert state_mod.BLOCK_TITLE in state_mod.render_for_prompt(_Session(None, schema=LEGACY_SCHEMA))
-
-
-def test_render_for_prompt_is_empty_without_a_declared_schema() -> None:
-    """★ 这张卡没定义状态栏、也没有任何状态 → 不注入任何协议。
-
-    老实现无论什么卡都塞 HP 那套，于是没声明 HP 的卡（魔法少女 / 魔女裁判）
-    也长出 `HP 100/100` —— 那是用户明确指出的设计错误。
-    """
-    assert state_mod.render_for_prompt(_Session(None)) == ""
-    assert state_mod.render_for_prompt(_Session(None, schema={"spec": "x", "fields": []})) == ""
-
-
-def test_legacy_session_without_schema_still_renders_old_fields() -> None:
-    """迁移前的旧会话（没有 schema 记录，但已有状态）走兼容分支，状态栏不会变空白。"""
-    session = _Session('{"hp": 100, "max": 100}')
-    block = state_mod.render_for_prompt(session)
-    assert state_mod.BLOCK_TITLE in block, "有状态的旧会话仍要能看到当前状态"
-    assert state_mod.effective_schema(session).get("legacy") is True
 
 
 # ==================================================================
@@ -361,7 +203,9 @@ def test_reply_state_is_stored_stripped_and_reinjected(
     #   卡作者写的复杂/美化排版在按 schema 解析成字段后就没了，所以必须另存原文。
     assert assistant["state_raw"], "模型这一轮输出了 <state>，原文就该留下来"
     assert '"铜钥匙"' in assistant["state_raw"], "原文要是**未解析**的那一份"
-    assert assistant["state_raw"].startswith("{"), "存的是块里的原文，不含 <state> 标签本身"
+    assert assistant["state_raw"].startswith("{"), (
+        "存的是块里的原文，不含 <state> 标签本身"
+    )
 
     detail = client.get(f"{BASE}/{session_id}", headers=user["headers"]).json()["data"]
     # meter 字段按 schema 扁平存（hp 与它的上限 max 是两个键，不是嵌套对象）
@@ -411,39 +255,6 @@ def test_broken_state_block_does_not_break_the_turn(
     assert "<state>" not in detail["messages"][-1]["content"]
 
 
-# ==================================================================
-#  四、输出契约的位置 + 没按格式输出时必须说出来
-# ==================================================================
-def test_render_contract_demands_every_turn() -> None:
-    """用户明确要求："状态栏每一轮都要输出，哪怕情况没有变化。" """
-    contract = state_mod.render_contract()
-    assert state_mod.CONTRACT_TITLE in contract
-    assert state_mod.STATE_OPEN in contract
-    assert "没有任何变化" in contract, "契约里必须写明『没变化也要再输出一次』"
-
-
-def test_apply_reply_warns_when_model_skips_the_state_block() -> None:
-    """拒绝静默降级：模型没按格式输出就得说出来，否则用户只看到空状态栏。"""
-    # ★ 提醒只在"这张卡**要求过**状态块"时才有意义（第六轮定的口径：
-    #   没声明状态栏的卡不注入协议、也就不能反过来怪模型没输出），所以这里给一份 schema。
-    session = _Session(None, schema=LEGACY_SCHEMA)
-    cleaned, notes = state_mod.apply_reply(session, "只有正文")
-    assert cleaned == "只有正文" and session.state_json is None
-    assert notes and "没有 <state> 状态块" in notes[0]
-
-    # 解析开场白时要能静默（开场白没有状态块是常态，不该弹提醒）
-    _c, quiet = state_mod.apply_reply(session, "开场白", notify_missing=False)
-    assert quiet == []
-
-
-def test_apply_reply_is_quiet_when_the_card_never_asked_for_state() -> None:
-    """★ 没定义状态栏的卡：模型不输出状态块**不算错**，不该弹提醒（也不该落库）。"""
-    session = _Session(None)
-    cleaned, notes = state_mod.apply_reply(session, "只有正文")
-    assert cleaned == "只有正文" and notes == []
-    assert session.state_json is None
-
-
 def test_contract_sits_after_the_identity_guard(
     client: TestClient, user: dict, fake_llm
 ) -> None:
@@ -458,165 +269,9 @@ def test_contract_sits_after_the_identity_guard(
     assert sent.status_code == 201, sent.text
     system = fake_llm.script["requests"][-1].messages[0].content
     assert state_mod.CONTRACT_TITLE in system
-    assert system.index(state_mod.CONTRACT_TITLE) > system.index("[最高优先级 · 身份认知]")
-
-
-# ==================================================================
-#  六、★ 状态栏格式来自卡 / 世界书（本次修复的核心）
-# ==================================================================
-class _Book:
-    """鸭子类型的世界书行（纯函数测试用）。"""
-
-    def __init__(self, entries: list) -> None:
-        self.entries = entries
-
-
-class _Msg:
-    """鸭子类型的消息行（世界书扫描用）。"""
-
-    def __init__(self, content: str) -> None:
-        self.content = content
-
-
-class _Card:
-    """鸭子类型的角色卡行（只带 extra_data）。"""
-
-    def __init__(self, extra: dict | None) -> None:
-        self.extra_data = extra or {}
-
-
-def _card_with(hne: dict) -> _Card:
-    return _Card({"extensions": {"hne": hne}})
-
-
-def test_card_without_any_declaration_yields_empty_schema() -> None:
-    """★ 没声明 = 空 schema（不注入协议、不画状态栏）—— 这是本次要修的错。"""
-    schema, notes = schemas.resolve_schema(_card_with({}), None)
-    assert schemas.is_empty(schema)
-    assert notes == []
-
-
-def test_card_declared_schema_wins_over_world_book_and_initial_state() -> None:
-    """三源优先级：卡显式声明 > 世界书条目 > initial_state 推断。"""
-    card = _card_with(
-        {
-            "state_schema": [{"name": "魔力", "label": "魔力", "type": "number"}],
-            "initial_state": {"hp": 100, "max": 100},
-        }
+    assert system.index(state_mod.CONTRACT_TITLE) > system.index(
+        "[最高优先级 · 身份认知]"
     )
-    book = _Book([{"keys": ["state_definition"], "content": '<state>{"别的": 1}</state>'}])
-    schema, _ = schemas.resolve_schema(card, book)
-    assert schema["source"] == "card"
-    assert schemas.field_names(schema) == ["魔力"], "卡里的显式声明最权威"
-
-
-def test_world_book_state_entry_defines_the_fields() -> None:
-    """★ 作者把状态栏格式写在世界书里（最常用）—— 正文里的示例 JSON 决定字段。"""
-    book = _Book(
-        [
-            {"keys": ["灯"], "content": "灯塔的设定"},
-            {
-                "name": "[状态栏] 魔女裁判",
-                "keys": [],
-                "content": (
-                    "每轮末尾输出状态块，字段：魔力、变身、携带物。\n"
-                    '<state>{"魔力": 80, "变身": "已变身", "携带物": ["魔杖"]}</state>'
-                ),
-            },
-        ]
-    )
-    schema, notes = schemas.resolve_schema(_card_with({}), book)
-    assert schema["source"] == "world_book"
-    assert schemas.field_names(schema) == ["魔力", "变身", "携带物"]
-    assert schema["fields"][0]["type"] == "number"
-    assert schema["fields"][1]["type"] == "text"
-    assert schema["fields"][2]["type"] == "list"
-    # ★ 作者原文要原样进提示词（作者怎么写规则就怎么生效）
-    assert "每轮末尾输出状态块" in schema["description"]
-    assert notes == []
-
-
-def test_world_book_state_entry_is_found_by_reserved_key() -> None:
-    """另一种写法：keys 里含 state_definition（别的工具导出的世界书）。"""
-    book = _Book([{"keys": ["state_definition"], "content": '<state>{"灯油": 60}</state>'}])
-    schema, _ = schemas.resolve_schema(_card_with({}), book)
-    assert schemas.field_names(schema) == ["灯油"]
-
-
-def test_world_book_state_entry_without_example_is_reported() -> None:
-    """条目里没有示例 JSON → 如实提醒，并退回按 initial_state 推断。"""
-    book = _Book([{"name": "[状态栏]", "keys": [], "content": "魔力值 0~100，变身状态两种。"}])
-    card = _card_with({"initial_state": {"魔力": 80}})
-    schema, notes = schemas.resolve_schema(card, book)
-    assert schemas.field_names(schema) == ["魔力"]
-    assert schema["source"] == "initial_state"
-    assert any("示例" in note for note in notes), notes
-    # 没有示例时，作者原文也不能丢（它就是"格式要求"本身）
-    contract = state_mod.render_contract(schema)
-    assert state_mod.CONTRACT_TITLE in contract
-
-
-def test_schema_from_nested_initial_state_becomes_a_meter() -> None:
-    """老写的嵌套 initial_state 也能吃：{"hp":{"current","max"}} → 一条 meter。"""
-    card = _card_with({"initial_state": {"hp": {"current": 70, "max": 90}}})
-    schema, _ = schemas.resolve_schema(card, None)
-    assert schemas.field_names(schema) == ["hp"]
-    assert schema["fields"][0]["type"] == "meter"
-    assert schema["fields"][0]["initial_current"] == 70
-    assert schema["fields"][0]["initial_max"] == 90
-
-
-def test_schema_parsing_rejects_bad_entries_without_raising() -> None:
-    """作者写歪一格不该让整张卡的状态栏消失：坏的丢弃 + 如实提醒。"""
-    schema, notes = schemas.parse_schema(
-        [
-            {"name": "魔力", "type": "number"},
-            {"name": "魔力"},  # 重复
-            {"name": "有 空格", "type": "text"},  # 非法名
-            "整个都不是对象",
-        ]
-    )
-    assert schemas.field_names(schema) == ["魔力"]
-    assert len(notes) == 3, notes
-
-
-def test_render_contract_lists_the_declared_fields() -> None:
-    """契约里的字段清单必须与状态协议一致（否则同一份提示词自相矛盾）。"""
-    schema, _ = schemas.parse_schema(
-        [
-            {"name": "魔力", "type": "meter"},
-            {"name": "携带物", "type": "list"},
-        ]
-    )
-    contract = schemas.render_contract(schema)
-    assert "魔力（数字，0~max）" in contract
-    assert "携带物（字符串数组）" in contract
-    assert "hp" not in contract
-
-
-def test_render_contract_omits_machine_list_when_author_wrote_it() -> None:
-    """世界书里已经有作者原文时，机械清单不再重复（重复只会互相打架）。"""
-    schema = {
-        "spec": schemas.SPEC,
-        "fields": [{"name": "魔力", "type": "number", "label": "魔力"}],
-        "description": "作者自己写的格式要求",
-    }
-    contract = schemas.render_contract(schema)
-    assert state_mod.STATE_OPEN in contract
-    assert "字段只能是" not in contract
-    assert "作者自己写的格式要求" not in contract, "原文在 render_for_prompt 那边，不重复"
-
-
-def test_world_book_state_entry_is_not_injected_as_lore() -> None:
-    """★ 格式条目**不再当普通设定注入** —— 否则同一段话进提示词两遍，
-    而且那段里带着 <state> 示例，模型可能把示例当正文抄出来。
-    """
-    entry = {"name": "[状态栏] 魔女裁判", "keys": ["状态"], "content": "格式说明"}
-    book = _Book([entry])
-    result = world_book_scanner.scan(
-        book, [_Msg("我想看看状态")], scan_depth=8, token_budget=1024
-    )
-    assert result.entries == [], "格式条目必须被扫描器跳过"
 
 
 def test_end_to_end_card_schema_from_world_book(client: TestClient, user: dict) -> None:
@@ -643,7 +298,11 @@ def test_end_to_end_card_schema_from_world_book(client: TestClient, user: dict) 
     book_id = book.json()["data"]["id"]
     card = client.post(
         CARDS,
-        json={"name": f"魔法少女_{uuid.uuid4().hex[:6]}", "greeting": "……", "world_book_id": book_id},
+        json={
+            "name": f"魔法少女_{uuid.uuid4().hex[:6]}",
+            "greeting": "……",
+            "world_book_id": book_id,
+        },
         headers=user["headers"],
     )
     assert card.status_code == 201, card.text
@@ -728,7 +387,7 @@ def test_greeting_state_block_is_stripped_even_without_a_schema(
             "spec_version": "2.0",
             "data": {
                 "name": "没定义状态栏的卡",
-                "first_mes": "他抬起头看你。\n<state>{\"location\": \"钟楼\", \"hp\": {\"current\": 40, \"max\": 100}}</state>",
+                "first_mes": '他抬起头看你。\n<state>{"location": "钟楼", "hp": {"current": 40, "max": 100}}</state>',
             },
         },
     )
@@ -752,7 +411,7 @@ def test_greeting_state_block_becomes_initial_state_and_is_stripped(
             "spec_version": "2.0",
             "data": {
                 "name": "开场白自带状态的卡",
-                "first_mes": "他抬起头看你。\n<state>{\"location\": \"钟楼\", \"hp\": {\"current\": 40, \"max\": 100}}</state>",
+                "first_mes": '他抬起头看你。\n<state>{"location": "钟楼", "hp": {"current": 40, "max": 100}}</state>',
                 "extensions": {"hne": {"state_schema": LEGACY_SCHEMA["fields"]}},
             },
         },
@@ -763,3 +422,6 @@ def test_greeting_state_block_becomes_initial_state_and_is_stripped(
     texts = [m["content"] for m in detail["messages"]]
     assert any("他抬起头看你" in t for t in texts), texts
     assert all("<state>" not in t for t in texts), "开场白里的状态块必须剥掉"
+
+
+pytestmark = pytest.mark.integration

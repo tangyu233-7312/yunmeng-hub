@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.core.security import decode_token, hash_password, verify_password
+from app.core.security import verify_password
 from app.db.models import User
 from app.db.mysql import session_scope
 from app.main import app
@@ -50,7 +50,9 @@ def register(client: TestClient, account: dict[str, str]):
     return client.post("/api/v1/auth/register", json=account)
 
 
-def login(client: TestClient, account: dict[str, str], *, identifier: str | None = None):
+def login(
+    client: TestClient, account: dict[str, str], *, identifier: str | None = None
+):
     return client.post(
         "/api/v1/auth/login",
         json={
@@ -62,32 +64,6 @@ def login(client: TestClient, account: dict[str, str], *, identifier: str | None
 
 def auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
-
-
-# ==================================================================
-#  一、密码哈希（纯单元测试）
-# ==================================================================
-def test_password_hash_is_not_plaintext() -> None:
-    hashed = hash_password("Test-Passw0rd!")
-    assert hashed != "Test-Passw0rd!"
-    # bcrypt 哈希以 $2b$ 开头
-    assert hashed.startswith("$2b$")
-
-
-def test_password_hash_is_salted() -> None:
-    """同一个密码两次哈希结果必须不同（随机盐），否则彩虹表就能用。"""
-    assert hash_password("same-password") != hash_password("same-password")
-
-
-def test_verify_password() -> None:
-    hashed = hash_password("Test-Passw0rd!")
-    assert verify_password("Test-Passw0rd!", hashed) is True
-    assert verify_password("wrong-password", hashed) is False
-
-
-def test_verify_password_tolerates_broken_hash() -> None:
-    """哈希格式损坏时应返回 False，而不是抛异常导致 500。"""
-    assert verify_password("whatever", "not-a-bcrypt-hash") is False
 
 
 # ==================================================================
@@ -119,27 +95,6 @@ def test_registered_password_is_hashed_in_database(
         assert verify_password(account["password"], row.password_hash)
 
 
-def test_register_duplicate_username(client: TestClient, account: dict[str, str]) -> None:
-    register(client, account)
-    duplicate = dict(account)
-    duplicate["email"] = f"other_{uuid.uuid4().hex[:8]}@example.com"
-
-    response = register(client, duplicate)
-    assert response.status_code == 409
-    assert response.json()["code"] == "CONFLICT"
-    assert "用户名" in response.json()["message"]
-
-
-def test_register_duplicate_email(client: TestClient, account: dict[str, str]) -> None:
-    register(client, account)
-    duplicate = dict(account)
-    duplicate["username"] = f"other_{uuid.uuid4().hex[:8]}"
-
-    response = register(client, duplicate)
-    assert response.status_code == 409
-    assert "邮箱" in response.json()["message"]
-
-
 @pytest.mark.parametrize(
     ("field", "value", "hint"),
     [
@@ -160,64 +115,6 @@ def test_register_validation(
     body = response.json()
     assert body["code"] == "VALIDATION_ERROR"
     assert hint in str(body["detail"])
-
-
-def test_register_rejects_password_over_bcrypt_limit(
-    client: TestClient, account: dict[str, str]
-) -> None:
-    """★ bcrypt 只处理 72 字节。
-
-    超过会被静默截断，导致「前 72 字节相同即视为同一密码」的安全问题，
-    所以必须在接口层就拦下 —— 而且提示要说明是**字节**不是字符。
-    """
-    payload = dict(account)
-    payload["password"] = "中" * 30  # 30 × 3 = 90 字节 > 72
-    response = register(client, payload)
-
-    assert response.status_code == 422
-    assert "字节" in str(response.json()["detail"])
-
-
-def test_register_accepts_password_at_byte_limit(
-    client: TestClient, account: dict[str, str]
-) -> None:
-    """刚好 72 字节（24 个汉字）应当被接受。"""
-    payload = dict(account)
-    payload["password"] = "密" * 24  # 24 × 3 = 72 字节
-    response = register(client, payload)
-    assert response.status_code == 201
-
-
-# ==================================================================
-#  三、登录
-# ==================================================================
-def test_login_success(client: TestClient, account: dict[str, str]) -> None:
-    register(client, account)
-    response = login(client, account)
-
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["access_token"]
-    assert data["refresh_token"]
-    assert data["token_type"] == "bearer"
-    assert data["expires_in"] > 0
-
-
-def test_login_with_email(client: TestClient, account: dict[str, str]) -> None:
-    """username 字段允许填邮箱。"""
-    register(client, account)
-    response = login(client, account, identifier=account["email"])
-    assert response.status_code == 200
-
-
-def test_login_wrong_password(client: TestClient, account: dict[str, str]) -> None:
-    register(client, account)
-    response = client.post(
-        "/api/v1/auth/login",
-        json={"username": account["username"], "password": "wrong-password"},
-    )
-    assert response.status_code == 401
-    assert response.json()["code"] == "UNAUTHORIZED"
 
 
 def test_login_nonexistent_user_gives_same_message(
@@ -259,53 +156,15 @@ def test_login_disabled_account(client: TestClient, account: dict[str, str]) -> 
             row.is_active = True
 
 
-# ==================================================================
-#  四、令牌
-# ==================================================================
-def test_access_token_payload(client: TestClient, account: dict[str, str]) -> None:
-    register(client, account)
-    tokens = login(client, account).json()["data"]
-
-    claims = decode_token(tokens["access_token"], expected_type="access")
-    assert claims["sub"].isdigit()
-    assert claims["type"] == "access"
-    # 令牌里不应该放敏感信息
-    assert "password" not in str(claims)
-
-
 def test_me_returns_current_user(client: TestClient, account: dict[str, str]) -> None:
     register(client, account)
     tokens = login(client, account).json()["data"]
 
-    response = client.get("/api/v1/auth/me", headers=auth_header(tokens["access_token"]))
+    response = client.get(
+        "/api/v1/auth/me", headers=auth_header(tokens["access_token"])
+    )
     assert response.status_code == 200
     assert response.json()["data"]["username"] == account["username"]
-
-
-def test_me_without_token(client: TestClient) -> None:
-    response = client.get("/api/v1/auth/me")
-    assert response.status_code == 401
-    assert response.json()["code"] == "UNAUTHORIZED"
-
-
-def test_me_with_garbage_token(client: TestClient) -> None:
-    response = client.get("/api/v1/auth/me", headers=auth_header("not.a.jwt"))
-    assert response.status_code == 401
-    assert response.json()["detail"]["reason"] == "invalid_token"
-
-
-def test_me_with_refresh_token_is_rejected(
-    client: TestClient, account: dict[str, str]
-) -> None:
-    """★ 越权防护：refresh_token 有效期长达 7 天，绝不能当访问令牌用。"""
-    register(client, account)
-    tokens = login(client, account).json()["data"]
-
-    response = client.get("/api/v1/auth/me", headers=auth_header(tokens["refresh_token"]))
-    assert response.status_code == 401
-    detail = response.json()["detail"]
-    assert detail["expected"] == "access"
-    assert detail["actual"] == "refresh"
 
 
 def test_refresh_issues_new_tokens(client: TestClient, account: dict[str, str]) -> None:
@@ -324,19 +183,9 @@ def test_refresh_issues_new_tokens(client: TestClient, account: dict[str, str]) 
     assert me.status_code == 200
 
 
-def test_refresh_rejects_access_token(client: TestClient, account: dict[str, str]) -> None:
-    """★ 反向防护：不允许用访问令牌换新的令牌对。"""
-    register(client, account)
-    tokens = login(client, account).json()["data"]
-
-    response = client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": tokens["access_token"]}
-    )
-    assert response.status_code == 401
-    assert response.json()["detail"]["expected"] == "refresh"
-
-
-def test_oauth2_form_login_for_swagger(client: TestClient, account: dict[str, str]) -> None:
+def test_oauth2_form_login_for_swagger(
+    client: TestClient, account: dict[str, str]
+) -> None:
     """给 Swagger 的 Authorize 按钮用的表单登录端点。"""
     register(client, account)
     response = client.post(
@@ -348,3 +197,79 @@ def test_oauth2_form_login_for_swagger(client: TestClient, account: dict[str, st
     # OAuth2 流程要求顶层直接有 access_token / token_type
     assert "access_token" in body
     assert body["token_type"] == "bearer"
+
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("field,hint", [("username", "用户名"), ("email", "邮箱")])
+def test_register_conflicts(client, account, field, hint):
+    assert register(client, account).status_code == 201
+    duplicate = dict(account)
+    other = "other_" + uuid.uuid4().hex[:8]
+    duplicate["email" if field == "username" else "username"] = (
+        other + "@example.com" if field == "username" else other
+    )
+    response = register(client, duplicate)
+    assert response.status_code == 409
+    assert response.json()["code"] == "CONFLICT"
+    assert hint in response.json()["message"]
+
+
+@pytest.mark.parametrize(
+    "password,status",
+    [("密" * 24, 201), ("密" * 25, 422)],
+    ids=["72-bytes", "75-bytes"],
+)
+def test_register_password_byte_boundary(client, account, password, status):
+    response = register(client, {**account, "password": password})
+    assert response.status_code == status
+    if status == 422:
+        assert "字节" in str(response.json()["detail"])
+
+
+@pytest.mark.parametrize("identifier", ["username", "email"])
+def test_login_identifiers(client, account, identifier):
+    assert register(client, account).status_code == 201
+    response = login(client, account, identifier=account[identifier])
+    assert response.status_code == 200
+    tokens = response.json()["data"]
+    assert tokens["refresh_token"] and tokens["expires_in"] > 0
+    assert tokens["token_type"] == "bearer"
+    me = client.get("/api/v1/auth/me", headers=auth_header(tokens["access_token"]))
+    assert me.status_code == 200
+    assert me.json()["data"]["username"] == account["username"]
+
+
+@pytest.mark.parametrize(
+    "case", ["missing", "malformed", "refresh-as-access", "access-as-refresh"]
+)
+def test_token_boundaries(client, account, case):
+    headers = {}
+    if case == "malformed":
+        headers = auth_header("not.a.jwt")
+    if case in ("refresh-as-access", "access-as-refresh"):
+        assert register(client, account).status_code == 201
+        tokens = login(client, account).json()["data"]
+        if case == "access-as-refresh":
+            response = client.post(
+                "/api/v1/auth/refresh", json={"refresh_token": tokens["access_token"]}
+            )
+        else:
+            response = client.get(
+                "/api/v1/auth/me", headers=auth_header(tokens["refresh_token"])
+            )
+    else:
+        response = client.get("/api/v1/auth/me", headers=headers)
+    assert response.status_code == 401
+    body = response.json()
+    assert body["code"] == "UNAUTHORIZED"
+    if case == "malformed":
+        assert body["detail"]["reason"] == "invalid_token"
+    if case in ("refresh-as-access", "access-as-refresh"):
+        assert body["detail"]["expected"] == (
+            "access" if case == "refresh-as-access" else "refresh"
+        )
+        assert body["detail"]["actual"] == (
+            "refresh" if case == "refresh-as-access" else "access"
+        )

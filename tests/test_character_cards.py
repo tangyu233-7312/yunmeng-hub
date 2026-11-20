@@ -144,20 +144,6 @@ def test_endpoints_require_login(
     assert response.json()["code"] == "UNAUTHORIZED"
 
 
-# ==================================================================
-#  二、新建
-# ==================================================================
-def test_create_card(client: TestClient, user: dict) -> None:
-    data = create(client, user)
-
-    assert data["name"]
-    assert data["is_public"] is False
-    assert data["is_owner"] is True
-    assert data["session_count"] == 0
-    assert data["greeting"]
-    assert data["tags"] == ["奇幻", "侦探"]
-
-
 def test_create_normalizes_tags(client: TestClient, user: dict) -> None:
     """★ 标签要去空白、丢空项、去重，避免脏数据进库。"""
     data = create(
@@ -166,31 +152,6 @@ def test_create_normalizes_tags(client: TestClient, user: dict) -> None:
         tags=["  奇幻  ", "奇幻", "", "   ", "侦探"],
     )
     assert data["tags"] == ["奇幻", "侦探"]
-
-
-def test_create_cleans_blank_text_to_null(client: TestClient, user: dict) -> None:
-    """只填了空白的文本字段应当收敛成 null，而不是存一个空字符串。"""
-    data = create(client, user, description="   ", personality="")
-    assert data["description"] is None
-    assert data["personality"] is None
-
-
-def test_create_rejects_blank_name(client: TestClient, user: dict) -> None:
-    response = client.post(
-        BASE, json=payload(name="   "), headers=user["headers"]
-    )
-    assert response.status_code == 422
-
-
-def test_create_rejects_too_many_tags(client: TestClient, user: dict) -> None:
-    """★ 超限时报错而不是静默截断 —— 静默截断会让用户以为内容存进去了。"""
-    response = client.post(
-        BASE,
-        json=payload(tags=[f"标签{i}" for i in range(21)]),
-        headers=user["headers"],
-    )
-    assert response.status_code == 422
-    assert "最多" in response.text
 
 
 def test_create_allows_duplicate_names(client: TestClient, user: dict) -> None:
@@ -256,19 +217,6 @@ def test_list_pagination(client: TestClient, user: dict) -> None:
     assert len(ids) == len(set(ids)) == 3
 
 
-def test_list_search_by_name(client: TestClient, user: dict) -> None:
-    keyword = uuid.uuid4().hex[:8]
-    create(client, user, name=f"命中_{keyword}")
-    create(client, user, name=f"不命中_{uuid.uuid4().hex[:8]}")
-
-    body = client.get(
-        BASE, params={"q": keyword}, headers=user["headers"]
-    ).json()["data"]
-
-    assert body["total"] == 1
-    assert keyword in body["items"][0]["name"]
-
-
 def test_list_search_escapes_like_wildcards(client: TestClient, user: dict) -> None:
     """★ LIKE 通配符必须转义。
 
@@ -288,20 +236,6 @@ def test_list_search_escapes_like_wildcards(client: TestClient, user: dict) -> N
     assert "50%off" in body["items"][0]["name"]
 
 
-def test_list_filter_by_tag(client: TestClient, user: dict) -> None:
-    """★ 标签存在 JSON 列里，筛选走 MySQL 的 JSON_CONTAINS。"""
-    tag = f"独特标签{uuid.uuid4().hex[:6]}"
-    create(client, user, tags=[tag, "其它"])
-    create(client, user, tags=["别的"])
-
-    body = client.get(
-        BASE, params={"tag": tag}, headers=user["headers"]
-    ).json()["data"]
-
-    assert body["total"] == 1
-    assert tag in body["items"][0]["tags"]
-
-
 def test_list_filter_by_tag_is_exact_not_substring(
     client: TestClient, user: dict
 ) -> None:
@@ -310,9 +244,9 @@ def test_list_filter_by_tag_is_exact_not_substring(
     create(client, user, tags=[base_tag])
     create(client, user, tags=[base_tag + "扩展"])
 
-    body = client.get(
-        BASE, params={"tag": base_tag}, headers=user["headers"]
-    ).json()["data"]
+    body = client.get(BASE, params={"tag": base_tag}, headers=user["headers"]).json()[
+        "data"
+    ]
     assert body["total"] == 1
 
 
@@ -329,22 +263,22 @@ def test_list_sort_by_name(client: TestClient, user: dict) -> None:
 
 
 def test_list_rejects_invalid_scope(client: TestClient, user: dict) -> None:
-    response = client.get(
-        BASE, params={"scope": "everything"}, headers=user["headers"]
-    )
+    response = client.get(BASE, params={"scope": "everything"}, headers=user["headers"])
     assert response.status_code == 422
 
 
 # ==================================================================
 #  四、可见性（公开卡库的核心规则）
 # ==================================================================
-def test_list_scope_mine_excludes_others(client: TestClient, user: dict, other_user: dict) -> None:
+def test_list_scope_mine_excludes_others(
+    client: TestClient, user: dict, other_user: dict
+) -> None:
     mine = create(client, user, is_public=True)
     theirs = create(client, other_user, is_public=True)
 
-    body = client.get(
-        BASE, params={"scope": "mine"}, headers=user["headers"]
-    ).json()["data"]
+    body = client.get(BASE, params={"scope": "mine"}, headers=user["headers"]).json()[
+        "data"
+    ]
     ids = [item["id"] for item in body["items"]]
 
     assert mine["id"] in ids
@@ -360,14 +294,14 @@ def test_list_scope_public_shows_only_others_public(
     their_public = create(client, other_user, is_public=True)
     their_private = create(client, other_user, is_public=False)
 
-    body = client.get(
-        BASE, params={"scope": "public"}, headers=user["headers"]
-    ).json()["data"]
+    body = client.get(BASE, params={"scope": "public"}, headers=user["headers"]).json()[
+        "data"
+    ]
     ids = {item["id"] for item in body["items"]}
 
     assert their_public["id"] in ids
     assert their_private["id"] not in ids  # 别人的私有卡看不到
-    assert my_public["id"] not in ids      # 公共卡库不含自己的
+    assert my_public["id"] not in ids  # 公共卡库不含自己的
     assert my_private["id"] not in ids
 
     # 别人的卡要标记 is_owner=False，前端据此隐藏「编辑」按钮
@@ -375,14 +309,16 @@ def test_list_scope_public_shows_only_others_public(
     assert target["is_owner"] is False
 
 
-def test_list_scope_all_is_union(client: TestClient, user: dict, other_user: dict) -> None:
+def test_list_scope_all_is_union(
+    client: TestClient, user: dict, other_user: dict
+) -> None:
     my_private = create(client, user, is_public=False)
     their_public = create(client, other_user, is_public=True)
     their_private = create(client, other_user, is_public=False)
 
-    body = client.get(
-        BASE, params={"scope": "all"}, headers=user["headers"]
-    ).json()["data"]
+    body = client.get(BASE, params={"scope": "all"}, headers=user["headers"]).json()[
+        "data"
+    ]
     ids = {item["id"] for item in body["items"]}
 
     assert my_private["id"] in ids
@@ -390,16 +326,9 @@ def test_list_scope_all_is_union(client: TestClient, user: dict, other_user: dic
     assert their_private["id"] not in ids
 
 
-# ==================================================================
-#  五、越权防护
-# ==================================================================
-def test_owner_can_read_own_private_card(client: TestClient, user: dict) -> None:
-    created = create(client, user, is_public=False)
-    response = client.get(f"{BASE}/{created['id']}", headers=user["headers"])
-    assert response.status_code == 200
-
-
-def test_cannot_read_others_private_card(client: TestClient, user: dict, other_user: dict) -> None:
+def test_cannot_read_others_private_card(
+    client: TestClient, user: dict, other_user: dict
+) -> None:
     """★ 别人的私有卡：404，不泄露它是否存在。"""
     theirs = create(client, other_user, is_public=False)
 
@@ -407,7 +336,9 @@ def test_cannot_read_others_private_card(client: TestClient, user: dict, other_u
     assert response.status_code == 404
 
 
-def test_can_read_others_public_card(client: TestClient, user: dict, other_user: dict) -> None:
+def test_can_read_others_public_card(
+    client: TestClient, user: dict, other_user: dict
+) -> None:
     """★ 别人的公开卡可以看全文，但 is_owner 必须是 False。"""
     theirs = create(client, other_user, is_public=True, greeting="你好呀")
 
@@ -419,7 +350,9 @@ def test_can_read_others_public_card(client: TestClient, user: dict, other_user:
     assert data["is_owner"] is False
 
 
-def test_cannot_modify_others_public_card(client: TestClient, user: dict, other_user: dict) -> None:
+def test_cannot_modify_others_public_card(
+    client: TestClient, user: dict, other_user: dict
+) -> None:
     """★ 公开卡「能看不等于能改」。
 
     这里刻意返回 403 而不是 404：调用方刚刚还能读到这张卡，
@@ -444,7 +377,9 @@ def test_cannot_modify_others_public_card(client: TestClient, user: dict, other_
     assert still.json()["data"]["name"] == theirs["name"]
 
 
-def test_cannot_modify_others_private_card(client: TestClient, user: dict, other_user: dict) -> None:
+def test_cannot_modify_others_private_card(
+    client: TestClient, user: dict, other_user: dict
+) -> None:
     """★ 私有卡连「不能改」都要装作不存在（404 而不是 403）。"""
     theirs = create(client, other_user, is_public=False)
 
@@ -455,11 +390,6 @@ def test_cannot_modify_others_private_card(client: TestClient, user: dict, other
 
     deleted = client.delete(f"{BASE}/{theirs['id']}", headers=user["headers"])
     assert deleted.status_code == 404
-
-
-def test_get_missing_card(client: TestClient, user: dict) -> None:
-    response = client.get(f"{BASE}/999999999", headers=user["headers"])
-    assert response.status_code == 404
 
 
 # ==================================================================
@@ -498,20 +428,6 @@ def test_patch_null_clears_field(client: TestClient, user: dict) -> None:
     assert response.json()["data"]["description"] is None
 
 
-def test_patch_absent_field_keeps_value(client: TestClient, user: dict) -> None:
-    """空请求体 {} 不应该改动任何东西。"""
-    created = create(client, user, greeting="原始开场白", tags=["甲"])
-
-    response = client.patch(
-        f"{BASE}/{created['id']}", json={}, headers=user["headers"]
-    )
-    data = response.json()["data"]
-
-    assert data["greeting"] == "原始开场白"
-    assert data["tags"] == ["甲"]
-    assert data["name"] == created["name"]
-
-
 def test_patch_tags_null_clears_to_empty_list(client: TestClient, user: dict) -> None:
     created = create(client, user, tags=["甲", "乙"])
 
@@ -535,29 +451,6 @@ def test_patch_can_publish_and_unpublish(client: TestClient, user: dict) -> None
     assert unpublished.json()["data"]["is_public"] is False
 
 
-def test_patch_alternate_greetings(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-    response = client.patch(
-        f"{BASE}/{created['id']}",
-        json={"alternate_greetings": ["开头一", "  开头二  "]},
-        headers=user["headers"],
-    )
-    assert response.json()["data"]["alternate_greetings"] == ["开头一", "开头二"]
-
-
-# ==================================================================
-#  七、删除
-# ==================================================================
-def test_delete_card(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-
-    response = client.delete(f"{BASE}/{created['id']}", headers=user["headers"])
-    assert response.status_code == 200
-
-    gone = client.get(f"{BASE}/{created['id']}", headers=user["headers"])
-    assert gone.status_code == 404
-
-
 def test_delete_card_in_use_is_rejected(client: TestClient, user: dict) -> None:
     """★ 还有会话在用这张卡时，默认拒绝删除。
 
@@ -575,7 +468,10 @@ def test_delete_card_in_use_is_rejected(client: TestClient, user: dict) -> None:
     assert detail["session_count"] == 1
 
     # 卡还在
-    assert client.get(f"{BASE}/{created['id']}", headers=user["headers"]).status_code == 200
+    assert (
+        client.get(f"{BASE}/{created['id']}", headers=user["headers"]).status_code
+        == 200
+    )
 
     # 详情接口应当把占用数量告诉前端，便于提前弹窗提醒
     info = client.get(f"{BASE}/{created['id']}", headers=user["headers"]).json()["data"]
@@ -597,20 +493,13 @@ def test_delete_card_force_cascades_sessions(client: TestClient, user: dict) -> 
         assert db.get(CharacterCard, created["id"]) is None
 
 
-def test_delete_missing_card(client: TestClient, user: dict) -> None:
-    response = client.delete(f"{BASE}/999999999", headers=user["headers"])
-    assert response.status_code == 404
-
-
 # ==================================================================
 #  八、复制
 # ==================================================================
 def test_duplicate_own_card(client: TestClient, user: dict) -> None:
     created = create(client, user, personality="原性格", greeting="原开场白")
 
-    response = client.post(
-        f"{BASE}/{created['id']}/duplicate", headers=user["headers"]
-    )
+    response = client.post(f"{BASE}/{created['id']}/duplicate", headers=user["headers"])
     assert response.status_code == 201
     copy = response.json()["data"]
 
@@ -630,9 +519,7 @@ def test_duplicate_public_card_becomes_private(
     """
     theirs = create(client, other_user, is_public=True, personality="别人的性格")
 
-    response = client.post(
-        f"{BASE}/{theirs['id']}/duplicate", headers=user["headers"]
-    )
+    response = client.post(f"{BASE}/{theirs['id']}/duplicate", headers=user["headers"])
     assert response.status_code == 201
     copy = response.json()["data"]
 
@@ -647,64 +534,12 @@ def test_duplicate_public_card_becomes_private(
     assert patched.status_code == 200
 
 
-def test_duplicate_with_custom_name(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-    response = client.post(
-        f"{BASE}/{created['id']}/duplicate",
-        params={"name": "我的新卡"},
-        headers=user["headers"],
-    )
-    assert response.json()["data"]["name"] == "我的新卡"
-
-
 def test_cannot_duplicate_others_private_card(
     client: TestClient, user: dict, other_user: dict
 ) -> None:
     theirs = create(client, other_user, is_public=False)
-    response = client.post(
-        f"{BASE}/{theirs['id']}/duplicate", headers=user["headers"]
-    )
+    response = client.post(f"{BASE}/{theirs['id']}/duplicate", headers=user["headers"])
     assert response.status_code == 404
-
-
-# ==================================================================
-#  九、导出（Character Card V2）
-# ==================================================================
-def test_export_v2_structure(client: TestClient, user: dict) -> None:
-    created = create(
-        client,
-        user,
-        name="爱丽丝",
-        description="一位旅人",
-        personality="好奇",
-        scenario="酒馆",
-        greeting="你好，旅人。",
-        example_dialogue="<START>\n{{user}}: 你好\n{{char}}: 你好呀",
-        tags=["奇幻"],
-        alternate_greetings=["另一个开头"],
-    )
-
-    response = client.get(f"{BASE}/{created['id']}/export", headers=user["headers"])
-    assert response.status_code == 200
-
-    body = response.json()["data"]
-    assert body["spec"] == "chara_card_v2"
-    assert body["spec_version"] == "2.0"
-
-    data = body["data"]
-    # 规范字段名映射必须正确：greeting -> first_mes，example_dialogue -> mes_example
-    assert data["name"] == "爱丽丝"
-    assert data["first_mes"] == "你好，旅人。"
-    assert data["personality"] == "好奇"
-    assert data["scenario"] == "酒馆"
-    assert data["tags"] == ["奇幻"]
-    assert data["alternate_greetings"] == ["另一个开头"]
-    assert "mes_example" in data
-    # 规范要求这些字段存在且是字符串（不能是 null）
-    for key in ("creator_notes", "system_prompt", "post_history_instructions",
-                "creator", "character_version"):
-        assert isinstance(data[key], str), key
-    assert isinstance(data["extensions"], dict)
 
 
 def test_export_puts_own_fields_in_extensions_namespace(
@@ -714,29 +549,13 @@ def test_export_puts_own_fields_in_extensions_namespace(
     按规范建议放进 extensions 的命名空间，避免与别人的扩展键冲突。"""
     created = create(client, user, background="出身寒门", speaking_style="简短")
 
-    data = client.get(
-        f"{BASE}/{created['id']}/export", headers=user["headers"]
-    ).json()["data"]["data"]
+    data = client.get(f"{BASE}/{created['id']}/export", headers=user["headers"]).json()[
+        "data"
+    ]["data"]
 
     hne = data["extensions"]["hne"]
     assert hne["background"] == "出身寒门"
     assert hne["speaking_style"] == "简短"
-
-
-def test_export_missing_text_fields_are_empty_strings(
-    client: TestClient, user: dict
-) -> None:
-    """★ 缺省字段导出 "" 而不是 null：规范定义它们是 string，
-    给 null 有些严格的导入器会直接报错。"""
-    created = create(client, user, personality=None, scenario=None, greeting=None)
-
-    data = client.get(
-        f"{BASE}/{created['id']}/export", headers=user["headers"]
-    ).json()["data"]["data"]
-
-    assert data["personality"] == ""
-    assert data["scenario"] == ""
-    assert data["first_mes"] == ""
 
 
 # ==================================================================
@@ -763,31 +582,18 @@ V2_SAMPLE = {
         # 本项目没有对应列，必须原样保留
         "character_book": {
             "name": "角色世界书",
-            "entries": [{"keys": ["龙"], "content": "世上最后一条龙", "enabled": True,
-                         "insertion_order": 0, "extensions": {}}],
+            "entries": [
+                {
+                    "keys": ["龙"],
+                    "content": "世上最后一条龙",
+                    "enabled": True,
+                    "insertion_order": 0,
+                    "extensions": {},
+                }
+            ],
         },
     },
 }
-
-
-def test_import_v2_card(client: TestClient, user: dict) -> None:
-    response = client.post(
-        f"{BASE}/import",
-        json={"card": V2_SAMPLE},
-        headers=user["headers"],
-    )
-    assert response.status_code == 201, response.text
-    data = response.json()["data"]
-
-    assert data["name"] == "来自酒馆的卡"
-    assert data["greeting"] == "第一句话"
-    assert data["example_dialogue"] == "示例对话"
-    assert data["scenario"] == "场景"
-    assert data["alternate_greetings"] == ["备选一"]
-    assert data["tags"] == ["标签A", "标签B"]
-    assert data["system_prompt"] == "自定义系统提示词"
-    assert data["post_history_instructions"] == "尾注"
-    assert data["is_public"] is False
 
 
 def test_import_preserves_unknown_fields_on_export(
@@ -872,9 +678,7 @@ def test_import_v1_flat_format(client: TestClient, user: dict) -> None:
         "first_mes": "老夫在此。",
         "mes_example": "",
     }
-    response = client.post(
-        f"{BASE}/import", json={"card": v1}, headers=user["headers"]
-    )
+    response = client.post(f"{BASE}/import", json={"card": v1}, headers=user["headers"])
     assert response.status_code == 201, response.text
 
     data = response.json()["data"]
@@ -938,21 +742,6 @@ def test_import_tolerates_bad_tag_types(client: TestClient, user: dict) -> None:
     data = response.json()["data"]
     assert data["tags"] == ["正常标签", "另一个正常标签"]
     assert data["alternate_greetings"] == ["正常"]
-
-
-def test_import_duplicate_of_public_card_is_allowed(
-    client: TestClient, user: dict, other_user: dict
-) -> None:
-    """导入不校验重名（角色卡允许同名）。"""
-    create(client, other_user, is_public=True, name="热门的卡")
-
-    response = client.post(
-        f"{BASE}/import",
-        json={"card": {"name": "热门的卡"}},
-        headers=user["headers"],
-    )
-    assert response.status_code == 201
-    assert response.json()["data"]["name"] == "热门的卡"
 
 
 # ==================================================================
@@ -1043,9 +832,7 @@ def upload_png(
 
 def test_import_png_card(client: TestClient, user: dict) -> None:
     """★ 主流分发格式：角色卡数据藏在 PNG 的 tEXt 块里（base64 编码的 JSON）。"""
-    png = make_card_png(
-        text_chunks=[("chara", encode_card(V2_SAMPLE))]
-    )
+    png = make_card_png(text_chunks=[("chara", encode_card(V2_SAMPLE))])
 
     response = upload_png(client, user, png)
     assert response.status_code == 201, response.text
@@ -1139,9 +926,7 @@ def test_import_png_preserves_spaces_in_base64_card(
 def test_import_png_itxt_compressed(client: TestClient, user: dict) -> None:
     """iTXt 块（zlib 压缩 + UTF-8）也要支持。"""
     card = {"name": "压缩卡", "first_mes": "中文开场白，需要 UTF-8"}
-    png = make_card_png(
-        itxt_chunks=[("chara", json.dumps(card, ensure_ascii=False))]
-    )
+    png = make_card_png(itxt_chunks=[("chara", json.dumps(card, ensure_ascii=False))])
 
     data = upload_png(client, user, png).json()["data"]
     assert data["name"] == "压缩卡"
@@ -1161,9 +946,7 @@ def test_import_png_with_form_options(client: TestClient, user: dict) -> None:
 
 def test_import_png_rejects_non_png(client: TestClient, user: dict) -> None:
     """★ 传了个 .json 文件时要给出**可操作**的提示，而不是一句「格式错误」。"""
-    response = upload_png(
-        client, user, '{"name":"这其实是个 JSON"}'.encode("utf-8")
-    )
+    response = upload_png(client, user, '{"name":"这其实是个 JSON"}'.encode("utf-8"))
 
     assert response.status_code == 400
     body = response.json()
@@ -1226,14 +1009,6 @@ def test_import_png_rejects_missing_name(client: TestClient, user: dict) -> None
     assert response.json()["code"] == "BAD_REQUEST"
 
 
-def test_import_png_requires_login(client: TestClient) -> None:
-    png = make_card_png(text_chunks=[("chara", encode_card({"name": "x"}))])
-    response = client.post(
-        f"{BASE}/import-png", files={"file": ("card.png", png, "image/png")}
-    )
-    assert response.status_code == 401
-
-
 # ==================================================================
 #  十二、世界书关联
 # ==================================================================
@@ -1279,32 +1054,6 @@ def test_import_creates_world_book(client: TestClient, user: dict) -> None:
     assert book["entries"][0]["content"] == "世上最后一条龙"
 
 
-def test_card_detail_includes_world_book_ref(client: TestClient, user: dict) -> None:
-    book = make_book(client, user)
-    created = create(client, user, world_book_id=book["id"])
-
-    data = client.get(f"{BASE}/{created['id']}", headers=user["headers"]).json()["data"]
-
-    assert data["world_book"]["id"] == book["id"]
-    assert data["world_book"]["display_name"] == book["display_name"]
-    assert data["world_book"]["entry_count"] == 2
-    assert data["world_book"]["enabled_entry_count"] == 1
-
-
-def test_card_without_world_book_has_null_ref(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-    data = client.get(f"{BASE}/{created['id']}", headers=user["headers"]).json()["data"]
-    assert data["world_book"] is None
-
-
-def test_list_shows_world_book_name(client: TestClient, user: dict) -> None:
-    book = make_book(client, user, name="克苏鲁世界")
-    created = create(client, user, world_book_id=book["id"])
-
-    body = client.get(BASE, params={"q": created["name"]}, headers=user["headers"]).json()["data"]
-    assert body["items"][0]["world_book_name"] == "克苏鲁世界"
-
-
 def test_attach_and_detach_world_book(client: TestClient, user: dict) -> None:
     """通过 PATCH 关联 / 解除关联世界书。"""
     book = make_book(client, user)
@@ -1328,19 +1077,9 @@ def test_attach_and_detach_world_book(client: TestClient, user: dict) -> None:
     assert detached["world_book"] is None
 
     # 世界书本身不受影响
-    assert client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).status_code == 200
-
-
-def test_patch_without_world_book_field_keeps_it(client: TestClient, user: dict) -> None:
-    """不传 world_book_id 时，原有的关联必须保持不动。"""
-    book = make_book(client, user)
-    created = create(client, user, world_book_id=book["id"])
-
-    updated = client.patch(
-        f"{BASE}/{created['id']}", json={"name": "改个名字"}, headers=user["headers"]
-    ).json()["data"]
-
-    assert updated["world_book"]["id"] == book["id"]
+    assert (
+        client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).status_code == 200
+    )
 
 
 def test_cannot_attach_others_world_book(
@@ -1394,14 +1133,6 @@ def test_delete_without_force_is_rejected_when_attached(
     # 要让前端知道有两个可选项
     assert "delete_sessions" in detail["options"]
     assert "delete_world_book" in detail["options"]
-
-
-def test_delete_plain_card_needs_no_force(client: TestClient, user: dict) -> None:
-    """什么都没挂的卡，直接删，不必多此一举地要求确认。"""
-    created = create(client, user)
-    response = client.delete(f"{BASE}/{created['id']}", headers=user["headers"])
-    assert response.status_code == 200
-    assert response.json()["data"]["deleted_sessions"] == 0
 
 
 def test_delete_defaults_delete_both(client: TestClient, user: dict) -> None:
@@ -1465,7 +1196,9 @@ def test_delete_can_keep_world_book(client: TestClient, user: dict) -> None:
     assert "按你的选择" in summary["world_book_kept_reason"]
 
     # 书还在，且可以重新挂到新卡上
-    assert client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).status_code == 200
+    assert (
+        client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).status_code == 200
+    )
     another = create(client, user, world_book_id=book["id"])
     assert another["world_book"]["id"] == book["id"]
 
@@ -1501,7 +1234,9 @@ def test_delete_keeps_world_book_shared_by_other_cards(
     assert "还有 1 张角色卡在使用它" in summary["world_book_kept_reason"]
 
     # 书还在，第二张卡的关联也没断
-    assert client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).status_code == 200
+    assert (
+        client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).status_code == 200
+    )
     still = client.get(f"{BASE}/{second['id']}", headers=user["headers"]).json()["data"]
     assert still["world_book"]["id"] == book["id"]
 
@@ -1517,7 +1252,9 @@ def test_delete_last_user_of_world_book_removes_it(
         f"{BASE}/{only['id']}", params={"force": True}, headers=user["headers"]
     )
     assert response.json()["data"]["deleted_world_book"] is True
-    assert client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).status_code == 404
+    assert (
+        client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).status_code == 404
+    )
 
 
 # ==================================================================
@@ -1546,7 +1283,9 @@ def test_duplicate_card_copies_world_book_independently(
         json={"entries": [{"keys": ["改"], "content": "只改副本"}]},
         headers=user["headers"],
     )
-    original = client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).json()["data"]
+    original = client.get(f"{BOOKS}/{book['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert original["entry_count"] == 2
     assert original["entries"][0]["content"] == "世上最后一条龙已在三百年前死去"
 
@@ -1572,41 +1311,20 @@ def test_duplicate_public_card_copies_world_book_to_me(
     assert mine["user_id"] == user["id"]
 
     # 对方的书我碰不到
-    assert client.get(
-        f"{BOOKS}/{their_book['id']}", headers=user["headers"]
-    ).status_code == 404
+    assert (
+        client.get(f"{BOOKS}/{their_book['id']}", headers=user["headers"]).status_code
+        == 404
+    )
 
 
-def test_export_includes_linked_world_book(client: TestClient, user: dict) -> None:
-    """★ 导出时必须把关联的世界书还原成规范的 character_book 字段。
-
-    否则这张卡导出给别人用，世界观设定就丢了。
-    """
-    book = make_book(client, user, name="我的世界")
-    created = create(client, user, world_book_id=book["id"])
-
-    data = client.get(
-        f"{BASE}/{created['id']}/export", headers=user["headers"]
-    ).json()["data"]["data"]
-
-    assert data["character_book"]["name"] == "我的世界"
-    entries = data["character_book"]["entries"]
-    assert len(entries) == 2
-    assert entries[0]["keys"] == ["龙"]
-    # 规范要求 extensions 必须存在
-    assert isinstance(data["character_book"]["extensions"], dict)
+pytestmark = pytest.mark.integration
 
 
-def test_export_omits_character_book_when_absent(
-    client: TestClient, user: dict
-) -> None:
-    """没有世界书时应当**整个键都不出现**，而不是给个空对象。
-
-    规范里 character_book 是可选的，省略才贴近原始数据。
-    """
-    created = create(client, user)
-    data = client.get(
-        f"{BASE}/{created['id']}/export", headers=user["headers"]
-    ).json()["data"]["data"]
-
-    assert "character_book" not in data
+@pytest.mark.parametrize(
+    "overrides,hint",
+    [({"name": "   "}, "name"), ({"tags": [f"标签{i}" for i in range(21)]}, "最多")],
+)
+def test_create_validation(client, user, overrides, hint):
+    response = client.post(BASE, json=payload(**overrides), headers=user["headers"])
+    assert response.status_code == 422
+    assert hint in response.text

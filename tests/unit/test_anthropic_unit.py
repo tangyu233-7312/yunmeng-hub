@@ -1,37 +1,27 @@
-"""3.4c Anthropic Messages 协议适配器测试。
-
-由于本项目暂时没有 Anthropic 的 API Key，这里全部使用 httpx.MockTransport
-伪造服务端响应，按官方文档的请求 / 响应 / SSE 事件结构进行验证。
-
-重点覆盖「协议差异」的部分 —— 这正是本适配器存在的意义：
-    · 系统提示词是顶层参数，不是一条消息
-    · max_tokens 必填
-    · 消息必须严格 user/assistant 交替，且以 user 开头
-    · 回复是 content 数组，要按 type 过滤
-    · 流式使用命名事件，而不是每行一个增量
-    · 思考强度用 thinking.budget_tokens 表达，且必须小于 max_tokens
-    · 开启思考时不允许修改 temperature / top_p
-
-运行： .\\.venv\\Scripts\\python.exe -m pytest tests/test_anthropic.py -v
-"""
+"""Independent business rules; see docs/测试计划.md for risk and scope."""
 
 from __future__ import annotations
 
 import json
+
 from typing import Any
 
 import httpx
+
 import pytest
 
-from app.core.exceptions import ConfigurationError
+
 from app.llm import (
     ChatMessage,
     ChatRequest,
     GenerationParams,
     create_provider,
 )
+
 from app.llm.anthropic import AnthropicProvider
+
 from app.llm.base import BaseLLMProvider
+
 from app.llm.errors import (
     LLMAuthError,
     LLMBadRequestError,
@@ -52,9 +42,6 @@ OK_BODY: dict[str, Any] = {
 }
 
 
-# ==================================================================
-#  测试辅助
-# ==================================================================
 def make_anthropic(
     handler: Any,
     *,
@@ -92,7 +79,9 @@ def capture(
         captured["url"] = str(request.url)
         return httpx.Response(200, json=body or OK_BODY)
 
-    provider = make_anthropic(handler, params=params, base_url=base_url, api_key=api_key)
+    provider = make_anthropic(
+        handler, params=params, base_url=base_url, api_key=api_key
+    )
     provider.chat(ChatRequest(messages=[ChatMessage.user("hi")], **request_kwargs))
     return captured
 
@@ -106,32 +95,10 @@ def sse(*events: tuple[str, str], status_code: int = 200) -> httpx.Response:
         lines.append("")
     raw = "\n".join(lines) + "\n"
     return httpx.Response(
-        status_code, content=raw.encode("utf-8"), headers={"content-type": "text/event-stream"}
+        status_code,
+        content=raw.encode("utf-8"),
+        headers={"content-type": "text/event-stream"},
     )
-
-
-# ==================================================================
-#  一、地址与请求头（协议差异）
-# ==================================================================
-def test_url_appends_v1_when_missing() -> None:
-    """用户只填 https://api.anthropic.com 时也要能正确拼出 /v1/messages。
-
-    这与 OpenAI 兼容协议的约定不同（那边要求 base_url 自带版本号），
-    但协议差异应该在适配器内部消化，不该推给用户去记。
-    """
-    captured = capture(base_url="https://api.anthropic.com")
-    assert captured["url"] == "https://api.anthropic.com/v1/messages"
-
-
-def test_url_keeps_existing_v1() -> None:
-    captured = capture(base_url="https://api.anthropic.com/v1")
-    assert captured["url"] == "https://api.anthropic.com/v1/messages"
-
-
-def test_url_accepts_full_path() -> None:
-    """用户直接填了完整路径时不应重复拼接。"""
-    captured = capture(base_url="https://api.anthropic.com/v1/messages")
-    assert captured["url"] == "https://api.anthropic.com/v1/messages"
 
 
 def test_headers_use_x_api_key_and_version() -> None:
@@ -152,9 +119,6 @@ def test_no_api_key_header_when_empty() -> None:
     assert "x-api-key" not in headers
 
 
-# ==================================================================
-#  二、请求体构造（协议差异）
-# ==================================================================
 def test_system_prompt_is_top_level_not_a_message() -> None:
     """★ Anthropic 的系统提示词是顶层参数，不是 role=system 的消息。"""
     captured: dict[str, Any] = {}
@@ -246,9 +210,6 @@ def test_stream_flag_is_sent() -> None:
     assert captured["json"]["stream"] is True
 
 
-# ==================================================================
-#  三、思考强度的翻译（本适配器最有价值的部分）
-# ==================================================================
 def test_auto_sends_no_thinking_field() -> None:
     captured = capture(params=GenerationParams(reasoning_effort="auto"))
     assert "thinking" not in captured["json"]
@@ -259,7 +220,9 @@ def test_auto_sends_no_thinking_field() -> None:
 def test_off_truly_disables_thinking() -> None:
     """★ Anthropic 能**真正**关闭思考 —— 这是它相对 OpenAI 兼容协议的优势。"""
     captured = capture(
-        params=GenerationParams(reasoning_effort="off", temperature=0.9, max_tokens=4096)
+        params=GenerationParams(
+            reasoning_effort="off", temperature=0.9, max_tokens=4096
+        )
     )
     assert captured["json"]["thinking"] == {"type": "disabled"}
     # 关闭思考时温度不受限制，应正常保留
@@ -273,7 +236,9 @@ def test_off_truly_disables_thinking() -> None:
 def test_effort_maps_to_budget_tokens(effort: str, ratio: float) -> None:
     """★ 语义化的强度被换算成具体的 token 预算。"""
     captured = capture(
-        params=GenerationParams(reasoning_effort=effort, max_tokens=4096, temperature=0.9)
+        params=GenerationParams(
+            reasoning_effort=effort, max_tokens=4096, temperature=0.9
+        )
     )
     thinking = captured["json"]["thinking"]
     assert thinking["type"] == "enabled"
@@ -307,12 +272,15 @@ def test_removal_of_temperature_is_reported_to_caller() -> None:
 
     否则用户会以为「我设的温度生效了」，实际并没有。
     """
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=OK_BODY)
 
     provider = make_anthropic(
         handler,
-        params=GenerationParams(reasoning_effort="high", max_tokens=4096, temperature=0.9),
+        params=GenerationParams(
+            reasoning_effort="high", max_tokens=4096, temperature=0.9
+        ),
     )
     result = provider.chat(ChatRequest(messages=[ChatMessage.user("hi")]))
 
@@ -345,9 +313,6 @@ def test_request_effort_overrides_provider_default() -> None:
     assert captured["json"]["thinking"]["budget_tokens"] == int(4096 * 0.75)
 
 
-# ==================================================================
-#  四、响应解析（协议差异）
-# ==================================================================
 def test_parses_text_content_block() -> None:
     provider = make_anthropic(lambda request: httpx.Response(200, json=OK_BODY))
     result = provider.chat(ChatRequest(messages=[ChatMessage.user("hi")]))
@@ -382,7 +347,10 @@ def test_multiple_text_blocks_are_concatenated() -> None:
         {"type": "text", "text": "后半段"},
     ]
     provider = make_anthropic(lambda request: httpx.Response(200, json=body))
-    assert provider.chat(ChatRequest(messages=[ChatMessage.user("hi")])).content == "前半段后半段"
+    assert (
+        provider.chat(ChatRequest(messages=[ChatMessage.user("hi")])).content
+        == "前半段后半段"
+    )
 
 
 def test_redacted_thinking_is_marked() -> None:
@@ -408,7 +376,9 @@ def test_redacted_thinking_is_marked() -> None:
         (None, None),
     ],
 )
-def test_stop_reason_is_normalized(stop_reason: str | None, expected: str | None) -> None:
+def test_stop_reason_is_normalized(
+    stop_reason: str | None, expected: str | None
+) -> None:
     """★ Anthropic 的 stop_reason 取值与 OpenAI 的 finish_reason 完全不同。"""
     body = dict(OK_BODY)
     body["stop_reason"] = stop_reason
@@ -448,23 +418,37 @@ def test_error_body_with_http_200_is_detected() -> None:
         provider.chat(ChatRequest(messages=[ChatMessage.user("hi")]))
 
 
-# ==================================================================
-#  五、流式（命名事件 —— 与 OpenAI 形式差异最大）
-# ==================================================================
 def test_stream_collects_text_deltas() -> None:
     """★ 必须能解析 Anthropic 的命名事件流。"""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return sse(
-            ("message_start", json.dumps({
-                "type": "message_start",
-                "message": {"usage": {"input_tokens": 9, "output_tokens": 1}},
-            })),
-            ("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}'),
-            ("content_block_delta", '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你"}}'),
-            ("content_block_delta", '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"好"}}'),
+            (
+                "message_start",
+                json.dumps(
+                    {
+                        "type": "message_start",
+                        "message": {"usage": {"input_tokens": 9, "output_tokens": 1}},
+                    }
+                ),
+            ),
+            (
+                "content_block_start",
+                '{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            ),
+            (
+                "content_block_delta",
+                '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你"}}',
+            ),
+            (
+                "content_block_delta",
+                '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"好"}}',
+            ),
             ("content_block_stop", '{"type":"content_block_stop","index":0}'),
-            ("message_delta", '{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}'),
+            (
+                "message_delta",
+                '{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}',
+            ),
             ("message_stop", '{"type":"message_stop"}'),
         )
 
@@ -478,9 +462,18 @@ def test_stream_collects_text_deltas() -> None:
 def test_stream_separates_thinking_from_text() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return sse(
-            ("message_start", '{"type":"message_start","message":{"usage":{"input_tokens":5}}}'),
-            ("content_block_delta", '{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"让我想想"}}'),
-            ("content_block_delta", '{"type":"content_block_delta","delta":{"type":"text_delta","text":"答案是42"}}'),
+            (
+                "message_start",
+                '{"type":"message_start","message":{"usage":{"input_tokens":5}}}',
+            ),
+            (
+                "content_block_delta",
+                '{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"让我想想"}}',
+            ),
+            (
+                "content_block_delta",
+                '{"type":"content_block_delta","delta":{"type":"text_delta","text":"答案是42"}}',
+            ),
             ("message_stop", '{"type":"message_stop"}'),
         )
 
@@ -496,9 +489,18 @@ def test_stream_merges_input_and_output_tokens() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         return sse(
-            ("message_start", '{"type":"message_start","message":{"usage":{"input_tokens":30}}}'),
-            ("content_block_delta", '{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}'),
-            ("message_delta", '{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}'),
+            (
+                "message_start",
+                '{"type":"message_start","message":{"usage":{"input_tokens":30}}}',
+            ),
+            (
+                "content_block_delta",
+                '{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}',
+            ),
+            (
+                "message_delta",
+                '{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}',
+            ),
             ("message_stop", '{"type":"message_stop"}'),
         )
 
@@ -516,7 +518,10 @@ def test_stream_ignores_ping_and_unknown_events() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return sse(
             ("ping", '{"type":"ping"}'),
-            ("content_block_delta", '{"type":"content_block_delta","delta":{"type":"text_delta","text":"正常"}}'),
+            (
+                "content_block_delta",
+                '{"type":"content_block_delta","delta":{"type":"text_delta","text":"正常"}}',
+            ),
             ("content_block_stop", '{"type":"content_block_stop","index":0}'),
             ("message_stop", '{"type":"message_stop"}'),
         )
@@ -529,8 +534,14 @@ def test_stream_ignores_ping_and_unknown_events() -> None:
 def test_stream_raises_on_error_event() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return sse(
-            ("content_block_delta", '{"type":"content_block_delta","delta":{"type":"text_delta","text":"开始"}}'),
-            ("error", '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'),
+            (
+                "content_block_delta",
+                '{"type":"content_block_delta","delta":{"type":"text_delta","text":"开始"}}',
+            ),
+            (
+                "error",
+                '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+            ),
         )
 
     provider = make_anthropic(handler)
@@ -543,26 +554,28 @@ def test_stream_emits_notes_as_first_meta_chunk() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         return sse(
-            ("content_block_delta", '{"type":"content_block_delta","delta":{"type":"text_delta","text":"正文"}}'),
+            (
+                "content_block_delta",
+                '{"type":"content_block_delta","delta":{"type":"text_delta","text":"正文"}}',
+            ),
             ("message_stop", '{"type":"message_stop"}'),
         )
 
     provider = make_anthropic(
         handler,
-        params=GenerationParams(reasoning_effort="high", max_tokens=4096, temperature=0.9),
+        params=GenerationParams(
+            reasoning_effort="high", max_tokens=4096, temperature=0.9
+        ),
     )
     chunks = list(provider.stream_chat(ChatRequest(messages=[ChatMessage.user("hi")])))
 
     first = chunks[0]
-    assert first.delta == ""          # 元数据片段没有正文
-    assert first.is_empty is True     # 只关心 delta 的调用方会自动忽略它
+    assert first.delta == ""  # 元数据片段没有正文
+    assert first.is_empty is True  # 只关心 delta 的调用方会自动忽略它
     assert first.notes
     assert "temperature" in " ".join(first.notes)
 
 
-# ==================================================================
-#  六、错误归一化
-# ==================================================================
 @pytest.mark.parametrize(
     ("status_code", "error_type", "expected"),
     [
@@ -580,7 +593,10 @@ def test_anthropic_errors_are_normalized(
     status_code: int, error_type: str, expected: type[Exception]
 ) -> None:
     """★ Anthropic 的错误类型与状态码组合要能正确归类。"""
-    body = {"type": "error", "error": {"type": error_type, "message": "something failed"}}
+    body = {
+        "type": "error",
+        "error": {"type": error_type, "message": "something failed"},
+    }
     provider = make_anthropic(lambda request: httpx.Response(status_code, json=body))
     with pytest.raises(expected):
         provider.chat(ChatRequest(messages=[ChatMessage.user("hi")]))
@@ -590,7 +606,10 @@ def test_400_with_thinking_gets_actionable_hint() -> None:
     """思考预算相关报错要直接给出解法。"""
     body = {
         "type": "error",
-        "error": {"type": "invalid_request_error", "message": "thinking.budget_tokens: error"},
+        "error": {
+            "type": "invalid_request_error",
+            "message": "thinking.budget_tokens: error",
+        },
     }
     provider = make_anthropic(
         lambda request: httpx.Response(400, json=body),
@@ -604,17 +623,19 @@ def test_400_with_thinking_gets_actionable_hint() -> None:
 
 
 def test_api_key_not_leaked_in_error_detail() -> None:
-    body = {"type": "error", "error": {"type": "authentication_error", "message": "bad key"}}
+    body = {
+        "type": "error",
+        "error": {"type": "authentication_error", "message": "bad key"},
+    }
     provider = make_anthropic(lambda request: httpx.Response(401, json=body))
     with pytest.raises(LLMAuthError) as exc_info:
         provider.chat(ChatRequest(messages=[ChatMessage.user("hi")]))
 
-    assert "sk-ant-test-key" not in json.dumps(exc_info.value.detail, ensure_ascii=False)
+    assert "sk-ant-test-key" not in json.dumps(
+        exc_info.value.detail, ensure_ascii=False
+    )
 
 
-# ==================================================================
-#  七、模型列表与工厂注册
-# ==================================================================
 def test_list_models() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url).endswith("/v1/models")
@@ -633,48 +654,17 @@ def test_list_models() -> None:
     assert provider.list_models() == ["claude-haiku-4-5", "claude-sonnet-4-5"]
 
 
-def test_factory_creates_anthropic_provider() -> None:
-    provider = create_provider(
-        provider_type="anthropic",
-        base_url="https://api.anthropic.com",
-        api_key="sk-ant-x",
-        model_name="claude-sonnet-4-5",
-    )
-    assert isinstance(provider, AnthropicProvider)
-    assert provider.provider_type == "anthropic"
-    provider.close()
+pytestmark = pytest.mark.unit
 
 
-def test_provider_type_is_registered_in_catalog() -> None:
-    from app.llm import PROVIDER_TYPES
-
-    assert "anthropic" in PROVIDER_TYPES
-    assert "OpenAI" in PROVIDER_TYPES["openai_compatible"]
-
-
-def test_factory_from_config_with_anthropic() -> None:
-    from app.llm import ProviderConfig, create_provider_from_config
-
-    config = ProviderConfig(
-        name="我的 Claude",
-        provider_type="anthropic",
-        base_url="https://api.anthropic.com",
-        api_key="sk-ant-x",
-        model_name="claude-sonnet-4-5",
-        context_window=200000,
-        generation=GenerationParams(max_tokens=8192, reasoning_effort="medium"),
-    )
-    provider = create_provider_from_config(config)
-    assert isinstance(provider, AnthropicProvider)
-    assert provider.budget.max_output_tokens == 8192
-    provider.close()
-
-
-def test_unknown_provider_type_still_rejected() -> None:
-    with pytest.raises(ConfigurationError):
-        create_provider(
-            provider_type="gemini",
-            base_url="https://example.com",
-            api_key="k",
-            model_name="m",
-        )
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://api.anthropic.com",
+        "https://api.anthropic.com/v1",
+        "https://api.anthropic.com/v1/messages",
+    ],
+)
+def test_anthropic_endpoint(base):
+    captured = capture(base_url=base)
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"

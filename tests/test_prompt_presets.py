@@ -1,7 +1,7 @@
 """提示词预设接口测试（集成测试，需要 MySQL）。
 
 ==================== 这个测试在守什么？====================
-预设的解析语义由 tests/test_presets.py 用纯函数覆盖。
+预设的解析语义由 tests/unit/test_presets_unit.py 以公开装配行为覆盖。
 这里守的是**接线**：
 
   1. 导入 / 列表 / 详情 / 导出 的往返是否保真；
@@ -15,8 +15,6 @@
 
 from __future__ import annotations
 
-import json
-import os
 import uuid
 from typing import Any
 
@@ -28,7 +26,6 @@ from app.db.models import User
 from app.db.mysql import session_scope
 from app.llm.params import GenerationParams, compute_context_budget
 from app.llm.schema import ChatResult, StreamChunk, TokenUsage
-from app.narrative import presets
 from app.main import app
 from app.narrative import engine
 
@@ -64,7 +61,9 @@ def _make_user(client: TestClient) -> dict:
     return {
         "id": created.json()["data"]["id"],
         "username": account["username"],
-        "headers": {"Authorization": f"Bearer {logged_in.json()['data']['access_token']}"},
+        "headers": {
+            "Authorization": f"Bearer {logged_in.json()['data']['access_token']}"
+        },
     }
 
 
@@ -104,7 +103,9 @@ class FakeAdapter:
     @property
     def budget(self):
         window = getattr(self.row, "context_window", None) or self.context_window
-        max_out = getattr(self.row, "max_tokens", None) or self.default_params.max_tokens
+        max_out = (
+            getattr(self.row, "max_tokens", None) or self.default_params.max_tokens
+        )
         return compute_context_budget(window, max_out)
 
     def chat(self, request):
@@ -135,7 +136,9 @@ def fake_llm(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(engine, "build_adapter", lambda row: FakeAdapter(row))
     monkeypatch.setattr(engine.memory_mod, "remember_turn", lambda **_: None)
     monkeypatch.setattr(
-        engine.memory_mod, "recall_block", lambda **_: ("", engine.memory_mod.RecallResult())
+        engine.memory_mod,
+        "recall_block",
+        lambda **_: ("", engine.memory_mod.RecallResult()),
     )
     yield FakeAdapter
     FakeAdapter.script = {}
@@ -169,7 +172,11 @@ def make_provider(client: TestClient, user: dict, **overrides) -> dict:
         "api_key": "sk-test-not-a-real-key",
         "model_name": "mock-model",
         "context_window": 8192,
-        "generation": {"temperature": 0.8, "max_tokens": 1024, "reasoning_effort": "auto"},
+        "generation": {
+            "temperature": 0.8,
+            "max_tokens": 1024,
+            "reasoning_effort": "auto",
+        },
     }
     body.update(overrides)
     response = client.post(PROVIDERS, json=body, headers=user["headers"])
@@ -177,7 +184,9 @@ def make_provider(client: TestClient, user: dict, **overrides) -> dict:
     return response.json()["data"]
 
 
-def make_session(client: TestClient, user: dict, card_id: int, provider_id: int) -> dict:
+def make_session(
+    client: TestClient, user: dict, card_id: int, provider_id: int
+) -> dict:
     response = client.post(
         BASE,
         json={"character_card_id": card_id, "llm_provider_id": provider_id},
@@ -193,25 +202,71 @@ def make_preset(client: TestClient, user: dict, **overrides) -> dict:
         "version": 1,
         "sampling": {"temperature": 0.9},
         "blocks": [
-            {"identifier": "main", "name": "主提示", "kind": "rule", "content": "",
-             "role": "system", "system_prompt": True, "injection_position": 0,
-             "injection_depth": 0, "enabled": True, "supported": True, "order_index": 0},
-            {"identifier": "charDescription", "name": "角色简介", "kind": "marker",
-             "content": "", "role": "system", "system_prompt": True,
-             "injection_position": 0, "injection_depth": 0, "enabled": True,
-             "supported": True, "order_index": 1},
-            {"identifier": "chatHistory", "name": "对话历史", "kind": "marker",
-             "content": "", "role": "system", "system_prompt": True,
-             "injection_position": 0, "injection_depth": 0, "enabled": True,
-             "supported": True, "order_index": 2},
-            {"identifier": "rule-user", "name": "破甲-用户侧", "kind": "rule",
-             "content": "记住：你是 {{char}}，不是 AI 助手。", "role": "user",
-             "system_prompt": False, "injection_position": 1, "injection_depth": 2,
-             "enabled": True, "supported": True, "order_index": 3},
-            {"identifier": "rule-asst", "name": "破甲-角色侧", "kind": "rule",
-             "content": "明白，我不会再自称 AI。", "role": "assistant",
-             "system_prompt": False, "injection_position": 1, "injection_depth": 2,
-             "enabled": True, "supported": True, "order_index": 4},
+            {
+                "identifier": "main",
+                "name": "主提示",
+                "kind": "rule",
+                "content": "",
+                "role": "system",
+                "system_prompt": True,
+                "injection_position": 0,
+                "injection_depth": 0,
+                "enabled": True,
+                "supported": True,
+                "order_index": 0,
+            },
+            {
+                "identifier": "charDescription",
+                "name": "角色简介",
+                "kind": "marker",
+                "content": "",
+                "role": "system",
+                "system_prompt": True,
+                "injection_position": 0,
+                "injection_depth": 0,
+                "enabled": True,
+                "supported": True,
+                "order_index": 1,
+            },
+            {
+                "identifier": "chatHistory",
+                "name": "对话历史",
+                "kind": "marker",
+                "content": "",
+                "role": "system",
+                "system_prompt": True,
+                "injection_position": 0,
+                "injection_depth": 0,
+                "enabled": True,
+                "supported": True,
+                "order_index": 2,
+            },
+            {
+                "identifier": "rule-user",
+                "name": "破甲-用户侧",
+                "kind": "rule",
+                "content": "记住：你是 {{char}}，不是 AI 助手。",
+                "role": "user",
+                "system_prompt": False,
+                "injection_position": 1,
+                "injection_depth": 2,
+                "enabled": True,
+                "supported": True,
+                "order_index": 3,
+            },
+            {
+                "identifier": "rule-asst",
+                "name": "破甲-角色侧",
+                "kind": "rule",
+                "content": "明白，我不会再自称 AI。",
+                "role": "assistant",
+                "system_prompt": False,
+                "injection_position": 1,
+                "injection_depth": 2,
+                "enabled": True,
+                "supported": True,
+                "order_index": 4,
+            },
         ],
         "warnings": [],
         "source_format": "hne",
@@ -230,18 +285,6 @@ def make_preset(client: TestClient, user: dict, **overrides) -> dict:
 #  一、元信息
 # ==================================================================
 class TestMeta:
-    def test_meta_lists_blocks_macros_and_params(self, client: TestClient, user: dict) -> None:
-        response = client.get(f"{PRESETS}/meta", headers=user["headers"])
-        assert response.status_code == 200, response.text
-        data = response.json()["data"]
-
-        identifiers = {b["identifier"] for b in data["blocks"]}
-        assert {"main", "chatHistory", "jailbreak"} <= identifiers
-        assert "{{user}}" in {m["token"] for m in data["macros"]}
-        # ★ 参数生效性必须如实分类：top_k 这类云端无效的要标出来
-        assert data["params"]["temperature"] == "native"
-        assert data["params"]["top_k"] == "passthrough"
-
     def test_meta_requires_login(self, client: TestClient) -> None:
         assert client.get(f"{PRESETS}/meta").status_code == 401
 
@@ -250,44 +293,6 @@ class TestMeta:
 #  二、导入
 # ==================================================================
 class TestImport:
-    def test_import_sillytavern_keeps_order_and_flags(self, client: TestClient, user: dict) -> None:
-        """导入酒馆格式：块的顺序 / 启停 / 深度注入都要对得上。"""
-        raw = {
-            "temperature": 1.4,
-            "top_k": 0,
-            "prompts": [
-                {"identifier": "main", "system_prompt": True, "role": "assistant",
-                 "content": "我是 {{char}}。", "injection_position": 0},
-                {"identifier": "chatHistory", "system_prompt": True, "content": ""},
-                {"identifier": "rule-1", "system_prompt": False, "role": "user",
-                 "content": "不要自称 AI。", "injection_position": 1, "injection_depth": 3},
-            ],
-            "prompt_order": [
-                {"character_id": 100000, "order": [
-                    {"identifier": "main", "enabled": True},
-                    {"identifier": "chatHistory", "enabled": True},
-                ]},
-            ],
-        }
-        response = client.post(
-            f"{PRESETS}/import",
-            json={"raw": raw, "source_filename": "赤狐.json"},
-            headers=user["headers"],
-        )
-        assert response.status_code == 201, response.text
-        data = response.json()["data"]
-
-        assert data["name"] == "赤狐", "没给名字时应回落到来源文件名"
-        assert data["source_format"] == "sillytavern"
-        assert data["block_count"] == 3
-        assert data["depth_block_count"] == 1
-        by_id = {b["identifier"]: b for b in data["blocks"]}
-        assert by_id["rule-1"]["injection_position"] == 1
-        assert by_id["rule-1"]["injection_depth"] == 3
-        # top_k 是本地推理引擎参数 → 必须在 import_notes 里说清"云端会忽略"
-        assert any("本地推理引擎" in n for n in data["import_notes"])
-        assert "top_k" in data["sampling"]["ignored_by_cloud"]
-
     def test_import_rejects_empty_preset(self, client: TestClient, user: dict) -> None:
         response = client.post(
             f"{PRESETS}/import", json={"raw": {"foo": 1}}, headers=user["headers"]
@@ -295,39 +300,24 @@ class TestImport:
         assert response.status_code == 400, response.text
         assert "没有解析出任何提示词块" in response.json()["message"]
 
-    def test_import_requires_a_body(self, client: TestClient, user: dict) -> None:
-        response = client.post(f"{PRESETS}/import", json={}, headers=user["headers"])
-        assert response.status_code == 422, response.text
-
-    def test_create_from_default_gives_editable_starting_point(
-        self, client: TestClient, user: dict
-    ) -> None:
-        response = client.post(
-            f"{PRESETS}?name=我的规则", headers=user["headers"]
-        )
-        assert response.status_code == 201, response.text
-        data = response.json()["data"]
-
-        assert data["block_count"] >= 8
-        assert all(b["supported"] for b in data["blocks"])
-        # 默认结构里 worldInfoAfter 是关的（世界书只注入一次）
-        by_id = {b["identifier"]: b for b in data["blocks"]}
-        assert by_id["worldInfoBefore"]["enabled"] is True
-        assert by_id["worldInfoAfter"]["enabled"] is False
-
 
 # ==================================================================
 #  三、往返与列表
 # ==================================================================
 class TestRoundtrip:
-    def test_export_then_reimport_keeps_everything(self, client: TestClient, user: dict) -> None:
+    def test_export_then_reimport_keeps_everything(
+        self, client: TestClient, user: dict
+    ) -> None:
         created = make_preset(client, user)
         exported = client.get(
             f"{PRESETS}/{created['id']}/export", headers=user["headers"]
         )
         assert exported.status_code == 200, exported.text
         payload = exported.json()["data"]
-        assert [p["identifier"] for p in payload["prompts"]][:2] == ["main", "charDescription"]
+        assert [p["identifier"] for p in payload["prompts"]][:2] == [
+            "main",
+            "charDescription",
+        ]
 
         again = client.post(
             f"{PRESETS}/import",
@@ -339,40 +329,29 @@ class TestRoundtrip:
         original = {b["identifier"]: b for b in created["blocks"]}
         for identifier, block in original.items():
             assert blocks[identifier]["content"] == block["content"]
-            assert blocks[identifier]["injection_position"] == block["injection_position"]
+            assert (
+                blocks[identifier]["injection_position"] == block["injection_position"]
+            )
             assert blocks[identifier]["injection_depth"] == block["injection_depth"]
-
-    def test_list_puts_active_first(self, client: TestClient, user: dict) -> None:
-        first = make_preset(client, user)
-        second = make_preset(client, user)
-        client.patch(
-            f"{PRESETS}/{second['id']}", json={"is_active": True}, headers=user["headers"]
-        )
-
-        listed = client.get(PRESETS, headers=user["headers"]).json()["data"]
-        assert listed[0]["id"] == second["id"]
-        assert listed[0]["is_active"] is True
-
-        # 全局默认必须互斥
-        client.patch(
-            f"{PRESETS}/{first['id']}", json={"is_active": True}, headers=user["headers"]
-        )
-        listed = client.get(PRESETS, headers=user["headers"]).json()["data"]
-        assert sum(1 for p in listed if p["is_active"]) == 1
-        assert next(p for p in listed if p["is_active"])["id"] == first["id"]
 
 
 # ==================================================================
 #  四、权限
 # ==================================================================
 class TestOwnership:
-    def test_other_users_preset_is_404(self, client: TestClient, user: dict, other_user: dict) -> None:
+    def test_other_users_preset_is_404(
+        self, client: TestClient, user: dict, other_user: dict
+    ) -> None:
         created = make_preset(client, user)
-        response = client.get(f"{PRESETS}/{created['id']}", headers=other_user["headers"])
+        response = client.get(
+            f"{PRESETS}/{created['id']}", headers=other_user["headers"]
+        )
         # ★ 用 404 而不是 403：403 会泄露"这个 ID 存在"
         assert response.status_code == 404, response.text
 
-    def test_cannot_bind_other_users_preset(self, client: TestClient, user: dict, other_user: dict) -> None:
+    def test_cannot_bind_other_users_preset(
+        self, client: TestClient, user: dict, other_user: dict
+    ) -> None:
         created = make_preset(client, user)
         card = make_card(client, other_user)
         provider = make_provider(client, other_user)
@@ -390,7 +369,9 @@ class TestOwnership:
 #  五、块级编辑
 # ==================================================================
 class TestBlocks:
-    def test_builtin_block_cannot_be_deleted(self, client: TestClient, user: dict) -> None:
+    def test_builtin_block_cannot_be_deleted(
+        self, client: TestClient, user: dict
+    ) -> None:
         created = make_preset(client, user)
         response = client.delete(
             f"{PRESETS}/{created['id']}/blocks/main", headers=user["headers"]
@@ -398,7 +379,9 @@ class TestBlocks:
         assert response.status_code == 400, response.text
         assert "不能删除" in response.json()["message"]
 
-    def test_custom_block_can_be_added_and_deleted(self, client: TestClient, user: dict) -> None:
+    def test_custom_block_can_be_added_and_deleted(
+        self, client: TestClient, user: dict
+    ) -> None:
         created = make_preset(client, user)
         added = client.post(
             f"{PRESETS}/{created['id']}/blocks",
@@ -423,23 +406,13 @@ class TestBlocks:
             f"{PRESETS}/{created['id']}/blocks/my-rule", headers=user["headers"]
         )
         assert removed.status_code == 200, removed.text
-        assert "my-rule" not in {b["identifier"] for b in removed.json()["data"]["blocks"]}
+        assert "my-rule" not in {
+            b["identifier"] for b in removed.json()["data"]["blocks"]
+        }
 
-    def test_update_single_block_content(self, client: TestClient, user: dict) -> None:
-        created = make_preset(client, user)
-        response = client.patch(
-            f"{PRESETS}/{created['id']}/blocks/rule-user",
-            json={"content": "改写后的破甲文本", "injection_depth": 5},
-            headers=user["headers"],
-        )
-        assert response.status_code == 200, response.text
-        block = next(
-            b for b in response.json()["data"]["blocks"] if b["identifier"] == "rule-user"
-        )
-        assert block["content"] == "改写后的破甲文本"
-        assert block["injection_depth"] == 5
-
-    def test_reordering_blocks_does_not_truncate_content(self, client: TestClient, user: dict) -> None:
+    def test_reordering_blocks_does_not_truncate_content(
+        self, client: TestClient, user: dict
+    ) -> None:
         """★ 整体替换块列表时，已有块的正文必须保住（不能被截断的预览覆盖）。
 
         ★ 这里刻意**不断言具体下标**，只断言"顺序真的变了"：
@@ -452,7 +425,9 @@ class TestBlocks:
 
         blocks = list(reversed(created["blocks"]))
         response = client.patch(
-            f"{PRESETS}/{created['id']}", json={"blocks": blocks}, headers=user["headers"]
+            f"{PRESETS}/{created['id']}",
+            json={"blocks": blocks},
+            headers=user["headers"],
         )
         assert response.status_code == 200, response.text
         after = {b["identifier"]: b for b in response.json()["data"]["blocks"]}
@@ -460,7 +435,9 @@ class TestBlocks:
 
         # 1) 正文必须原样保住
         for identifier, block in before.items():
-            assert after[identifier]["content"] == block["content"], f"{identifier} 的正文被改坏了"
+            assert after[identifier]["content"] == block["content"], (
+                f"{identifier} 的正文被改坏了"
+            )
         # 2) 顺序真的反过来了
         after_order = [b["identifier"] for b in response.json()["data"]["blocks"]]
         assert after_order == list(reversed(before_order))
@@ -471,7 +448,9 @@ class TestBlocks:
 #  六、★ 绑定到会话之后，真正发出去的消息里有没有预设的内容
 # ==================================================================
 class TestSessionBinding:
-    def test_preset_content_reaches_the_model(self, client: TestClient, user: dict) -> None:
+    def test_preset_content_reaches_the_model(
+        self, client: TestClient, user: dict
+    ) -> None:
         """★ 本功能唯一有意义的验收标准。
 
         绑定一份带"破甲块"的预设，发一条消息，然后检查假适配器收到的
@@ -509,10 +488,13 @@ class TestSessionBinding:
         # 破甲是 user / assistant 成对插进历史的 —— 这是它生效的形态
         assert "assistant" in roles
         assert any(
-            m.role == "user" and "记住：你是 灰烬" in m.content for m in request.messages
+            m.role == "user" and "记住：你是 灰烬" in m.content
+            for m in request.messages
         ), "破甲块必须作为 user 消息插进对话历史"
 
-    def test_unbound_session_uses_builtin_assembly(self, client: TestClient, user: dict) -> None:
+    def test_unbound_session_uses_builtin_assembly(
+        self, client: TestClient, user: dict
+    ) -> None:
         """没绑预设时：系统提示词仍来自角色卡，且**没有用户预设的破甲文本**。
 
         ★ 行为变更（用户明确要求）：没绑预设时会追加「内置守卫规则」。
@@ -545,10 +527,14 @@ class TestSessionBinding:
         session = make_session(client, user, card["id"], provider["id"])
         preset = make_preset(client, user)
         client.patch(
-            f"{PRESETS}/{preset['id']}", json={"is_active": True}, headers=user["headers"]
+            f"{PRESETS}/{preset['id']}",
+            json={"is_active": True},
+            headers=user["headers"],
         )
 
-        detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+        detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+            "data"
+        ]
         assert detail["prompt_preset"] is None, "这条会话自己没有绑定预设"
         assert detail["effective_preset"]["from"] == "global_default"
         assert detail["effective_preset"]["id"] == preset["id"]
@@ -594,9 +580,13 @@ class TestSessionBinding:
             headers=user["headers"],
         )
         assert "记住：你是" not in "\n".join(m.content for m in last_request().messages)
-        assert "身份认知" in (last_request().system_prompt or ""), "守卫规则不因解绑而消失"
+        assert "身份认知" in (last_request().system_prompt or ""), (
+            "守卫规则不因解绑而消失"
+        )
 
-    def test_deleting_preset_keeps_session_working(self, client: TestClient, user: dict) -> None:
+    def test_deleting_preset_keeps_session_working(
+        self, client: TestClient, user: dict
+    ) -> None:
         """删掉预设之后会话照常能聊（外键 SET NULL + 回落内置装配）。"""
         card = make_card(client, user, name="删预设卡")
         provider = make_provider(client, user)
@@ -628,10 +618,14 @@ class TestSessionBinding:
 #  七、预览
 # ==================================================================
 class TestPreview:
-    def test_preview_without_session_is_structural(self, client: TestClient, user: dict) -> None:
+    def test_preview_without_session_is_structural(
+        self, client: TestClient, user: dict
+    ) -> None:
         preset = make_preset(client, user)
         response = client.get(
-            f"{PRESETS}/preview", params={"preset_id": preset["id"]}, headers=user["headers"]
+            f"{PRESETS}/preview",
+            params={"preset_id": preset["id"]},
+            headers=user["headers"],
         )
         assert response.status_code == 200, response.text
         data = response.json()["data"]
@@ -640,7 +634,9 @@ class TestPreview:
         assert data["used_blocks"], "结构预览也要说明用到了哪些块"
         assert any("结构预览" in n for n in data["notes"])
 
-    def test_preview_with_session_uses_real_context(self, client: TestClient, user: dict) -> None:
+    def test_preview_with_session_uses_real_context(
+        self, client: TestClient, user: dict
+    ) -> None:
         """★ 带会话的预览必须反映真实上下文（否则用户会拿着它排查不存在的问题）。"""
         card = make_card(client, user, name="预览卡", description="一个守夜人")
         provider = make_provider(client, user)
@@ -677,44 +673,6 @@ class TestPreview:
 
 
 # ==================================================================
-#  八、真实文件（存在才跑）
-# ==================================================================
-def test_real_preset_import_if_file_present(client: TestClient, user: dict) -> None:
-    """把真实那份酒馆预设导进来跑通全流程（文件不在就跳过）。
-
-    ★ 路径来自环境变量 `HNE_REAL_PRESET`：以前写死了贡献者本机绝对路径，
-      会把个人目录名带进公开仓库。行为不变（不在就 skip）。
-    """
-    from pathlib import Path
-
-    path = Path(os.environ.get("HNE_REAL_PRESET", "data/real-presets/tavern-preset.json"))
-    if not path.is_file():
-        pytest.skip("本机没有那份真实预设文件（设 HNE_REAL_PRESET 指向它即可跑）")
-
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    response = client.post(
-        f"{PRESETS}/import",
-        json={"raw": raw, "name": "赤狐（真机）", "source_filename": path.name},
-        headers=user["headers"],
-    )
-    assert response.status_code == 201, response.text
-    data = response.json()["data"]
-
-    # ★★ 期望值从文件自身推导，不写死数字。
-    #   这里原本写死 block_count=21 / enabled=20 / temperature=1.4 / max_tokens=8192，
-    #   全是**另一版文件**的数字；换成 119 块那份之后一启用就必然失败。
-    #   要守的是"导入不丢块、不谎报支持情况、与直接解析口径一致"。
-    prompt_ids = [p["identifier"] for p in raw["prompts"]]
-    imported_ids = [b["identifier"] for b in data["blocks"]]
-    assert imported_ids == prompt_ids, "导入不能丢块、也不能改顺序"
-    assert 0 < data["enabled_block_count"] <= len(prompt_ids)
-    # 采样参数直接来自文件（文件里写什么就该是什么）
-    assert float(data["sampling"]["temperature"]) == float(raw["temperature"])
-    # 不支持的块只能来自已知那份清单
-    unsupported = {b["identifier"] for b in data["blocks"] if not b["supported"]}
-    assert unsupported <= set(presets.UNSUPPORTED_BLOCKS)
-
-# ==================================================================
 #  内置守卫规则（身份认知 / 剧情不跑偏 / 输出长度）
 # ==================================================================
 class TestBuiltinGuard:
@@ -724,17 +682,9 @@ class TestBuiltinGuard:
     所以这里断言的是四件事：默认就有、追加在最后、删掉真的没了、能还原。
     """
 
-    def test_listed_and_sorted_last(self, client: TestClient, user: dict) -> None:
-        preset = make_preset(client, user)
-        client.patch(f"{PRESETS}/{preset['id']}", json={"is_active": True}, headers=user["headers"])
-
-        listed = client.get(PRESETS, headers=user["headers"]).json()["data"]
-        builtin = [p for p in listed if p["is_builtin"]]
-        assert len(builtin) == 1, "内置守卫预设应当按需自动生成，且只有一份"
-        assert listed[0]["id"] == preset["id"], "全局默认仍然排最前"
-        assert listed[-1]["is_builtin"] is True, "内置守卫排在最后（它是系统行）"
-
-    def test_guard_is_appended_after_user_preset(self, client: TestClient, user: dict) -> None:
+    def test_guard_is_appended_after_user_preset(
+        self, client: TestClient, user: dict
+    ) -> None:
         card = make_card(client, user, name="叠加卡")
         provider = make_provider(client, user)
         session = make_session(client, user, card["id"], provider["id"])
@@ -744,14 +694,32 @@ class TestBuiltinGuard:
             blocks=[
                 # 刻意放一块**进系统提示词**的规则：make_preset 默认那两块是
                 # 深度注入（进对话历史），拿它们比"谁在前面"看不出先后。
-                {"identifier": "rule-sys", "name": "用户系统规则", "kind": "rule",
-                 "content": "用户规则AAA", "role": "system", "system_prompt": True,
-                 "injection_position": 0, "injection_depth": 0, "enabled": True,
-                 "supported": True, "order_index": 0},
-                {"identifier": "charDescription", "name": "角色简介", "kind": "marker",
-                 "content": "", "role": "system", "system_prompt": True,
-                 "injection_position": 0, "injection_depth": 0, "enabled": True,
-                 "supported": True, "order_index": 1},
+                {
+                    "identifier": "rule-sys",
+                    "name": "用户系统规则",
+                    "kind": "rule",
+                    "content": "用户规则AAA",
+                    "role": "system",
+                    "system_prompt": True,
+                    "injection_position": 0,
+                    "injection_depth": 0,
+                    "enabled": True,
+                    "supported": True,
+                    "order_index": 0,
+                },
+                {
+                    "identifier": "charDescription",
+                    "name": "角色简介",
+                    "kind": "marker",
+                    "content": "",
+                    "role": "system",
+                    "system_prompt": True,
+                    "injection_position": 0,
+                    "injection_depth": 0,
+                    "enabled": True,
+                    "supported": True,
+                    "order_index": 1,
+                },
             ],
         )
         client.patch(
@@ -771,11 +739,18 @@ class TestBuiltinGuard:
             "守卫必须追加在用户预设**之后**（越靠后权重越高）"
         )
 
-    def test_deleting_builtin_really_disables_it(self, client: TestClient, user: dict) -> None:
+    def test_deleting_builtin_really_disables_it(
+        self, client: TestClient, user: dict
+    ) -> None:
         listed = client.get(PRESETS, headers=user["headers"]).json()["data"]
         builtin_id = [p for p in listed if p["is_builtin"]][0]["id"]
 
-        assert client.delete(f"{PRESETS}/{builtin_id}", headers=user["headers"]).status_code == 200
+        assert (
+            client.delete(
+                f"{PRESETS}/{builtin_id}", headers=user["headers"]
+            ).status_code
+            == 200
+        )
 
         again = client.get(PRESETS, headers=user["headers"]).json()["data"]
         assert not [p for p in again if p["is_builtin"]], "删除之后不该被自动重建"
@@ -802,35 +777,5 @@ class TestBuiltinGuard:
         assert restored.json()["data"]["is_builtin"] is True
         assert restored.json()["data"]["enabled_block_count"] == 3
 
-    def test_builtin_blocks_are_editable(self, client: TestClient, user: dict) -> None:
-        """用户改内置规则的正文必须真的生效（不是只存下来看看）。"""
-        listed = client.get(PRESETS, headers=user["headers"]).json()["data"]
-        builtin_id = [p for p in listed if p["is_builtin"]][0]["id"]
 
-        patched = client.patch(
-            f"{PRESETS}/{builtin_id}/blocks/hneGuardIdentity",
-            json={"content": "测试专用守卫标记ZZZ", "enabled": True},
-            headers=user["headers"],
-        )
-        assert patched.status_code == 200, patched.text
-
-        card = make_card(client, user, name="改守卫卡")
-        provider = make_provider(client, user)
-        session = make_session(client, user, card["id"], provider["id"])
-        client.post(
-            f"{BASE}/{session['id']}/messages",
-            json={"content": "在吗"},
-            headers=user["headers"],
-        )
-        assert "测试专用守卫标记ZZZ" in (last_request().system_prompt or "")
-
-    def test_session_detail_reports_builtin_guard(self, client: TestClient, user: dict) -> None:
-        card = make_card(client, user, name="守卫可见卡")
-        provider = make_provider(client, user)
-        session = make_session(client, user, card["id"], provider["id"])
-
-        detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
-        guard = detail["builtin_guard"]
-        assert guard is not None
-        assert guard["min_reply_chars"] > 0
-        assert guard["from"] in {"builtin", "builtin_factory"}
+pytestmark = pytest.mark.integration

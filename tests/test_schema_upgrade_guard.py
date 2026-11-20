@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import os
 import sqlite3
 import subprocess
@@ -30,11 +32,20 @@ def test_ensure_schema_works_without_importing_the_app(tmp_path: Path) -> None:
         "HNE_DATA_DIR": str(tmp_path),
     }
     subprocess.run(
-        [sys.executable, "-c", "import app.main; from app.db.mysql import get_engine; "
-         "from app.db.base import Base; Base.metadata.create_all(get_engine())"],
-        cwd=REPO, env=env, check=True, capture_output=True,
+        [
+            sys.executable,
+            "-c",
+            "import app.main; from app.db.mysql import get_engine; "
+            "from app.db.base import Base; Base.metadata.create_all(get_engine())",
+        ],
+        cwd=REPO,
+        env=env,
+        check=True,
+        capture_output=True,
         # ★ 同样显式指定 UTF-8：理由见下面第 ② 步的注释（GBK 解不了中文日志）。
-        encoding="utf-8", errors="replace", timeout=180,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
     )
     con = sqlite3.connect(db)
     con.execute("ALTER TABLE llm_providers DROP COLUMN store_reasoning")
@@ -54,8 +65,17 @@ def test_ensure_schema_works_without_importing_the_app(tmp_path: Path) -> None:
     #   把真正的错误信息**吃掉**，排查方向被彻底带偏。
     #   （实测复现：`pytest -W error::PytestUnhandledThreadExceptionWarning` 必红。）
     proc = subprocess.run(
-        [sys.executable, "-c", "from app.db.bootstrap import ensure_schema; ensure_schema()"],
-        cwd=REPO, env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=180,
+        [
+            sys.executable,
+            "-c",
+            "from app.db.bootstrap import ensure_schema; ensure_schema()",
+        ],
+        cwd=REPO,
+        env=env,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
     )
     assert proc.returncode == 0, (proc.stderr or "")[-2000:]
 
@@ -66,3 +86,6 @@ def test_ensure_schema_works_without_importing_the_app(tmp_path: Path) -> None:
         "ensure_schema 必须能在没有导入 app 的情况下补齐新列 —— "
         "否则它会静默什么都不做（这正是它自己 import 模型包要防的事）"
     )
+
+
+pytestmark = pytest.mark.integration

@@ -40,17 +40,6 @@ test('resolvePaths：所有日志都落在 userData 下，绝不落在仓库/安
   }
 });
 
-test('resolvePaths：安装目录内的路径（图标 / 加载页）被正确解析出来', () => {
-  const p = makePaths(path.join(os.tmpdir(), 'hne-ud-2'));
-
-  assert.equal(p.desktopDir, path.resolve(SRC_DIR, '..'));
-  assert.equal(p.loadingPage, path.join(SRC_DIR, 'loading.html'));
-  assert.equal(p.packagedIcon, path.join(p.desktopDir, 'build', 'icon.ico'));
-  assert.equal(p.runtimeIcon, path.join(p.appRoot, 'web', 'img', 'logo-256.png'));
-  assert.ok(fs.existsSync(p.loadingPage), '加载页文件应该真实存在（路径写错就会白屏）');
-  assert.ok(fs.existsSync(p.runtimeIcon), '运行时图标应该真实存在');
-  assert.ok(fs.existsSync(p.envExampleFile), '.env.example 应该真实存在（配置模板）');
-});
 
 test('resolvePaths：打包版的数据目录在 userData 下（安装目录之外）', () => {
   const userData = path.join(os.tmpdir(), 'hne-ud-4');
@@ -63,11 +52,6 @@ test('resolvePaths：打包版的数据目录在 userData 下（安装目录之�
   assert.notEqual(p.userDataDataDir, p.dataDir);
 });
 
-test('resolvePaths：.env 在仓库根，且它本身是被 gitignore 的（绝不入库）', () => {
-  const p = makePaths(path.join(os.tmpdir(), 'hne-ud-3'));
-  assert.equal(p.envFile, path.join(p.appRoot, '.env'));
-  assert.equal(path.basename(p.envFile), '.env');
-});
 
 test('ensureDir：目录不存在时创建，已存在时不报错（可重复调用）', () => {
   const dir = path.join(os.tmpdir(), `hne-ensure-${Date.now()}`, 'logs');

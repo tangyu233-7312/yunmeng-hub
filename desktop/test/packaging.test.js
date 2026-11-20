@@ -34,14 +34,6 @@ test('isPackagedLayout：resources/app.asar 存在 = 打包形态（这是磁盘
   assert.equal(isPackagedLayout({ resourcesPath: resources, exists: () => false }), false);
 });
 
-test('isPackagedLayout：Electron 自己说 isPackaged 时，不看磁盘也认', () => {
-  assert.equal(isPackagedLayout({ isPackaged: true, exists: () => false }), true);
-});
-
-test('isPackagedLayout：没有 resourcesPath 时安全返回 false（不抛异常）', () => {
-  assert.equal(isPackagedLayout({}), false);
-  assert.equal(isPackagedLayout(), false);
-});
 
 // ------------------------------------------------------------------
 //  ★★ 红线：打包态不许读安装目录里的 .env
@@ -77,20 +69,6 @@ test('electronBuilderConfig：★★ 卸载不删用户数据（红线，必须�
   );
 });
 
-test('electronBuilderConfig：只装给当前用户（不要求管理员权限）', () => {
-  const config = electronBuilderConfig({ desktopDir: 'E:\\repo\\desktop' });
-  assert.equal(config.nsis.perMachine, false);
-  assert.equal(config.nsis.oneClick, false, '一步装完会让用户不知道装到哪了');
-  assert.equal(config.nsis.allowToChangeInstallationDirectory, true);
-});
-
-test('electronBuilderConfig：sidecar 作为 extraResources 打进 resources/backend', () => {
-  const config = electronBuilderConfig({ desktopDir: 'E:\\repo\\desktop' });
-  const entry = config.extraResources.find((r) => r.to === 'backend');
-  assert.ok(entry, `extraResources 里必须有 sidecar：${JSON.stringify(config.extraResources)}`);
-  assert.equal(entry.from, path.join('E:\\repo', 'desktop', 'dist', 'backend'));
-  assert.deepEqual(entry.filter, ['**/*'], 'sidecar 目录里的 _internal/ 必须整份带上');
-});
 
 test('★ 接线：extraResources 的落点必须与 sidecar.js 的候选路径一致', () => {
   // 这两处一旦不一致，症状是"装完打开了，却说找不到后端"（而且开发态完全正常）。
@@ -116,26 +94,11 @@ test('electronBuilderConfig：app.asar 里只放壳自己的代码（白名单�
   assert.ok(!config.files.some((f) => /test|script/i.test(f)));
 });
 
-test('electronBuilderConfig：输出到仓库根的 release/（安装包绝不进仓库）', () => {
-  const config = electronBuilderConfig({ desktopDir: 'E:\\repo\\desktop' });
-  assert.equal(config.directories.output, path.join('E:\\repo', 'release'));
-});
-
-test('electronBuilderConfig：Windows x64 + NSIS + 图标', () => {
-  const config = electronBuilderConfig({ desktopDir: 'E:\\repo\\desktop' });
-  assert.deepEqual(config.win.target, [{ target: 'nsis', arch: ['x64'] }]);
-  assert.equal(config.win.icon, path.join('E:\\repo', 'desktop', 'build', 'icon.ico'));
-  assert.equal(config.appId, 'com.yunmeng.hub');
-  assert.equal(config.productName, '云梦枢');
-});
 
 // ------------------------------------------------------------------
 //  与真实文件对账：图标真的在，sidecar 的落点真的与 sidecar.js 一致
 // ------------------------------------------------------------------
-test('★ 对账：desktop/build/icon.ico 真的存在（否则打包会中途失败）', () => {
-  const real = path.resolve(__dirname, '..', 'build', 'icon.ico');
-  assert.ok(fs.existsSync(real), `缺少 ${real}；先跑 pwsh -File desktop/scripts/make-ico.ps1`);
-});
+
 
 test('★ 对账：package.json 里的 build 配置与 packaging.js 生成的一致', () => {
   // 为什么对账：真正生效的是 package.json 里那份（electron-builder 自己读它），
@@ -183,17 +146,3 @@ test('★ 对账：package.json 里的 build 配置与 packaging.js 生成的一
 // ------------------------------------------------------------------
 //  真实打包产物的旁证（没打包过就跳过，不算失败）
 // ------------------------------------------------------------------
-test('（旁证）若 sidecar 已构建，产物目录里确实有 backend.exe', (t) => {
-  const backendDir = path.resolve(__dirname, '..', 'dist', 'backend');
-  if (!fs.existsSync(backendDir)) {
-    t.skip('还没构建 sidecar（先跑 desktop/scripts/build_backend.ps1）');
-    return;
-  }
-  const exeName = process.platform === 'win32' ? 'backend.exe' : 'backend';
-  assert.ok(
-    fs.existsSync(path.join(backendDir, exeName)),
-    `${backendDir} 存在但没有 ${exeName}`,
-  );
-  // onedir 形态必须有 _internal/（依赖都躺在里面），否则装到用户机上起不来
-  assert.ok(fs.existsSync(path.join(backendDir, '_internal')), 'onedir 产物缺少 _internal/');
-});

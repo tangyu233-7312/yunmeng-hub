@@ -1,0 +1,1043 @@
+baseline	file	test	action	layer	reason
+624a7f1	tests/test_anchors.py	test_max_items_is_enforced_by_rejection_not_truncation	保留/合并	unit	防硬设定丢失与静默截断；验证：★ 超限必须**拒绝**：悄悄截断会让用户以为存住了（下次打开少一条更迷惑）。
+624a7f1	tests/test_anchors.py	test_total_chars_limit_is_enforced	保留/合并	unit	防硬设定丢失与静默截断；验证：total chars limit is enforced
+624a7f1	tests/test_anchors.py	test_single_item_is_capped	保留/合并	unit	防硬设定丢失与静默截断；验证：单条过长会被截到 MAX_ONE_CHARS（否则一条就把整额吃光）。
+624a7f1	tests/test_anchors.py	test_blank_and_duplicate_items_are_dropped_with_a_note	保留/合并	unit	防硬设定丢失与静默截断；验证：blank and duplicate items are dropped with a note
+624a7f1	tests/test_anchors.py	test_render_block_is_empty_without_anchors	删除/替代	-	配额 getter、标题和空渲染由保存/注入行为覆盖
+624a7f1	tests/test_anchors.py	test_render_block_lists_items_with_title	删除/替代	-	配额 getter、标题和空渲染由保存/注入行为覆盖
+624a7f1	tests/test_anchors.py	test_broken_json_degrades_to_empty	保留/合并	unit	防硬设定丢失与静默截断；验证：broken json degrades to empty
+624a7f1	tests/test_anchors.py	test_state_reports_remaining_quota	删除/替代	-	配额 getter、标题和空渲染由保存/注入行为覆盖
+624a7f1	tests/test_anchors.py	test_anchors_are_saved_and_injected_into_the_system_prompt	保留/合并	integration	防硬设定丢失与静默截断；验证：★ 锚点必须整条进**系统提示词**（所以上下文裁剪动不了它）。
+624a7f1	tests/test_anchors.py	test_anchors_survive_context_trimming	保留/合并	integration	防硬设定丢失与静默截断；验证：★ 上下文把历史裁光时，锚点仍然在（它在系统提示词里，不参与裁剪）。
+624a7f1	tests/test_anchors.py	test_over_limit_is_rejected_over_the_api	保留/合并	integration	防硬设定丢失与静默截断；验证：over limit is rejected over the api
+624a7f1	tests/test_anchors.py	test_anchors_replace_the_whole_list	保留/合并	integration	防硬设定丢失与静默截断；验证：整份替换语义：提交什么就是什么（前端不用做增删改三条接口）。
+624a7f1	tests/test_anchors.py	test_pure_chat_has_no_anchors	保留/合并	integration	防硬设定丢失与静默截断；验证：纯聊天是"干净通道"：不注入锚点（也不该有记忆面板那一套）。
+624a7f1	tests/test_anthropic.py	test_url_appends_v1_when_missing	保留/合并	unit	防异构协议/思考预算错误；验证：用户只填 https://api.anthropic.com 时也要能正确拼出 /v1/messages。
+624a7f1	tests/test_anthropic.py	test_url_keeps_existing_v1	保留/合并	unit	防异构协议/思考预算错误；验证：url keeps existing v1
+624a7f1	tests/test_anthropic.py	test_url_accepts_full_path	保留/合并	unit	防异构协议/思考预算错误；验证：用户直接填了完整路径时不应重复拼接。
+624a7f1	tests/test_anthropic.py	test_headers_use_x_api_key_and_version	保留/合并	unit	防异构协议/思考预算错误；验证：★ 鉴权头与 OpenAI 完全不同：用 x-api-key，且必须带 anthropic-version。
+624a7f1	tests/test_anthropic.py	test_no_api_key_header_when_empty	保留/合并	unit	防异构协议/思考预算错误；验证：本地代理可能不需要密钥。
+624a7f1	tests/test_anthropic.py	test_system_prompt_is_top_level_not_a_message	保留/合并	unit	防异构协议/思考预算错误；验证：★ Anthropic 的系统提示词是顶层参数，不是 role=system 的消息。
+624a7f1	tests/test_anthropic.py	test_max_tokens_is_always_present	保留/合并	unit	防异构协议/思考预算错误；验证：★ Anthropic 的 max_tokens 是必填项，不给会直接 400。
+624a7f1	tests/test_anthropic.py	test_stop_is_renamed_to_stop_sequences	保留/合并	unit	防异构协议/思考预算错误；验证：字段改名：stop → stop_sequences。
+624a7f1	tests/test_anthropic.py	test_consecutive_same_role_messages_are_merged	保留/合并	unit	防异构协议/思考预算错误；验证：★ Anthropic 要求消息严格交替；连续的 user 消息必须合并。
+624a7f1	tests/test_anthropic.py	test_dialogue_must_start_with_user	保留/合并	unit	防异构协议/思考预算错误；验证：以 assistant 开头会被 Anthropic 拒绝，这里提前给出可操作错误。
+624a7f1	tests/test_anthropic.py	test_empty_dialogue_is_rejected	保留/合并	unit	防异构协议/思考预算错误；验证：empty dialogue is rejected
+624a7f1	tests/test_anthropic.py	test_stream_flag_is_sent	保留/合并	unit	防异构协议/思考预算错误；验证：stream flag is sent
+624a7f1	tests/test_anthropic.py	test_auto_sends_no_thinking_field	保留/合并	unit	防异构协议/思考预算错误；验证：auto sends no thinking field
+624a7f1	tests/test_anthropic.py	test_off_truly_disables_thinking	保留/合并	unit	防异构协议/思考预算错误；验证：★ Anthropic 能**真正**关闭思考 —— 这是它相对 OpenAI 兼容协议的优势。
+624a7f1	tests/test_anthropic.py	test_effort_maps_to_budget_tokens	保留/合并	unit	防异构协议/思考预算错误；验证：★ 语义化的强度被换算成具体的 token 预算。
+624a7f1	tests/test_anthropic.py	test_thinking_budget_is_always_below_max_tokens	保留/合并	unit	防异构协议/思考预算错误；验证：★ Anthropic 的硬约束：budget_tokens 必须严格小于 max_tokens。
+624a7f1	tests/test_anthropic.py	test_thinking_enabled_removes_temperature_and_top_p	保留/合并	unit	防异构协议/思考预算错误；验证：★ 开启思考时 Anthropic 不允许改 temperature / top_p，必须自动移除。
+624a7f1	tests/test_anthropic.py	test_removal_of_temperature_is_reported_to_caller	保留/合并	unit	防异构协议/思考预算错误；验证：★ 替用户做的决定必须如实回报，不能悄悄删掉。
+624a7f1	tests/test_anthropic.py	test_small_max_tokens_with_thinking_raises_actionable_error	保留/合并	unit	防异构协议/思考预算错误；验证：★ max_tokens 放不下思考预算时，直接报错而不是偷偷关掉思考。
+624a7f1	tests/test_anthropic.py	test_request_effort_overrides_provider_default	保留/合并	unit	防异构协议/思考预算错误；验证：request effort overrides provider default
+624a7f1	tests/test_anthropic.py	test_parses_text_content_block	保留/合并	unit	防异构协议/思考预算错误；验证：parses text content block
+624a7f1	tests/test_anthropic.py	test_thinking_block_is_separated_from_text	保留/合并	unit	防异构协议/思考预算错误；验证：★ content 是数组，必须按 type 过滤，否则思考与正文会混在一起。
+624a7f1	tests/test_anthropic.py	test_multiple_text_blocks_are_concatenated	保留/合并	unit	防异构协议/思考预算错误；验证：multiple text blocks are concatenated
+624a7f1	tests/test_anthropic.py	test_redacted_thinking_is_marked	保留/合并	unit	防异构协议/思考预算错误；验证：被安全策略加密的思考块读不到内容，但要标注出来而不是静默忽略。
+624a7f1	tests/test_anthropic.py	test_stop_reason_is_normalized	保留/合并	unit	防异构协议/思考预算错误；验证：★ Anthropic 的 stop_reason 取值与 OpenAI 的 finish_reason 完全不同。
+624a7f1	tests/test_anthropic.py	test_empty_content_block_raises	保留/合并	unit	防异构协议/思考预算错误；验证：empty content block raises
+624a7f1	tests/test_anthropic.py	test_truncated_without_text_raises_actionable_error	保留/合并	unit	防异构协议/思考预算错误；验证：思考吃光配额导致正文为空 —— 与 OpenAI 适配器共用同一套拦截逻辑。
+624a7f1	tests/test_anthropic.py	test_error_body_with_http_200_is_detected	保留/合并	unit	防异构协议/思考预算错误；验证：Anthropic 的错误结构是 {"type":"error","error":{...}}。
+624a7f1	tests/test_anthropic.py	test_stream_collects_text_deltas	保留/合并	unit	防异构协议/思考预算错误；验证：★ 必须能解析 Anthropic 的命名事件流。
+624a7f1	tests/test_anthropic.py	test_stream_separates_thinking_from_text	保留/合并	unit	防异构协议/思考预算错误；验证：stream separates thinking from text
+624a7f1	tests/test_anthropic.py	test_stream_merges_input_and_output_tokens	保留/合并	unit	防异构协议/思考预算错误；验证：★ 输入 token 在 message_start，输出 token 在 message_delta —— 要合并成完整用量。
+624a7f1	tests/test_anthropic.py	test_stream_ignores_ping_and_unknown_events	保留/合并	unit	防异构协议/思考预算错误；验证：stream ignores ping and unknown events
+624a7f1	tests/test_anthropic.py	test_stream_raises_on_error_event	保留/合并	unit	防异构协议/思考预算错误；验证：stream raises on error event
+624a7f1	tests/test_anthropic.py	test_stream_emits_notes_as_first_meta_chunk	保留/合并	unit	防异构协议/思考预算错误；验证：★ 为适配协议做的调整要通过流的第一个元数据片段告知调用方。
+624a7f1	tests/test_anthropic.py	test_anthropic_errors_are_normalized	保留/合并	unit	防异构协议/思考预算错误；验证：★ Anthropic 的错误类型与状态码组合要能正确归类。
+624a7f1	tests/test_anthropic.py	test_400_with_thinking_gets_actionable_hint	保留/合并	unit	防异构协议/思考预算错误；验证：思考预算相关报错要直接给出解法。
+624a7f1	tests/test_anthropic.py	test_api_key_not_leaked_in_error_detail	保留/合并	unit	防异构协议/思考预算错误；验证：api key not leaked in error detail
+624a7f1	tests/test_anthropic.py	test_list_models	保留/合并	unit	防异构协议/思考预算错误；验证：list models
+624a7f1	tests/test_anthropic.py	test_factory_creates_anthropic_provider	删除/替代	-	工厂类型/目录注册是实现结构，真实协议请求已覆盖
+624a7f1	tests/test_anthropic.py	test_provider_type_is_registered_in_catalog	删除/替代	-	工厂类型/目录注册是实现结构，真实协议请求已覆盖
+624a7f1	tests/test_anthropic.py	test_factory_from_config_with_anthropic	删除/替代	-	工厂类型/目录注册是实现结构，真实协议请求已覆盖
+624a7f1	tests/test_anthropic.py	test_unknown_provider_type_still_rejected	删除/替代	-	工厂类型/目录注册是实现结构，真实协议请求已覆盖
+624a7f1	tests/test_auth.py	test_password_hash_is_not_plaintext	保留/合并	unit	防越权、凭据泄露与账号枚举；验证：password hash is not plaintext
+624a7f1	tests/test_auth.py	test_password_hash_is_salted	保留/合并	unit	防越权、凭据泄露与账号枚举；验证：同一个密码两次哈希结果必须不同（随机盐），否则彩虹表就能用。
+624a7f1	tests/test_auth.py	test_verify_password	保留/合并	unit	防越权、凭据泄露与账号枚举；验证：verify password
+624a7f1	tests/test_auth.py	test_verify_password_tolerates_broken_hash	保留/合并	unit	防越权、凭据泄露与账号枚举；验证：哈希格式损坏时应返回 False，而不是抛异常导致 500。
+624a7f1	tests/test_auth.py	test_register_success	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：register success
+624a7f1	tests/test_auth.py	test_registered_password_is_hashed_in_database	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：★ 数据库里必须只有哈希，没有明文。
+624a7f1	tests/test_auth.py	test_register_duplicate_username	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：register duplicate username
+624a7f1	tests/test_auth.py	test_register_duplicate_email	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：register duplicate email
+624a7f1	tests/test_auth.py	test_register_validation	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：register validation
+624a7f1	tests/test_auth.py	test_register_rejects_password_over_bcrypt_limit	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：★ bcrypt 只处理 72 字节。
+624a7f1	tests/test_auth.py	test_register_accepts_password_at_byte_limit	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：刚好 72 字节（24 个汉字）应当被接受。
+624a7f1	tests/test_auth.py	test_login_success	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：login success
+624a7f1	tests/test_auth.py	test_login_with_email	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：username 字段允许填邮箱。
+624a7f1	tests/test_auth.py	test_login_wrong_password	删除/替代	-	错误密码的 401 已由防账号枚举测试同时覆盖
+624a7f1	tests/test_auth.py	test_login_nonexistent_user_gives_same_message	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：★ 安全要求：「用户不存在」与「密码错误」必须返回**完全相同**的信息。
+624a7f1	tests/test_auth.py	test_login_disabled_account	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：login disabled account
+624a7f1	tests/test_auth.py	test_access_token_payload	删除/替代	-	令牌内部字段形状不单测；由 me/refresh 的用途边界覆盖
+624a7f1	tests/test_auth.py	test_me_returns_current_user	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：me returns current user
+624a7f1	tests/test_auth.py	test_me_without_token	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：me without token
+624a7f1	tests/test_auth.py	test_me_with_garbage_token	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：me with garbage token
+624a7f1	tests/test_auth.py	test_me_with_refresh_token_is_rejected	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：★ 越权防护：refresh_token 有效期长达 7 天，绝不能当访问令牌用。
+624a7f1	tests/test_auth.py	test_refresh_issues_new_tokens	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：refresh issues new tokens
+624a7f1	tests/test_auth.py	test_refresh_rejects_access_token	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：★ 反向防护：不允许用访问令牌换新的令牌对。
+624a7f1	tests/test_auth.py	test_oauth2_form_login_for_swagger	保留/合并	integration	防越权、凭据泄露与账号枚举；验证：给 Swagger 的 Authorize 按钮用的表单登录端点。
+624a7f1	tests/test_backend_entry_env.py	test_默认路径下_壳的_data_dir_决定数据根与向量库	保留/合并	unit	防桌面启动覆盖用户数据路径；验证：默认路径下 壳的 data dir 决定数据根与向量库
+624a7f1	tests/test_backend_entry_env.py	test_用户显式设过数据根时_不许被_data_dir_覆盖	保留/合并	unit	防桌面启动覆盖用户数据路径；验证：这是本轮修的**静默失效**：向导里改了数据目录，壳却把它盖回去。
+624a7f1	tests/test_backend_entry_env.py	test_用户改过数据根时_不许再写死旧的向量库路径	保留/合并	unit	防桌面启动覆盖用户数据路径；验证：★ 派生路径必须跟着生效的数据根走，否则"搬家只搬一半"。
+624a7f1	tests/test_backend_entry_env.py	test_用户单独指定过向量库_原样保留	保留/合并	unit	防桌面启动覆盖用户数据路径；验证：逐键尊重：改了数据根**又**单独写了向量库的，以他写的为准。
+624a7f1	tests/test_backend_entry_env.py	test_日志目录同理_用户显式设过就不覆盖	保留/合并	unit	防桌面启动覆盖用户数据路径；验证：日志目录同理 用户显式设过就不覆盖
+624a7f1	tests/test_backend_entry_env.py	test_用户改过数据根时_日志不写死旧位置	保留/合并	unit	防桌面启动覆盖用户数据路径；验证：与向量库同一条理由：日志也该跟着数据根走，而不是留在旧 userData。
+624a7f1	tests/test_backend_entry_env.py	test_没改数据根时_日志仍按壳给的目录	保留/合并	unit	防桌面启动覆盖用户数据路径；验证：反面：默认路径下行为要一字不变（显式给出，不依赖后端拼相对路径）。
+624a7f1	tests/test_backend_entry_env.py	test_默认组合下三个变量都按壳的意图落地	保留/合并	unit	防桌面启动覆盖用户数据路径；验证：默认组合下三个变量都按壳的意图落地
+624a7f1	tests/test_benchmark.py	test_recall_at_k_uses_relevant_set_as_denominator	保留/合并	unit	防诊断报告误导或修改用户数据；验证：recall at k uses relevant set as denominator
+624a7f1	tests/test_benchmark.py	test_reciprocal_rank_takes_the_first_hit	保留/合并	unit	防诊断报告误导或修改用户数据；验证：reciprocal rank takes the first hit
+624a7f1	tests/test_benchmark.py	test_ndcg_at_k_matches_hand_computation	保留/合并	unit	防诊断报告误导或修改用户数据；验证：ndcg at k matches hand computation
+624a7f1	tests/test_benchmark.py	test_ranking_report_averages_over_cases	保留/合并	unit	防诊断报告误导或修改用户数据；验证：ranking report averages over cases
+624a7f1	tests/test_benchmark.py	test_injection_report_summarizes_tokens_and_dedup	保留/合并	unit	防诊断报告误导或修改用户数据；验证：injection report summarizes tokens and dedup
+624a7f1	tests/test_benchmark.py	test_state_consistency_fixture_matches_its_labels	删除/替代	-	固定语料消融/统计质量实验保留在 benchmark 命令，不作为产品回归 passed 数
+624a7f1	tests/test_benchmark.py	test_classify_notes_prefers_rejection_over_correction	保留/合并	unit	防诊断报告误导或修改用户数据；验证：同时出现"丢弃"和"修正"提醒时算丢弃（更严重的那一类）。
+624a7f1	tests/test_benchmark.py	test_fusion_beats_single_channels	删除/替代	-	固定语料消融/统计质量实验保留在 benchmark 命令，不作为产品回归 passed 数
+624a7f1	tests/test_benchmark.py	test_tiebreak_is_not_worse_than_raw_fusion	删除/替代	-	固定语料消融/统计质量实验保留在 benchmark 命令，不作为产品回归 passed 数
+624a7f1	tests/test_benchmark.py	test_lexical_blend_rerank_is_a_negative_control	删除/替代	-	固定语料消融/统计质量实验保留在 benchmark 命令，不作为产品回归 passed 数
+624a7f1	tests/test_benchmark.py	test_ablation_covers_the_documented_set	删除/替代	-	固定语料消融/统计质量实验保留在 benchmark 命令，不作为产品回归 passed 数
+624a7f1	tests/test_benchmark.py	test_dice_diagnostics_pass_and_are_reproducible	删除/替代	-	固定语料消融/统计质量实验保留在 benchmark 命令，不作为产品回归 passed 数
+624a7f1	tests/test_benchmark.py	test_dice_diagnostics_cover_the_documented_notations	删除/替代	-	固定语料消融/统计质量实验保留在 benchmark 命令，不作为产品回归 passed 数
+624a7f1	tests/test_benchmark.py	test_dice_histogram_is_not_lopsided	删除/替代	-	固定语料消融/统计质量实验保留在 benchmark 命令，不作为产品回归 passed 数
+624a7f1	tests/test_benchmark.py	test_replay_from_db_is_readonly_and_reports_cost	保留/合并	integration	防诊断报告误导或修改用户数据；验证：★ 真库只读回放：读得出会话与轮次，报得出成本，且**不改任何数据**。
+624a7f1	tests/test_benchmark.py	test_replay_reports_state_idempotency	保留/合并	integration	防诊断报告误导或修改用户数据；验证：落库的状态"再校验一遍"不该被改动（幂等）—— 这是真实数据上的状态一致性度量。
+624a7f1	tests/test_benchmark.py	test_replay_respects_the_username_filter	保留/合并	integration	防诊断报告误导或修改用户数据；验证：只回放指定用户：别的账号（包括真实用户）一条都不该被读进来。
+624a7f1	tests/test_benchmark.py	test_replay_report_is_honest_about_the_missing_labels	保留/合并	unit	防诊断报告误导或修改用户数据；验证：报告里必须写明"真实语料没有标注、只报成本/合规、本模式只读"。
+624a7f1	tests/test_branch.py	test_branch_is_always_available_without_any_mode	保留/合并	integration	防分支历史或状态互相污染；验证：★ 分支功能**没有开关**：新会话直接就能分叉（用户 2026-10-13 拍板去掉）。
+624a7f1	tests/test_branch.py	test_legacy_flag_never_deletes_the_twin	保留/合并	integration	防分支历史或状态互相污染；验证：★ 旧的开关接口还在（兼容用），但它**既不删除平行线、也不影响可用性**。
+624a7f1	tests/test_branch.py	test_toggle_requires_ownership	保留/合并	integration	防分支历史或状态互相污染；验证：别人的会话：开启分支一律 404（会话自身的越权规则）。
+624a7f1	tests/test_branch.py	test_fork_copies_history_up_to_the_reply	保留/合并	integration	防分支历史或状态互相污染；验证：分叉复制到**那条回复之前**：新线末尾是用户消息，且不含被分叉的回复。
+624a7f1	tests/test_branch.py	test_fork_links_the_group_and_marks_the_lines	保留/合并	integration	防分支历史或状态互相污染；验证：两条线归到同一个世界线组，且分支点被记下来。
+624a7f1	tests/test_branch.py	test_fork_labels_default_to_main_and_parallel	删除/替代	-	默认标签/字段回显与简单 getter；分支分组、历史拷贝和独立状态测试保留
+624a7f1	tests/test_branch.py	test_fork_is_capped_at_two_lines	保留/合并	integration	防分支历史或状态互相污染；验证：只支持两条线（用户拍板）：第二次分叉必须被明确拒绝，而不是静默加一条。
+624a7f1	tests/test_branch.py	test_fork_works_without_enabling_anything	删除/替代	-	默认标签/字段回显与简单 getter；分支分组、历史拷贝和独立状态测试保留
+624a7f1	tests/test_branch.py	test_fork_rejects_foreign_message_id	保留/合并	integration	防分支历史或状态互相污染；验证：分叉点必须是**这条会话里**的消息（否则 400，不会拿别人的消息当锚点）。
+624a7f1	tests/test_branch.py	test_fork_requires_ownership	保留/合并	integration	防分支历史或状态互相污染；验证：fork requires ownership
+624a7f1	tests/test_branch.py	test_fork_copies_session_level_state	保留/合并	integration	防分支历史或状态互相污染；验证：会话级数据要带过去：状态、状态栏格式、总结、锚点、设置。
+624a7f1	tests/test_branch.py	test_fork_copies_message_metadata_columns	保留/合并	integration	防分支历史或状态互相污染；验证：**分叉点之前**的回复，其 JSON 元数据列必须逐列带过去。
+624a7f1	tests/test_branch.py	test_forked_message_gets_a_new_id	删除/替代	-	默认标签/字段回显与简单 getter；分支分组、历史拷贝和独立状态测试保留
+624a7f1	tests/test_branch.py	test_fork_recounts_stats	保留/合并	integration	防分支历史或状态互相污染；验证：新线的 message_count 要按**复制过来的条数**算，不能继承主线的计数。
+624a7f1	tests/test_branch.py	test_saying_something_in_the_twin_does_not_touch_the_main	保留/合并	integration	防分支历史或状态互相污染；验证：★ 核心用例：在平行线发消息，主线的消息列表**一个字节都不变**。
+624a7f1	tests/test_branch.py	test_prompts_of_the_two_lines_do_not_leak_into_each_other	保留/合并	integration	防分支历史或状态互相污染；验证：两条线的提示词互不包含对方的独有内容。
+624a7f1	tests/test_branch.py	test_state_is_independent_between_the_two_lines	保留/合并	integration	防分支历史或状态互相污染；验证：结构化状态互相独立：在一条线改状态，另一条线的状态不变。
+624a7f1	tests/test_branch.py	test_retract_in_twin_leaves_main_untouched	保留/合并	integration	防分支历史或状态互相污染；验证：在平行线撤回，主线不受任何影响（删除范围按 session_id 过滤）。
+624a7f1	tests/test_branch.py	test_regenerate_in_twin_leaves_main_untouched	保留/合并	integration	防分支历史或状态互相污染；验证：在平行线重新生成，主线的回复不会被替换掉。
+624a7f1	tests/test_branch.py	test_deleting_twin_leaves_main_there	保留/合并	integration	防分支历史或状态互相污染；验证：删掉平行线，主线必须完好（删会话只删自己那条）。
+624a7f1	tests/test_branch.py	test_two_users_branch_groups_are_isolated	保留/合并	integration	防分支历史或状态互相污染；验证：别人的世界线组与自己无关（组内查询带 user_id 过滤）。
+624a7f1	tests/test_branch.py	test_rename_line	删除/替代	-	默认标签/字段回显与简单 getter；分支分组、历史拷贝和独立状态测试保留
+624a7f1	tests/test_branch.py	test_branch_group_endpoint	保留/合并	integration	防分支历史或状态互相污染；验证：branch group endpoint
+624a7f1	tests/test_branch.py	test_branch_rename_requires_ownership	保留/合并	integration	防分支历史或状态互相污染；验证：branch rename requires ownership
+624a7f1	tests/test_branch.py	test_group_id_falls_back_to_own_id_for_legacy_sessions	删除/替代	-	默认标签/字段回显与简单 getter；分支分组、历史拷贝和独立状态测试保留
+624a7f1	tests/test_branch.py	test_label_of_prefers_custom_name	删除/替代	-	默认标签/字段回显与简单 getter；分支分组、历史拷贝和独立状态测试保留
+624a7f1	tests/test_branch.py	test_frontend_exposes_branch_entry_points	删除/替代	-	源码/样式字符串不能证明按钮与布局行为
+624a7f1	tests/test_branch.py	test_fork_button_is_hidden_where_forking_is_impossible	删除/替代	-	源码/样式字符串不能证明按钮与布局行为
+624a7f1	tests/test_branch.py	test_branch_css_uses_theme_variables	删除/替代	-	源码/样式字符串不能证明按钮与布局行为
+624a7f1	tests/test_branch.py	test_parallel_line_is_hidden_from_the_session_list	保留/合并	integration	防分支历史或状态互相污染；验证：★ 平行线**不再**出现在左侧会话列表里（用户要求）。
+624a7f1	tests/test_branch.py	test_deleting_the_main_line_promotes_the_survivor_into_the_list	保留/合并	integration	防分支历史或状态互相污染；验证：★ 删掉主线后，幸存的那条线必须**重新出现在列表里**。
+624a7f1	tests/test_branch.py	test_archiving_one_line_archives_the_whole_group	保留/合并	integration	防分支历史或状态互相污染；验证：★ 归档一条线时，同组的一起归档。
+624a7f1	tests/test_branch.py	test_round_count_counts_only_complete_rounds	保留/合并	integration	防分支历史或状态互相污染；验证：★ 轮次 = 一问一答算一轮；开场白不算，最后那句没被回复的用户消息也不算。
+624a7f1	tests/test_branch.py	test_branch_lines_expose_round_count	删除/替代	-	默认标签/字段回显与简单 getter；分支分组、历史拷贝和独立状态测试保留
+624a7f1	tests/test_branch.py	test_frontend_shows_rounds_and_has_line_delete	删除/替代	-	源码/样式字符串不能证明按钮与布局行为
+624a7f1	tests/test_branch.py	test_no_persistent_branch_banner_when_only_one_line	删除/替代	-	源码/样式字符串不能证明按钮与布局行为
+624a7f1	tests/test_card_state.py	test_every_known_card_state_format_is_recognized	保留/合并	unit	防误吞正文与结构漂移丢失；验证：用户要求"尽量都认"：五种真实存在的卡状态写法都要认，并**如实记下是哪种**。
+624a7f1	tests/test_card_state.py	test_state_block_must_be_at_the_end	保留/合并	unit	防误吞正文与结构漂移丢失；验证：★ 保守的第一条：**正文中段的 JSON 不是状态块**（误判的代价是正文断片）。
+624a7f1	tests/test_card_state.py	test_non_json_and_non_state_langs_are_left_alone	保留/合并	unit	防误吞正文与结构漂移丢失；验证：保守的第二条：不是 JSON 的、或明显是别的语言的围栏，一律不碰。
+624a7f1	tests/test_card_state.py	test_placeholder_tag_is_a_hint_not_a_block	保留/合并	unit	防误吞正文与结构漂移丢失；验证：`<StatusPlaceHolderImpl/>` 是"这张卡自带状态栏"的信号，**不是**数据。
+624a7f1	tests/test_card_state.py	test_state_tag_belongs_to_the_card_only_when_card_declares_no_schema	保留/合并	unit	防误吞正文与结构漂移丢失；验证：★ `<state>` 归谁，取决于"这张卡有没有声明 state_schema" —— 这是最易错的一处。
+624a7f1	tests/test_card_state.py	test_drift_reports_only_missing_and_retyped	保留/合并	unit	防误吞正文与结构漂移丢失；验证：★ 漂移检查只做能确证的两件事：字段消失 / 类型变了。
+624a7f1	tests/test_card_state.py	test_schema_hash_ignores_values	删除/替代	-	内部 hash 派生值不单测；字段丢失/类型漂移业务行为保留
+624a7f1	tests/test_card_state.py	test_card_state_block_is_stored_separately_and_stripped	保留/合并	integration	防误吞正文与结构漂移丢失；验证：★ 核心链路：模型回复末尾的卡状态块 → 正文干净、单独落库、会话详情能读到。
+624a7f1	tests/test_card_state.py	test_card_state_updates_in_place_and_drift_is_recorded	保留/合并	integration	防误吞正文与结构漂移丢失；验证：★ 同一形状更新同一行（不每轮新开一行），字段消失会被记下来。
+624a7f1	tests/test_card_state.py	test_missing_field_is_reported_on_the_new_shape	删除/替代	-	同一漂移规则已有底层 drift 和端到端更新记录覆盖
+624a7f1	tests/test_card_state.py	test_retyped_field_is_reported	删除/替代	-	同一漂移规则已有底层 drift 和端到端更新记录覆盖
+624a7f1	tests/test_card_state.py	test_different_shape_gets_its_own_row	保留/合并	integration	防误吞正文与结构漂移丢失；验证：★ 换了一套字段（卡改版）→ 新开一桶，**旧数据不会被覆盖**。
+624a7f1	tests/test_card_state.py	test_card_state_is_never_injected_into_prompt	保留/合并	integration	防误吞正文与结构漂移丢失；验证：★ 卡状态**不注入提示词**：那是作者的东西，我们只保管。
+624a7f1	tests/test_card_state.py	test_system_state_and_card_state_coexist	保留/合并	integration	防误吞正文与结构漂移丢失；验证：★ 两套状态并存：卡声明了 schema 时 `<state>` 归系统，卡自己的围栏归第二存储。
+624a7f1	tests/test_card_state.py	test_greeting_card_state_is_stored_and_stripped	保留/合并	integration	防误吞正文与结构漂移丢失；验证：开场白里的卡状态块：同样要剥、同样要落库（建会话那条路不能漏）。
+624a7f1	tests/test_card_state.py	test_pure_chat_never_collects_card_state	保留/合并	integration	防误吞正文与结构漂移丢失；验证：纯聊天：没有卡，就别去收"卡的状态"（面板如实报 enabled=false）。
+624a7f1	tests/test_card_state.py	test_card_state_panel_reports_unseen_hint	保留/合并	integration	防误吞正文与结构漂移丢失；验证：还没收到过卡状态时，面板要**说清为什么是空的**，而不是一个空白块。
+624a7f1	tests/test_card_state.py	test_state_module_still_strips_without_schema	保留/合并	integration	防误吞正文与结构漂移丢失；验证：回归：卡没声明 schema 时，`<state>` 仍会被剥、仍不塞进本系统的 state。
+624a7f1	tests/test_character_cards.py	test_endpoints_require_login	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 所有角色卡接口都必须要求登录。
+624a7f1	tests/test_character_cards.py	test_create_card	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_create_normalizes_tags	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 标签要去空白、丢空项、去重，避免脏数据进库。
+624a7f1	tests/test_character_cards.py	test_create_cleans_blank_text_to_null	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_create_rejects_blank_name	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：create rejects blank name
+624a7f1	tests/test_character_cards.py	test_create_rejects_too_many_tags	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 超限时报错而不是静默截断 —— 静默截断会让用户以为内容存进去了。
+624a7f1	tests/test_character_cards.py	test_create_allows_duplicate_names	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 角色卡允许重名（与模型配置的别名规则不同）。
+624a7f1	tests/test_character_cards.py	test_list_returns_brief_shape	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 列表必须是精简结构。
+624a7f1	tests/test_character_cards.py	test_list_pagination	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：list pagination
+624a7f1	tests/test_character_cards.py	test_list_search_by_name	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_list_search_escapes_like_wildcards	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ LIKE 通配符必须转义。
+624a7f1	tests/test_character_cards.py	test_list_filter_by_tag	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_list_filter_by_tag_is_exact_not_substring	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：标签筛选是精确匹配，不能被前缀误命中。
+624a7f1	tests/test_character_cards.py	test_list_sort_by_name	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：list sort by name
+624a7f1	tests/test_character_cards.py	test_list_rejects_invalid_scope	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：list rejects invalid scope
+624a7f1	tests/test_character_cards.py	test_list_scope_mine_excludes_others	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：list scope mine excludes others
+624a7f1	tests/test_character_cards.py	test_list_scope_public_shows_only_others_public	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ scope=public 是「公共卡库」，只列别人公开的卡，不含自己的。
+624a7f1	tests/test_character_cards.py	test_list_scope_all_is_union	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：list scope all is union
+624a7f1	tests/test_character_cards.py	test_owner_can_read_own_private_card	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_cannot_read_others_private_card	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 别人的私有卡：404，不泄露它是否存在。
+624a7f1	tests/test_character_cards.py	test_can_read_others_public_card	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 别人的公开卡可以看全文，但 is_owner 必须是 False。
+624a7f1	tests/test_character_cards.py	test_cannot_modify_others_public_card	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 公开卡「能看不等于能改」。
+624a7f1	tests/test_character_cards.py	test_cannot_modify_others_private_card	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 私有卡连「不能改」都要装作不存在（404 而不是 403）。
+624a7f1	tests/test_character_cards.py	test_get_missing_card	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_patch_updates_only_submitted_fields	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：patch updates only submitted fields
+624a7f1	tests/test_character_cards.py	test_patch_null_clears_field	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ PATCH 的关键能力：显式传 null 表示「清空该字段」。
+624a7f1	tests/test_character_cards.py	test_patch_absent_field_keeps_value	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_patch_tags_null_clears_to_empty_list	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：patch tags null clears to empty list
+624a7f1	tests/test_character_cards.py	test_patch_can_publish_and_unpublish	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：patch can publish and unpublish
+624a7f1	tests/test_character_cards.py	test_patch_alternate_greetings	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_delete_card	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_delete_card_in_use_is_rejected	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 还有会话在用这张卡时，默认拒绝删除。
+624a7f1	tests/test_character_cards.py	test_delete_card_force_cascades_sessions	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ force=true 时连同会话一起删除（数据库外键级联）。
+624a7f1	tests/test_character_cards.py	test_delete_missing_card	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_duplicate_own_card	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：duplicate own card
+624a7f1	tests/test_character_cards.py	test_duplicate_public_card_becomes_private	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 复制别人的公开卡后，新卡默认私有。
+624a7f1	tests/test_character_cards.py	test_duplicate_with_custom_name	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_cannot_duplicate_others_private_card	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：cannot duplicate others private card
+624a7f1	tests/test_character_cards.py	test_export_v2_structure	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_export_puts_own_fields_in_extensions_namespace	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 本项目自有的 background / speaking_style 规范里没有，
+624a7f1	tests/test_character_cards.py	test_export_missing_text_fields_are_empty_strings	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_import_v2_card	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_import_preserves_unknown_fields_on_export	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 规范硬性要求：导入导出不得丢弃无法识别的字段。
+624a7f1	tests/test_character_cards.py	test_export_import_roundtrip_is_lossless	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 往返无损：导出 -> 导入 -> 再导出，两次结果必须完全一致。
+624a7f1	tests/test_character_cards.py	test_import_v1_flat_format	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：V1 是扁平结构，没有 spec / data 包裹。
+624a7f1	tests/test_character_cards.py	test_import_with_name_override	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：import with name override
+624a7f1	tests/test_character_cards.py	test_import_can_publish_directly	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：import can publish directly
+624a7f1	tests/test_character_cards.py	test_import_missing_name_returns_400	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 缺 name 要返回 400 + 可读信息，而不是 500。
+624a7f1	tests/test_character_cards.py	test_import_rejects_non_object_card	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：import rejects non object card
+624a7f1	tests/test_character_cards.py	test_import_tolerates_bad_tag_types	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 收集来的卡质量参差不齐，非字符串的标签项应当被丢掉而不是报错。
+624a7f1	tests/test_character_cards.py	test_import_duplicate_of_public_card_is_allowed	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_import_png_card	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 主流分发格式：角色卡数据藏在 PNG 的 tEXt 块里（base64 编码的 JSON）。
+624a7f1	tests/test_character_cards.py	test_import_png_keeps_character_book	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 世界书也要能从 PNG 里带进来，并且导出时还在。
+624a7f1	tests/test_character_cards.py	test_import_png_prefers_ccv3_over_chara	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 同一张图里同时有新旧两个关键字时，优先取新的 ccv3。
+624a7f1	tests/test_character_cards.py	test_import_png_accepts_raw_json_text_chunk	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：少数工具图省事，直接把裸 JSON 塞进文本块而不做 base64。
+624a7f1	tests/test_character_cards.py	test_import_png_preserves_spaces_in_base64_card	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 回归测试：base64 路径也不能吞掉文本内部的空格。
+624a7f1	tests/test_character_cards.py	test_import_png_itxt_compressed	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：iTXt 块（zlib 压缩 + UTF-8）也要支持。
+624a7f1	tests/test_character_cards.py	test_import_png_with_form_options	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：import png with form options
+624a7f1	tests/test_character_cards.py	test_import_png_rejects_non_png	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 传了个 .json 文件时要给出**可操作**的提示，而不是一句「格式错误」。
+624a7f1	tests/test_character_cards.py	test_import_png_rejects_without_card_chunk	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：是一张合法 PNG，但里面没有角色卡数据（普通图片）。
+624a7f1	tests/test_character_cards.py	test_import_png_rejects_corrupt_base64	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：文本块里是既非 base64 也非 JSON 的垃圾数据。
+624a7f1	tests/test_character_cards.py	test_import_png_rejects_empty_file	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：import png rejects empty file
+624a7f1	tests/test_character_cards.py	test_import_png_rejects_oversized_file	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 上传必须限制大小，否则传个大文件就能把服务内存撑爆。
+624a7f1	tests/test_character_cards.py	test_import_png_rejects_missing_name	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：PNG 里的卡缺 name —— 应当走和 JSON 导入一样的校验，返回 400。
+624a7f1	tests/test_character_cards.py	test_import_png_requires_login	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_import_creates_world_book	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 卡里带的 character_book 应当被**独立建成一本世界书**并自动关联。
+624a7f1	tests/test_character_cards.py	test_card_detail_includes_world_book_ref	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_card_without_world_book_has_null_ref	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_list_shows_world_book_name	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_attach_and_detach_world_book	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：通过 PATCH 关联 / 解除关联世界书。
+624a7f1	tests/test_character_cards.py	test_patch_without_world_book_field_keeps_it	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_cannot_attach_others_world_book	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 越权防护：不能把别人的世界书挂到自己的卡上。
+624a7f1	tests/test_character_cards.py	test_cannot_attach_nonexistent_world_book	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：cannot attach nonexistent world book
+624a7f1	tests/test_character_cards.py	test_delete_without_force_is_rejected_when_attached	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 挂着东西却没确认时，拒绝删除并说明挂了什么。
+624a7f1	tests/test_character_cards.py	test_delete_plain_card_needs_no_force	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_delete_defaults_delete_both	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 两个勾选项默认都是「删」，即默认行为是删干净。
+624a7f1	tests/test_character_cards.py	test_delete_can_keep_sessions	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 取消勾选「删除对话记录」-> 故事保留，只是不再关联这张卡。
+624a7f1	tests/test_character_cards.py	test_delete_can_keep_world_book	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 取消勾选「删除世界书」-> 世界书保留下来，可继续给别的卡用。
+624a7f1	tests/test_character_cards.py	test_delete_keeps_world_book_shared_by_other_cards	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 世界书被别的卡共用时，即使勾了「删除」也不会真删。
+624a7f1	tests/test_character_cards.py	test_delete_last_user_of_world_book_removes_it	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：当一本书只被这一张卡使用时，勾了删除就真的删掉。
+624a7f1	tests/test_character_cards.py	test_duplicate_card_copies_world_book_independently	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：★ 复制卡时世界书要**复制成新的一本**，而不是共享同一个。
+624a7f1	tests/test_character_cards.py	test_duplicate_public_card_copies_world_book_to_me	保留/合并	integration	防角色卡兼容性、引用删除和权限错误；验证：复制别人的公开卡时，世界书要复制到自己名下（不能引用对方的）。
+624a7f1	tests/test_character_cards.py	test_export_includes_linked_world_book	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_character_cards.py	test_export_omits_character_book_when_absent	删除/替代	-	同一公开行为已有更强边界/往返测试，删除重复正常值或字段回显
+624a7f1	tests/test_chroma.py	test_factory_builds_onnx_backend_by_default	删除/替代	-	后端类型、固定维度、元数据/配置回显由真实语义检索和指纹不匹配覆盖
+624a7f1	tests/test_chroma.py	test_onnx_dimension_is_384	删除/替代	-	后端类型、固定维度、元数据/配置回显由真实语义检索和指纹不匹配覆盖
+624a7f1	tests/test_chroma.py	test_embedding_returns_correct_shape	删除/替代	-	后端类型、固定维度、元数据/配置回显由真实语义检索和指纹不匹配覆盖
+624a7f1	tests/test_chroma.py	test_embedding_of_empty_input	保留/合并	integration	防记忆检索错误与用户数据串库；验证：空输入应返回空列表，而不是抛异常。
+624a7f1	tests/test_chroma.py	test_semantic_search_finds_memory_with_different_wording	保留/合并	integration	防记忆检索错误与用户数据串库；验证：★ 核心能力验证：查询用词与原文完全不同，仍应命中正确的记忆。
+624a7f1	tests/test_chroma.py	test_search_on_user_without_memories_returns_empty	保留/合并	integration	防记忆检索错误与用户数据串库；验证：没有记忆的用户检索时应返回空列表，而不是报错或凭空建集合。
+624a7f1	tests/test_chroma.py	test_empty_query_returns_empty	保留/合并	integration	防记忆检索错误与用户数据串库；验证：空查询不应触发向量计算。
+624a7f1	tests/test_chroma.py	test_collections_are_isolated_between_users	保留/合并	integration	防记忆检索错误与用户数据串库；验证：A 用户的记忆绝不能被 B 用户检索到。
+624a7f1	tests/test_chroma.py	test_session_filter_limits_search_scope	保留/合并	integration	防记忆检索错误与用户数据串库；验证：session_id 过滤应把检索范围限制在指定会话内。
+624a7f1	tests/test_chroma.py	test_kind_filter	保留/合并	integration	防记忆检索错误与用户数据串库；验证：kind 过滤应只返回指定类型的记忆。
+624a7f1	tests/test_chroma.py	test_upsert_same_id_does_not_duplicate	保留/合并	integration	防记忆检索错误与用户数据串库；验证：同一个 memory_id 重复写入应覆盖而不是新增。
+624a7f1	tests/test_chroma.py	test_fingerprint_mismatch_is_detected	保留/合并	integration	防记忆检索错误与用户数据串库；验证：★ 集合的嵌入指纹与当前配置不符时，必须报错而不是继续用。
+624a7f1	tests/test_chroma.py	test_collection_records_fingerprint	删除/替代	-	后端类型、固定维度、元数据/配置回显由真实语义检索和指纹不匹配覆盖
+624a7f1	tests/test_chroma.py	test_collection_uses_cosine_space	删除/替代	-	后端类型、固定维度、元数据/配置回显由真实语义检索和指纹不匹配覆盖
+624a7f1	tests/test_chroma.py	test_run_selftest_cleans_up	保留/合并	integration	防记忆检索错误与用户数据串库；验证：自检应返回结果，并且不留下自检集合。
+624a7f1	tests/test_chroma.py	test_system_components_endpoint	保留/合并	integration	防记忆检索错误与用户数据串库；验证：/api/v1/system/components 应同时报告数据库与向量库状态。
+624a7f1	tests/test_chroma.py	test_vector_store_selftest_endpoint	保留/合并	integration	防记忆检索错误与用户数据串库；验证：自检接口应返回可读的语义检索结果，且不泄露 API Key。
+624a7f1	tests/test_chroma.py	test_health_reports_vector_store	保留/合并	integration	防记忆检索错误与用户数据串库；验证：/health 的 vector_store 组件应已从 not_initialized 变为真实状态。
+624a7f1	tests/test_chroma.py	test_api_embedding_creates_http_client_eagerly	删除/替代	-	后端类型、固定维度、元数据/配置回显由真实语义检索和指纹不匹配覆盖
+624a7f1	tests/test_chroma.py	test_api_embedding_probes_dimension_on_first_use	保留/合并	integration	防记忆检索错误与用户数据串库；验证：首次使用时自动探测向量维度，且后续调用是幂等的。
+624a7f1	tests/test_chroma.py	test_api_embedding_ensure_ready_does_not_deadlock	保留/合并	integration	防记忆检索错误与用户数据串库；验证：★ 在带超时的后台线程里跑 ensure_ready，防止将来重新引入嵌套加锁。
+624a7f1	tests/test_console.py	test_console_index_is_served	保留/合并	integration	防控制台静态服务和版本缓存故障；验证：console index is served
+624a7f1	tests/test_console.py	test_console_without_trailing_slash_redirects	保留/合并	integration	防控制台静态服务和版本缓存故障；验证：console without trailing slash redirects
+624a7f1	tests/test_console.py	test_console_assets_are_served	保留/合并	integration	防控制台静态服务和版本缓存故障；验证：★ 每个模块都要能被浏览器加载到。
+624a7f1	tests/test_console.py	test_root_mentions_console	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_console_index_replaces_version_placeholder	保留/合并	integration	防控制台静态服务和版本缓存故障；验证：★ 入口页里的 __WEB_VERSION__ 必须被替换成真实版本号。
+624a7f1	tests/test_console.py	test_console_index_is_not_cacheable	保留/合并	integration	防控制台静态服务和版本缓存故障；验证：入口页必须 no-store：它揣着 importmap 的版本号，缓存住就全错了。
+624a7f1	tests/test_console.py	test_console_module_urls_are_versioned	保留/合并	integration	防控制台静态服务和版本缓存故障；验证：入口页里每个前端模块 URL 都要带上同一个版本号。
+624a7f1	tests/test_console.py	test_every_frontend_module_has_an_importmap_entry	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_frontend_modules_do_not_use_relative_imports	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_frontend_version_changes_when_a_frontend_file_changes	保留/合并	unit	防控制台静态服务和版本缓存故障；验证：★ 改前端文件后版本号必须变，且要经过缓存层生效。
+624a7f1	tests/test_console.py	test_stylesheet_makes_hidden_attribute_actually_hide	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_console_panels_start_collapsed	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_console_layout_leaves_room_for_drawer	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_view_delegated_listeners_are_abortable	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_view_delegated_actions_are_scoped_to_their_own_view	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_presets_view_controllers_are_chained_to_the_route_signal	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_rich_iframe_document_follows_the_theme	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_card_greeting_preview_uses_theme_variables	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_no_hardcoded_light_backgrounds_in_stylesheet	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_alert_borders_use_theme_variables	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_no_hardcoded_light_inline_styles_in_js	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_half_variablized_colors_are_rejected	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_chat_view_buttons_match_their_delegated_actions	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_button_loading_guards_against_double_restore	删除/替代	-	读源码/样式不是浏览器行为；删除静态结构与格式约束
+624a7f1	tests/test_console.py	test_provider_payload_from_console_form	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_provider_draft_test_payload	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_card_payload_from_console_form	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_card_patch_payload_from_console_form	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_book_payload_from_console_editor	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_book_patch_payload_with_null_name	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_delete_with_console_query_params	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_console_does_not_require_login	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_chat_create_session_payload_from_console	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_console.py	test_chat_stream_endpoint_shape	删除/替代	-	重复调用后端 CRUD，未执行前端；由对应资源接口与叙事流测试覆盖
+624a7f1	tests/test_db.py	test_all_tables_registered	删除/替代	-	ORM 结构、通用 CRUD、排序与 JSON 回显由真实接口往返覆盖
+624a7f1	tests/test_db.py	test_pool_parameters_match_settings	删除/替代	-	ORM 结构、通用 CRUD、排序与 JSON 回显由真实接口往返覆盖
+624a7f1	tests/test_db.py	test_transaction_rolls_back_on_error	保留/合并	integration	防事务或首次初始化失效；验证：session_scope 内抛异常时应整体回滚，不留半条脏数据。
+624a7f1	tests/test_db.py	test_user_crud_and_chinese_roundtrip	删除/替代	-	ORM 结构、通用 CRUD、排序与 JSON 回显由真实接口往返覆盖
+624a7f1	tests/test_db.py	test_llm_provider_json_mutation_is_tracked	删除/替代	-	ORM 结构、通用 CRUD、排序与 JSON 回显由真实接口往返覆盖
+624a7f1	tests/test_db.py	test_cascade_delete_removes_owned_rows	删除/替代	-	ORM 结构、通用 CRUD、排序与 JSON 回显由真实接口往返覆盖
+624a7f1	tests/test_db.py	test_session_and_message_ordering	删除/替代	-	ORM 结构、通用 CRUD、排序与 JSON 回显由真实接口往返覆盖
+624a7f1	tests/test_db.py	test_session_scope_does_not_deadlock_before_engine_created	保留/合并	integration	防事务或首次初始化失效；验证：★ 回归测试：Engine 尚未创建时，session_scope() 不得死锁。
+624a7f1	tests/test_db.py	test_get_db_dependency_does_not_deadlock	保留/合并	integration	防事务或首次初始化失效；验证：get_db()（FastAPI 依赖）与 session_scope() 走同一条初始化路径，同样不能死锁。
+624a7f1	tests/test_db_sqlite.py	test_foreign_keys_pragma_is_on	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_journal_mode_is_wal	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_busy_timeout_matches_settings	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_ensure_schema_creates_every_table	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_ensure_schema_is_idempotent	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：★ 幂等：第二次调用**不新建任何表**，也绝不动已有数据。
+624a7f1	tests/test_db_sqlite.py	test_ensure_schema_adds_missing_columns_to_an_old_database	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：★★ 老库缺列时，`ensure_schema()` 必须**在启动阶段**就把它补上。
+624a7f1	tests/test_db_sqlite.py	test_ensure_schema_is_additive_only	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：补列过程**只做加法**：不许出现 DROP / 改类型这类破坏性语句。
+624a7f1	tests/test_db_sqlite.py	test_sqlite_file_is_created_under_configured_path	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_autoincrement_primary_key_works	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_cascade_delete_removes_owned_rows	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_json_columns_roundtrip	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_long_text_is_preserved	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_timestamp_server_default_is_filled	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_session_and_message_order	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_check_connection_reports_backend_and_server	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：探活返回中性键名 `backend` / `server`（不再写死 mysql_version）。
+624a7f1	tests/test_db_sqlite.py	test_check_connection_reports_error_without_raising	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：连不上时必须**如实返回错误**而不是抛异常（/health 依赖这个契约）。
+624a7f1	tests/test_db_sqlite.py	test_ensure_secrets_generates_both_keys	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：★ 一个密钥都没配时，自举必须自己生成两个可用密钥并落盘。
+624a7f1	tests/test_db_sqlite.py	test_ensure_secrets_keeps_existing_valid_key	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：★ 已存在且合法的加密密钥**绝不能被重新生成**。
+624a7f1	tests/test_db_sqlite.py	test_ensure_secrets_reuses_persisted_values	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：第二次启动必须**沿用**上次生成的口令（否则重启就等于换了密钥）。
+624a7f1	tests/test_db_sqlite.py	test_secrets_file_is_not_in_repo_root	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_settings_must_be_refetched_after_bootstrap	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：★★ 自举之后**必须重新取一次 Settings**，否则会打出一条自相矛盾的告警。
+624a7f1	tests/test_db_sqlite.py	test_legacy_mysql_config_without_backend_key_stays_mysql	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：★★★ 这条是**实测事故的墓碑**，别删。
+624a7f1	tests/test_db_sqlite.py	test_explicit_backend_key_always_wins	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：显式写过 `HNE_DB_BACKEND` 就一律以它为准（两种方向都要验）。
+624a7f1	tests/test_db_sqlite.py	test_dialect_expressions_compile_for_both_backends	保留/合并	integration	防旧库/配置/密钥引发数据不可用；验证：两个后端各自编译出**正确**的 SQL：这是"一套代码两种数据库"的核心。
+624a7f1	tests/test_db_sqlite.py	test_json_array_probe_uses_ascii_escaped_json	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_sqlite_library_supports_json_functions	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_db_sqlite.py	test_sqlite_file_path_is_not_shared_between_tests	删除/替代	-	SQLite/ORM 默认值和配置回显不逐条测试；保留真实迁移/事务/故障/密钥和启动边界
+624a7f1	tests/test_diagnostics_endpoint.py	test_diagnostics_requires_login	保留/合并	integration	防诊断越权或泄密；验证：未登录必须被拒 —— 没有理由让未登录状态读到本机目录结构。
+624a7f1	tests/test_diagnostics_endpoint.py	test_diagnostics_shape_and_no_secrets	保留/合并	integration	防诊断越权或泄密；验证：diagnostics shape and no secrets
+624a7f1	tests/test_diagnostics_endpoint.py	test_diagnostics_reports_actual_backend	保留/合并	integration	防诊断越权或泄密；验证：`backend` 要与当前实际使用的后端一致（默认 sqlite），否则「关于」页会撒谎。
+624a7f1	tests/test_dice.py	test_notation_is_evaluated_the_trpg_way	保留/合并	unit	防错误运算、注入和重复掷骰；验证：notation is evaluated the trpg way
+624a7f1	tests/test_dice.py	test_keep_highest_and_lowest_drop_the_rest	保留/合并	unit	防错误运算、注入和重复掷骰；验证：keep highest and lowest drop the rest
+624a7f1	tests/test_dice.py	test_exploding_dice_stop_at_the_budget	保留/合并	unit	防错误运算、注入和重复掷骰；验证：★ 爆炸骰必须有上限：`1d2!` 理论上可以无限炸下去。
+624a7f1	tests/test_dice.py	test_success_check_is_kept_next_to_the_roll	保留/合并	unit	防错误运算、注入和重复掷骰；验证：success check is kept next to the roll
+624a7f1	tests/test_dice.py	test_dice_are_reproducible_with_a_seed_but_not_without	删除/替代	-	随机性/公平性属于随机库和独立统计实验；业务运算用确定性 RNG 验证
+624a7f1	tests/test_dice.py	test_a_d6_actually_looks_fair	删除/替代	-	随机性/公平性属于随机库和独立统计实验；业务运算用确定性 RNG 验证
+624a7f1	tests/test_dice.py	test_limits_are_reported_not_silently_bypassed	保留/合并	unit	防错误运算、注入和重复掷骰；验证：★ 超限一律**拒绝并说明原因**，绝不"截断后照算"（截断会静默改变语义）。
+624a7f1	tests/test_dice.py	test_no_code_is_ever_executed	保留/合并	unit	防错误运算、注入和重复掷骰；验证：★ 插件不放开 JS，解析器也不许被当成解释器：一切非骰子语法都只是"看不懂"。
+624a7f1	tests/test_dice.py	test_expression_and_label_are_split_the_same_way_everywhere	保留/合并	unit	防错误运算、注入和重复掷骰；验证：expression and label are split the same way everywhere
+624a7f1	tests/test_dice.py	test_triggers_only_match_at_the_start_of_a_line	保留/合并	unit	防错误运算、注入和重复掷骰；验证：triggers only match at the start of a line
+624a7f1	tests/test_dice.py	test_longer_trigger_wins_over_the_shorter_one	保留/合并	unit	防错误运算、注入和重复掷骰；验证：★ `/roll` 不能被更短的 `/r` 抢走（否则剩下的 `oll 1d20` 会被当成表达式）。
+624a7f1	tests/test_dice.py	test_bare_trigger_uses_the_default_expression	保留/合并	unit	防错误运算、注入和重复掷骰；验证：bare trigger uses the default expression
+624a7f1	tests/test_dice.py	test_too_many_commands_are_capped_with_an_explanation	保留/合并	unit	防错误运算、注入和重复掷骰；验证：too many commands are capped with an explanation
+624a7f1	tests/test_dice.py	test_model_roll_tags_are_replaced_by_real_numbers	保留/合并	unit	防错误运算、注入和重复掷骰；验证：model roll tags are replaced by real numbers
+624a7f1	tests/test_dice.py	test_model_roll_tags_are_stripped_even_without_the_plugin	保留/合并	unit	防错误运算、注入和重复掷骰；验证：★ 插件没启用也要剥：绝不能让用户看到 `<roll>` 这种原始协议文本。
+624a7f1	tests/test_dice.py	test_a_broken_roll_tag_keeps_the_rest_of_the_reply	保留/合并	unit	防错误运算、注入和重复掷骰；验证：没有闭合标签时只能剥标签本身 —— 掷骰常写在句子中间，整段截掉会吞掉正文。
+624a7f1	tests/test_dice.py	test_prompt_blocks_say_where_the_numbers_came_from	删除/替代	-	文案、目录常量与数据 getter；实际解析/存储/错误行为保留
+624a7f1	tests/test_dice.py	test_bad_payloads_never_break_the_reader	保留/合并	unit	防错误运算、注入和重复掷骰；验证：bad payloads never break the reader
+624a7f1	tests/test_dice.py	test_catalog_offers_the_dice_plugin	删除/替代	-	文案、目录常量与数据 getter；实际解析/存储/错误行为保留
+624a7f1	tests/test_dice.py	test_a_broken_default_expression_is_rejected_at_save_time	保留/合并	integration	防错误运算、注入和重复掷骰；验证：★ 写错的默认表达式不该等到用户掷骰时才发现。
+624a7f1	tests/test_dice.py	test_user_command_rolls_once_and_the_prompt_carries_that_same_number	保留/合并	integration	防错误运算、注入和重复掷骰；验证：★ 本组最关键的一条：点数落库 → 提示词里的数字与接口返回的数字**必须相同**。
+624a7f1	tests/test_dice.py	test_dice_rules_are_only_injected_when_the_plugin_is_enabled	保留/合并	integration	防错误运算、注入和重复掷骰；验证：dice rules are only injected when the plugin is enabled
+624a7f1	tests/test_dice.py	test_model_requested_roll_is_resolved_and_stored	保留/合并	integration	防错误运算、注入和重复掷骰；验证：model requested roll is resolved and stored
+624a7f1	tests/test_dice.py	test_rolls_survive_a_reload	保留/合并	integration	防错误运算、注入和重复掷骰；验证：点数读的是落库那一份：重新打开会话（重新拉详情）必须还是同一个数字。
+624a7f1	tests/test_dice.py	test_a_bad_user_expression_becomes_a_readable_error	保留/合并	integration	防错误运算、注入和重复掷骰；验证：a bad user expression becomes a readable error
+624a7f1	tests/test_dice.py	test_a_plugin_written_by_hand_can_be_created_from_scratch	保留/合并	integration	防错误运算、注入和重复掷骰；验证：手工新建（不走目录）也要能用 —— 校验只有一套。
+624a7f1	tests/test_environment.py	test_inherited_application_configuration_cannot_escape_test_root	保留/合并	integration	防测试写入真实用户目录/数据库；验证：inherited application configuration cannot escape test root
+624a7f1	tests/test_environment.py	test_mysql_without_dedicated_test_credentials_is_rejected	保留/合并	integration	防测试写入真实用户目录/数据库；验证：mysql without dedicated test credentials is rejected
+624a7f1	tests/test_failover.py	test_failover_switches_on_upstream_error	保留/合并	unit	防错误故障切换、拼接不同模型正文；验证：failover switches on upstream error
+624a7f1	tests/test_failover.py	test_failover_does_not_switch_on_bad_request	保留/合并	unit	防错误故障切换、拼接不同模型正文；验证：参数错误换个模型也是白搭：必须原样抛出，让用户去改配置。
+624a7f1	tests/test_failover.py	test_failover_stream_switches_only_before_first_token	保留/合并	unit	防错误故障切换、拼接不同模型正文；验证：failover stream switches only before first token
+624a7f1	tests/test_failover.py	test_failover_stream_raises_when_already_emitted	保留/合并	unit	防错误故障切换、拼接不同模型正文；验证：已经输出过内容再失败：**不能**切（否则两段不同模型的文字会拼在一起）。
+624a7f1	tests/test_failover.py	test_failover_stream_switches_before_any_token	保留/合并	unit	防错误故障切换、拼接不同模型正文；验证：failover stream switches before any token
+624a7f1	tests/test_failover.py	test_whole_reply_emits_single_delta	保留/合并	unit	防错误故障切换、拼接不同模型正文；验证：whole reply emits single delta
+624a7f1	tests/test_failover.py	test_whole_reply_keeps_reasoning_and_usage	保留/合并	unit	防错误故障切换、拼接不同模型正文；验证：whole reply keeps reasoning and usage
+624a7f1	tests/test_failover.py	test_fallback_rejects_self_and_foreign	保留/合并	integration	防错误故障切换、拼接不同模型正文；验证：fallback rejects self and foreign
+624a7f1	tests/test_failover.py	test_fallback_can_be_cleared_with_null	保留/合并	integration	防错误故障切换、拼接不同模型正文；验证：fallback can be cleared with null
+624a7f1	tests/test_failover.py	test_stream_enabled_defaults_true_and_can_be_turned_off	保留/合并	integration	防错误故障切换、拼接不同模型正文；验证：stream enabled defaults true and can be turned off
+624a7f1	tests/test_frontend_contracts.py	test_login_page_tells_which_storage_is_in_use	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_login_page_has_its_own_storage_entry	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_login_page_storage_hint_never_blocks_login	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_storage_hint_has_styles	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_no_leftover_debug_artifacts_in_frontend	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_diagnostics_text_never_carries_bodies	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_diagnostics_collector_excludes_normal_business_failures	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_about_dialog_honors_the_agreed_scope	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_sidebar_stage_switch_actually_takes_effect	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_stage_override_and_default_stay_two_directions	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_regex_view_button_only_shown_when_backend_says_so	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_regex_view_renders_in_sandbox_and_can_go_back	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_prose_line_breaks_are_preserved_in_every_rich_render	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_translation_never_overwrites_a_rich_body	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_raw_body_text_is_read_from_dataset_not_textcontent	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_fenced_card_blocks_are_split_before_html_fast_path	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_sanitize_html_converts_prose_newlines_after_rebuilding	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_regex_view_is_beautified_by_default	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_regex_view_respects_explicit_raw_choice	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_regex_view_cache_is_cleared_when_switching_session	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_regex_view_handler_is_wired_into_dispatcher	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_regex_view_endpoint_path_matches_backend	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_frontend_contracts.py	test_each_message_action_function_is_defined_once_with_its_own_body	删除/替代	-	源码字符串检查无法证明 UI 功能；明确登记浏览器验收缺口
+624a7f1	tests/test_imagegen.py	test_image_tags_are_stripped_and_collected	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：image tags are stripped and collected
+624a7f1	tests/test_imagegen.py	test_image_tag_supports_prompt_attribute_and_self_closing	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：image tag supports prompt attribute and self closing
+624a7f1	tests/test_imagegen.py	test_image_tags_are_stripped_even_when_malformed_and_idempotent	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：image tags are stripped even when malformed and idempotent
+624a7f1	tests/test_imagegen.py	test_image_tags_are_capped_and_deduped	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：image tags are capped and deduped
+624a7f1	tests/test_imagegen.py	test_auto_mode_runs_every_n_rounds	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：auto mode runs every n rounds
+624a7f1	tests/test_imagegen.py	test_model_mode_only_runs_when_model_asked	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：model mode only runs when model asked
+624a7f1	tests/test_imagegen.py	test_contract_only_in_model_mode	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：contract only in model mode
+624a7f1	tests/test_imagegen.py	test_build_prompts_uses_template_and_style	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：build prompts uses template and style
+624a7f1	tests/test_imagegen.py	test_build_prompts_model_mode_appends_style_without_template	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：build prompts model mode appends style without template
+624a7f1	tests/test_imagegen.py	test_auto_scene_truncates_and_keeps_user_question	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：auto scene truncates and keeps user question
+624a7f1	tests/test_imagegen.py	test_join_endpoint	删除/替代	-	内部 URL 拼接/提取 helper 由 generate_one 的真实传输和落盘行为覆盖
+624a7f1	tests/test_imagegen.py	test_extract_b64_json_even_when_short	删除/替代	-	内部 URL 拼接/提取 helper 由 generate_one 的真实传输和落盘行为覆盖
+624a7f1	tests/test_imagegen.py	test_extract_url_and_data_uri	删除/替代	-	内部 URL 拼接/提取 helper 由 generate_one 的真实传输和落盘行为覆盖
+624a7f1	tests/test_imagegen.py	test_extract_chat_image_from_content_and_images	删除/替代	-	内部 URL 拼接/提取 helper 由 generate_one 的真实传输和落盘行为覆盖
+624a7f1	tests/test_imagegen.py	test_detect_image_type_only_accepts_safe_bitmaps	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：detect image type only accepts safe bitmaps
+624a7f1	tests/test_imagegen.py	test_generate_one_decodes_b64_and_saves_file	保留/合并	integration	防错误图片解码、密钥泄露和意外请求；验证：generate one decodes b64 and saves file
+624a7f1	tests/test_imagegen.py	test_generate_one_chat_protocol_uses_chat_endpoint	保留/合并	integration	防错误图片解码、密钥泄露和意外请求；验证：generate one chat protocol uses chat endpoint
+624a7f1	tests/test_imagegen.py	test_generate_one_rejects_response_without_image	保留/合并	integration	防错误图片解码、密钥泄露和意外请求；验证：generate one rejects response without image
+624a7f1	tests/test_imagegen.py	test_imagegen_config_is_normalized_and_key_is_encrypted	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：imagegen config is normalized and key is encrypted
+624a7f1	tests/test_imagegen.py	test_imagegen_update_without_key_keeps_old_ciphertext	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：imagegen update without key keeps old ciphertext
+624a7f1	tests/test_imagegen.py	test_imagegen_manifest_cannot_smuggle_a_key	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：imagegen manifest cannot smuggle a key
+624a7f1	tests/test_imagegen.py	test_imagegen_rejects_bad_config_shapes	保留/合并	unit	防错误图片解码、密钥泄露和意外请求；验证：imagegen rejects bad config shapes
+624a7f1	tests/test_imagegen.py	test_imagegen_summary_mentions_key_state	删除/替代	-	内部 URL 拼接/提取 helper 由 generate_one 的真实传输和落盘行为覆盖
+624a7f1	tests/test_llm.py	test_message_convenience_constructors	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_message_rejects_unknown_role	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_system_prompt_is_merged	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_system_prompt_is_none_when_absent	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_dialogue_excludes_system_messages	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_resolved_model_falls_back_to_provider_model	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_token_usage_from_openai	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_token_usage_from_openai_computes_total_when_missing	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_token_usage_from_anthropic_uses_different_field_names	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_token_usage_handles_none	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_chat_builds_expected_request_body	保留/合并	unit	防请求/响应协议错误和故障误报；验证：请求体应严格符合 OpenAI 协议。
+624a7f1	tests/test_llm.py	test_api_key_can_be_empty_for_local_services	保留/合并	unit	防请求/响应协议错误和故障误报；验证：本地部署（Ollama / vLLM）通常不需要密钥，此时不应发送 Authorization 头。
+624a7f1	tests/test_llm.py	test_request_params_override_default_params	保留/合并	unit	防请求/响应协议错误和故障误报；验证：优先级：默认参数 < 请求参数。
+624a7f1	tests/test_llm.py	test_extra_params_are_passed_through	保留/合并	unit	防请求/响应协议错误和故障误报；验证：厂商特有参数应能透传（这是「不修改抽象层就能接新厂商」的关键）。
+624a7f1	tests/test_llm.py	test_chat_parses_response	保留/合并	unit	防请求/响应协议错误和故障误报；验证：chat parses response
+624a7f1	tests/test_llm.py	test_chat_parses_segmented_content	保留/合并	unit	防请求/响应协议错误和故障误报；验证：少数厂商把 content 返回成分段数组，也要能正确拼接。
+624a7f1	tests/test_llm.py	test_chat_raises_on_empty_choices	保留/合并	unit	防请求/响应协议错误和故障误报；验证：chat raises on empty choices
+624a7f1	tests/test_llm.py	test_chat_raises_when_body_is_not_json	保留/合并	unit	防请求/响应协议错误和故障误报；验证：chat raises when body is not json
+624a7f1	tests/test_llm.py	test_usage_parses_reasoning_tokens	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_usage_reasoning_tokens_defaults_to_zero	删除/替代	-	简单 DTO/getter；请求体和响应协议测试覆盖实际使用
+624a7f1	tests/test_llm.py	test_chat_extracts_reasoning_content	保留/合并	unit	防请求/响应协议错误和故障误报；验证：非流式响应里的思考过程不能被丢弃（要与流式接口能力对称）。
+624a7f1	tests/test_llm.py	test_chat_raises_when_output_truncated_without_content	保留/合并	unit	防请求/响应协议错误和故障误报；验证：★ 核心用例：配额被思考过程吃光导致正文为空，必须报错而不是「假装成功」。
+624a7f1	tests/test_llm.py	test_chat_raises_on_content_filter	保留/合并	unit	防请求/响应协议错误和故障误报；验证：被内容安全策略拦截时要说清原因，而不是返回空字符串。
+624a7f1	tests/test_llm.py	test_chat_raises_on_completely_empty_reply	保留/合并	unit	防请求/响应协议错误和故障误报；验证：既没有正文也没有思考内容，属于上游异常。
+624a7f1	tests/test_llm.py	test_chat_raises_when_only_reasoning_without_truncation	保留/合并	unit	防请求/响应协议错误和故障误报；验证：有思考过程但正文为空、且不是被截断 —— 同样要报错。
+624a7f1	tests/test_llm.py	test_health_check_ok_when_reasoning_consumes_budget	保留/合并	unit	防请求/响应协议错误和故障误报；验证：★ 健康检查的特殊处理：思考吃光配额时，仍应判定「连接正常」。
+624a7f1	tests/test_llm.py	test_health_check_uses_larger_token_budget	保留/合并	unit	防请求/响应协议错误和故障误报；验证：健康检查必须给推理模型留出配额，否则必然误判。
+624a7f1	tests/test_llm.py	test_stream_chat_collects_deltas	保留/合并	unit	防请求/响应协议错误和故障误报；验证：stream chat collects deltas
+624a7f1	tests/test_llm.py	test_stream_chat_ignores_heartbeat_and_broken_json	保留/合并	unit	防请求/响应协议错误和故障误报；验证：心跳注释行与非法 JSON 不应中断整个流。
+624a7f1	tests/test_llm.py	test_stream_chat_captures_reasoning_and_usage	保留/合并	unit	防请求/响应协议错误和故障误报；验证：DeepSeek-R1 这类推理模型的思考过程要能单独取出，用量也要能捕获。
+624a7f1	tests/test_llm.py	test_stream_chat_stops_at_done_marker	保留/合并	unit	防请求/响应协议错误和故障误报；验证：[DONE] 之后的内容不应被继续消费。
+624a7f1	tests/test_llm.py	test_stream_chat_raises_on_business_error_event	保留/合并	unit	防请求/响应协议错误和故障误报；验证：流式过程中混入的错误包也要被识别出来。
+624a7f1	tests/test_llm.py	test_http_errors_are_normalized	保留/合并	unit	防请求/响应协议错误和故障误报；验证：http errors are normalized
+624a7f1	tests/test_llm.py	test_business_error_returned_with_http_200_is_detected	保留/合并	unit	防请求/响应协议错误和故障误报；验证：★ 最坑的一种：鉴权失败却返回 HTTP 200，错误藏在响应体里。
+624a7f1	tests/test_llm.py	test_quota_error_guessed_from_chinese_message	保留/合并	unit	防请求/响应协议错误和故障误报；验证：HTTP 状态码没有区分度时，靠错误文本兜底识别。
+624a7f1	tests/test_llm.py	test_connection_error_is_normalized	保留/合并	unit	防请求/响应协议错误和故障误报；验证：connection error is normalized
+624a7f1	tests/test_llm.py	test_timeout_is_normalized	保留/合并	unit	防请求/响应协议错误和故障误报；验证：timeout is normalized
+624a7f1	tests/test_llm.py	test_error_detail_contains_context_but_not_api_key	保留/合并	unit	防请求/响应协议错误和故障误报；验证：错误详情要能定位问题，但绝不能泄露密钥。
+624a7f1	tests/test_llm.py	test_repr_masks_api_key	保留/合并	unit	防请求/响应协议错误和故障误报；验证：repr masks api key
+624a7f1	tests/test_llm.py	test_retries_on_rate_limit_then_succeeds	保留/合并	unit	防请求/响应协议错误和故障误报；验证：429 属于可重试错误，重试后成功则不应把异常抛给上层。
+624a7f1	tests/test_llm.py	test_does_not_retry_auth_error	保留/合并	unit	防请求/响应协议错误和故障误报；验证：401 重试再多次也没用，必须立刻失败，避免白白消耗调用次数。
+624a7f1	tests/test_llm.py	test_retries_on_connection_error	保留/合并	unit	防请求/响应协议错误和故障误报；验证：retries on connection error
+624a7f1	tests/test_llm.py	test_factory_creates_openai_compatible	删除/替代	-	工厂类型回显由协议请求覆盖，保留非法配置入口测试
+624a7f1	tests/test_llm.py	test_factory_normalizes_provider_type	删除/替代	-	工厂类型回显由协议请求覆盖，保留非法配置入口测试
+624a7f1	tests/test_llm.py	test_factory_rejects_unknown_provider_type	保留/合并	unit	防请求/响应协议错误和故障误报；验证：factory rejects unknown provider type
+624a7f1	tests/test_llm.py	test_factory_requires_base_url_and_model	保留/合并	unit	防请求/响应协议错误和故障误报；验证：factory requires base url and model
+624a7f1	tests/test_llm.py	test_factory_rejects_invalid_url_scheme	保留/合并	unit	防请求/响应协议错误和故障误报；验证：factory rejects invalid url scheme
+624a7f1	tests/test_llm.py	test_base_url_with_endpoint_path_is_rejected	保留/合并	unit	防请求/响应协议错误和故障误报；验证：★ 拒绝静默降级：地址填错时必须当场报错，并给出该填成什么。
+624a7f1	tests/test_llm.py	test_base_url_without_endpoint_path_is_accepted	删除/替代	-	工厂类型回显由协议请求覆盖，保留非法配置入口测试
+624a7f1	tests/test_llm.py	test_anthropic_base_url_may_include_full_path	删除/替代	-	工厂类型回显由协议请求覆盖，保留非法配置入口测试
+624a7f1	tests/test_llm.py	test_list_models	保留/合并	unit	防请求/响应协议错误和故障误报；验证：list models
+624a7f1	tests/test_llm.py	test_list_models_tolerates_plain_string_list	保留/合并	unit	防请求/响应协议错误和故障误报；验证：list models tolerates plain string list
+624a7f1	tests/test_llm.py	test_health_check_success	保留/合并	unit	防请求/响应协议错误和故障误报；验证：health check success
+624a7f1	tests/test_llm.py	test_health_check_failure_does_not_raise	保留/合并	unit	防请求/响应协议错误和故障误报；验证：连通性测试要把失败「报告出来」而不是抛异常，供「测试连接」按钮使用。
+624a7f1	tests/test_llm.py	test_live_health_check	保留/合并	integration	防请求/响应协议错误和故障误报；验证：live health check
+624a7f1	tests/test_llm.py	test_live_chat	保留/合并	integration	防请求/响应协议错误和故障误报；验证：live chat
+624a7f1	tests/test_llm.py	test_live_stream_chat	保留/合并	integration	防请求/响应协议错误和故障误报；验证：验证真实厂商的 SSE 流能被正确解析，且能拼出完整回复。
+624a7f1	tests/test_llm.py	test_live_wrong_api_key_raises_auth_error	保留/合并	integration	防请求/响应协议错误和故障误报；验证：故意用错误的密钥，验证错误码归一对真实厂商同样有效。
+624a7f1	tests/test_main.py	test_health_ok	保留/合并	integration	防启动/依赖故障被误报正常；验证：health ok
+624a7f1	tests/test_main.py	test_health_reports_degraded_dependency	保留/合并	integration	防启动/依赖故障被误报正常；验证：A failed dependency must be visible in both its component and overall status.
+624a7f1	tests/test_main.py	test_health_reports_database_component	保留/合并	integration	防启动/依赖故障被误报正常；验证：健康检查必须如实报告数据库状态，而不是笼统地说 ok。
+624a7f1	tests/test_main.py	test_root_ok	保留/合并	integration	防启动/依赖故障被误报正常；验证：root ok
+624a7f1	tests/test_main.py	test_v1_prefix_mounted	删除/替代	-	路由挂载回显由各资源入口覆盖
+624a7f1	tests/test_main.py	test_404_error_shape	保留/合并	integration	防启动/依赖故障被误报正常；验证：404 error shape
+624a7f1	tests/test_main.py	test_405_error_shape	保留/合并	integration	防启动/依赖故障被误报正常；验证：405 error shape
+624a7f1	tests/test_main.py	test_request_id_is_generated	保留/合并	integration	防启动/依赖故障被误报正常；验证：request id is generated
+624a7f1	tests/test_main.py	test_request_id_is_propagated	保留/合并	integration	防启动/依赖故障被误报正常；验证：前端传入的 X-Request-ID 应被原样透传，便于前后端串联排查。
+624a7f1	tests/test_memory.py	test_remember_turn_is_idempotent	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：同一轮对话重复保存不能产生重复记忆（流式重试、用户重发都会走到这里）。
+624a7f1	tests/test_memory.py	test_recall_uses_semantic_similarity_not_keywords	删除/替代	-	与底层语义检索/真实对话注入重复；保留故障降级/删除/隔离
+624a7f1	tests/test_memory.py	test_recall_filters_low_similarity	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：相似度门槛必须生效：不相关的内容宁可不要。
+624a7f1	tests/test_memory.py	test_recall_is_session_scoped_by_default	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：★ 默认不跨会话：别的故事里的内容不能串进来。
+624a7f1	tests/test_memory.py	test_memory_layer_never_raises	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：★ 向量库坏了也不能抛异常：记忆是锦上添花，不该让对话失败。
+624a7f1	tests/test_memory.py	test_recalled_memory_reaches_system_prompt	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：★ 关键断言：召回的内容真的出现在**发给模型的系统提示词**里。
+624a7f1	tests/test_memory.py	test_no_recall_when_nothing_relevant	删除/替代	-	与底层语义检索/真实对话注入重复；保留故障降级/删除/隔离
+624a7f1	tests/test_memory.py	test_turn_is_written_into_long_term_memory	删除/替代	-	与底层语义检索/真实对话注入重复；保留故障降级/删除/隔离
+624a7f1	tests/test_memory.py	test_memory_failure_degrades_without_breaking_chat	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：★ 向量库不可用时：对话照样成功，但必须**如实**把失败原因回报给界面。
+624a7f1	tests/test_memory.py	test_prompt_preview_matches_the_real_request	删除/替代	-	与底层语义检索/真实对话注入重复；保留故障降级/删除/隔离
+624a7f1	tests/test_memory.py	test_deleting_session_also_forgets_its_memories	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：★ 删会话必须同时清掉它的长期记忆，否则会留下"幽灵记忆"。
+624a7f1	tests/test_memory.py	test_clearing_all_memories_keeps_conversations	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：清空记忆只影响"记忆"，绝不能碰对话记录。
+624a7f1	tests/test_memory.py	test_memory_endpoints_crud	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：memory endpoints crud
+624a7f1	tests/test_memory.py	test_memory_endpoints_require_ownership	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：memory endpoints require ownership
+624a7f1	tests/test_memory.py	test_memory_endpoints_reject_blank_text	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：memory endpoints reject blank text
+624a7f1	tests/test_memory.py	test_memory_endpoints_require_login	保留/合并	integration	防记忆丢失、越权与服务故障中断会话；验证：memory endpoints require login
+624a7f1	tests/test_narrative.py	test_prompt_assembles_persona_fields	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：prompt assembles persona fields
+624a7f1	tests/test_narrative.py	test_prompt_prefers_card_system_prompt	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：角色卡自带 system_prompt 时必须优先用它（作者的写法最权威）。
+624a7f1	tests/test_narrative.py	test_prompt_injects_world_book_entries	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：prompt injects world book entries
+624a7f1	tests/test_narrative.py	test_prompt_puts_greeting_as_first_assistant_message	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：prompt puts greeting as first assistant message
+624a7f1	tests/test_narrative.py	test_post_history_instructions_are_appended_last	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：post history instructions are appended last
+624a7f1	tests/test_narrative.py	test_prompt_without_card_warns_but_still_builds	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：角色卡被删除后（外键 SET NULL）会话仍要能继续用。
+624a7f1	tests/test_narrative.py	test_token_estimator_counts_cjk_heavier_than_latin	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：token estimator counts cjk heavier than latin
+624a7f1	tests/test_narrative.py	test_context_drops_earliest_messages_when_over_budget	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：context drops earliest messages when over budget
+624a7f1	tests/test_narrative.py	test_context_within_budget_keeps_everything	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：context within budget keeps everything
+624a7f1	tests/test_narrative.py	test_context_injects_rolling_summary	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：context injects rolling summary
+624a7f1	tests/test_narrative.py	test_context_truncates_oversized_system_prompt	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：世界书塞了 5 万字时，系统提示词必须被截断并**如实标记**。
+624a7f1	tests/test_narrative.py	test_summarize_dropped_keeps_recent_and_caps_length	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：summarize dropped keeps recent and caps length
+624a7f1	tests/test_narrative.py	test_scanner_only_returns_entries_hit_by_keywords	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：scanner only returns entries hit by keywords
+624a7f1	tests/test_narrative.py	test_scanner_ignores_disabled_and_keyless_entries	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：scanner ignores disabled and keyless entries
+624a7f1	tests/test_narrative.py	test_scanner_respects_scan_depth	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：★ scan_depth 的意义：很久以前提到的关键词不该再触发注入。
+624a7f1	tests/test_narrative.py	test_scanner_respects_token_budget_but_keeps_first_entry	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：scanner respects token budget but keeps first entry
+624a7f1	tests/test_narrative.py	test_scanner_sorts_by_insertion_order_and_case_insensitive	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：scanner sorts by insertion order and case insensitive
+624a7f1	tests/test_narrative.py	test_scanner_settings_fall_back_to_defaults	删除/替代	-	默认/字段回显或更强业务路径已覆盖
+624a7f1	tests/test_narrative.py	test_prompt_injects_only_scanned_entries	保留/合并	unit	防会话内容丢失、并发冲突和上下文错误；验证：prompt injects only scanned entries
+624a7f1	tests/test_narrative.py	test_create_session_writes_greeting_as_first_message	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：create session writes greeting as first message
+624a7f1	tests/test_narrative.py	test_create_session_without_greeting_has_no_messages	删除/替代	-	默认/字段回显或更强业务路径已覆盖
+624a7f1	tests/test_narrative.py	test_create_session_uses_alternate_greeting	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：create session uses alternate greeting
+624a7f1	tests/test_narrative.py	test_create_session_with_out_of_range_greeting_index	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：create session with out of range greeting index
+624a7f1	tests/test_narrative.py	test_create_session_falls_back_to_default_provider	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：不传模型配置时用默认模型。
+624a7f1	tests/test_narrative.py	test_create_session_without_any_provider	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：一个模型配置都没有时，会话照样建得起来，但会给出提醒。
+624a7f1	tests/test_narrative.py	test_create_session_with_others_private_card_is_404	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：create session with others private card is 404
+624a7f1	tests/test_narrative.py	test_create_session_with_others_public_card_is_allowed	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 公共卡库的卡可以拿来开局（能看不等于能改，但能用来对话）。
+624a7f1	tests/test_narrative.py	test_list_sessions_is_paginated_and_sorted_by_activity	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：list sessions is paginated and sorted by activity
+624a7f1	tests/test_narrative.py	test_list_sessions_can_filter_archived	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：list sessions can filter archived
+624a7f1	tests/test_narrative.py	test_patch_session_renames	删除/替代	-	默认/字段回显或更强业务路径已覆盖
+624a7f1	tests/test_narrative.py	test_patch_session_title_null_keeps_original	删除/替代	-	默认/字段回显或更强业务路径已覆盖
+624a7f1	tests/test_narrative.py	test_delete_session_cascades_messages	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：delete session cascades messages
+624a7f1	tests/test_narrative.py	test_session_detail_can_skip_prompt_preview	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：session detail can skip prompt preview
+624a7f1	tests/test_narrative.py	test_message_limit_returns_latest_messages	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：message limit returns latest messages
+624a7f1	tests/test_narrative.py	test_other_users_session_is_404	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：other users session is 404
+624a7f1	tests/test_narrative.py	test_narrative_requires_login	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：narrative requires login
+624a7f1	tests/test_narrative.py	test_send_message_persists_and_updates_stats	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：send message persists and updates stats
+624a7f1	tests/test_narrative.py	test_send_message_passes_history_and_world_book_to_model	删除/替代	-	默认/字段回显或更强业务路径已覆盖
+624a7f1	tests/test_narrative.py	test_send_message_propagates_adapter_notes	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 适配层为满足协议而改过参数时，必须一路透传到前端（不许静默降级）。
+624a7f1	tests/test_narrative.py	test_send_message_keeps_user_message_when_model_fails	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 模型调用失败时，用户打出去的话不能跟着消失。
+624a7f1	tests/test_narrative.py	test_send_message_without_provider_is_400	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：send message without provider is 400
+624a7f1	tests/test_narrative.py	test_send_message_rejects_blank_content	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：send message rejects blank content
+624a7f1	tests/test_narrative.py	test_long_conversation_triggers_rolling_summary	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：超长对话必须触发裁剪，并把被裁掉的内容压进 rolling_summary。
+624a7f1	tests/test_narrative.py	test_stream_sends_deltas_then_done	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：stream sends deltas then done
+624a7f1	tests/test_narrative.py	test_stream_image_events_are_sent_and_persisted	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：生图走 SSE：正文流完之后先 image_start，再 image，最后 done 也带一份。
+624a7f1	tests/test_narrative.py	test_stream_reports_notes_from_adapter	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：stream reports notes from adapter
+624a7f1	tests/test_narrative.py	test_stream_reports_reasoning_separately	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：推理模型的思考过程单独走 reason 事件，不与正文混在一起。
+624a7f1	tests/test_narrative.py	test_interrupted_reasoning_is_marked_with_its_own_wording	删除/替代	-	内部私有标签文案由中断正文/思考分别持久化的公开流程覆盖
+624a7f1	tests/test_narrative.py	test_interrupted_turn_keeps_body_and_reasoning_separately	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：被中断的一轮：正文进 content、思考进 reasoning，**各带各的标注**。
+624a7f1	tests/test_narrative.py	test_frontend_exposes_the_reasoning_panel	删除/替代	-	源码/内部标志清理不能代替用户行为；保留真正的并发冲突和中断落盘
+624a7f1	tests/test_narrative.py	test_api_interrupt_helper_saves_through_the_api_layer	删除/替代	-	源码/内部标志清理不能代替用户行为；保留真正的并发冲突和中断落盘
+624a7f1	tests/test_narrative.py	test_interrupt_with_only_reasoning_still_saves_something	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 用户 2026-10-13 报的 bug：**推理模型先想很久、正文一个字还没吐**时切走。
+624a7f1	tests/test_narrative.py	test_store_reasoning_switch_controls_persistence	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 模型配置里的「思考过程输出」开关（默认开，用户 2026-10-13 要求）。
+624a7f1	tests/test_narrative.py	test_stream_reports_error_event_instead_of_silent_break	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 流式过程中出错必须发 error 事件，不能静默断开。
+624a7f1	tests/test_narrative.py	test_stream_empty_reply_yields_explicit_error	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：推理模型把输出配额全用在思考上 -> 一个字的正文都没有。
+624a7f1	tests/test_narrative.py	test_stream_requires_login	删除/替代	-	默认/字段回显或更强业务路径已覆盖
+624a7f1	tests/test_narrative.py	test_stream_keeps_user_message_when_provider_missing	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：流式路径下校验失败时，用户消息已经落库了（在流开始前就写好了）。
+624a7f1	tests/test_narrative.py	test_messages_of_deleted_card_still_work	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：角色卡被删除后（外键 SET NULL），会话仍可继续对话，只是没有人设。
+624a7f1	tests/test_narrative.py	test_edit_user_message_deletes_everything_after_it	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 编辑会连带删掉后面的全部内容 —— 这是编辑语义的核心，必须断言到。
+624a7f1	tests/test_narrative.py	test_edit_recalculates_session_stats	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：删消息后统计必须跟着变，否则界面会出现"3 条消息却累计上万 token"的怪象。
+624a7f1	tests/test_narrative.py	test_edit_assistant_message_is_rejected	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：角色回复是模型产物，不允许直接改写（否则模型会以为那是自己说过的话）。
+624a7f1	tests/test_narrative.py	test_edit_with_blank_content_is_422	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：edit with blank content is 422
+624a7f1	tests/test_narrative.py	test_retract_removes_message_and_everything_after	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：retract removes message and everything after
+624a7f1	tests/test_narrative.py	test_retract_last_turn_leaves_only_greeting	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：retract last turn leaves only greeting
+624a7f1	tests/test_narrative.py	test_retract_assistant_message_is_rejected	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：retract assistant message is rejected
+624a7f1	tests/test_narrative.py	test_edit_and_retract_reject_message_from_another_session	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 消息 id 是全局自增的：只按主键取就等于允许操作别的会话里的消息。
+624a7f1	tests/test_narrative.py	test_regenerate_replaces_last_reply_without_duplicating_user_message	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 重新生成的定义性断言：回复换了，但用户消息**不会**多出一条。
+624a7f1	tests/test_narrative.py	test_regenerate_middle_reply_drops_later_messages	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：对中间那条回复重新生成时，它之后的内容会一起被删掉（否则前后矛盾）。
+624a7f1	tests/test_narrative.py	test_regenerate_prompt_anchors_on_previous_user_message	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 回归：重新生成中间那条回复时，**提问锚点**必须是它前面那条用户消息。
+624a7f1	tests/test_narrative.py	test_regenerate_rejects_user_message_id	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：重新生成只能针对角色回复；指到用户消息上要明确报错，而不是默默乱删。
+624a7f1	tests/test_narrative.py	test_regenerate_without_any_user_message_is_400	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：只有开场白时没有可重新生成的内容 —— 要返回 400，不能让前端白等一条流。
+624a7f1	tests/test_narrative.py	test_message_actions_require_login	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：message actions require login
+624a7f1	tests/test_narrative.py	test_interrupted_turn_keeps_what_the_user_already_saw	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：★ 已经推送给用户的那段字必须落库，并标注「（回复中断）」——且**幂等**。
+624a7f1	tests/test_narrative.py	test_generating_flag_reflects_a_running_turn	删除/替代	-	默认/字段回显或更强业务路径已覆盖
+624a7f1	tests/test_narrative.py	test_send_is_rejected_while_previous_turn_is_still_writing	保留/合并	integration	防会话内容丢失、并发冲突和上下文错误；验证：上一轮还在后台写时，再发消息要被**明确拒绝**（409），且不留下用户消息。
+624a7f1	tests/test_narrative.py	test_registry_is_clean_after_a_normal_stream	删除/替代	-	源码/内部标志清理不能代替用户行为；保留真正的并发冲突和中断落盘
+624a7f1	tests/test_params.py	test_default_params	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_max_tokens_documented_as_including_reasoning	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_param_range_validation	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_reasoning_effort_accepts_string	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_reasoning_effort_rejects_unknown_value	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_from_dict_splits_known_and_unknown	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_from_dict_drops_internal_metadata	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_from_dict_handles_none	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_wire_params_always_send_temperature_and_max_tokens	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_wire_params_omit_unset_optional_fields	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_wire_params_include_set_optional_fields	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_wire_params_extra_overrides_known_fields	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_merged_with_overrides_only_given_fields	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_context_budget_formula	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：输入预算 = 上下文窗口 − 输出预留 − 安全余量。
+624a7f1	tests/test_params.py	test_context_budget_safety_margin_has_floor	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：窗口很小时，按比例算出的余量太小，应回落到下限 128。
+624a7f1	tests/test_params.py	test_context_budget_flags_usable_range	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：context budget flags usable range
+624a7f1	tests/test_params.py	test_context_budget_note_mentions_reasoning	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_provider_config_accepts_valid_input	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_provider_config_rejects_output_larger_than_window	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_provider_config_warns_when_reasoning_with_small_output	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：★ 推理模型 + 输出偏小 → 正文会被思考挤没，必须提示用户。
+624a7f1	tests/test_params.py	test_provider_config_no_warning_when_reasoning_off	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：关掉思考后，小输出就不再是问题。
+624a7f1	tests/test_params.py	test_provider_config_warns_on_tight_input_budget	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：输出吃掉绝大部分窗口时，剩下的输入预算放不下人设与历史，必须提示。
+624a7f1	tests/test_params.py	test_provider_config_warns_on_missing_key_for_cloud	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：provider config warns on missing key for cloud
+624a7f1	tests/test_params.py	test_provider_config_no_key_warning_for_localhost	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：本地部署（Ollama / vLLM）不需要密钥，不应误报。
+624a7f1	tests/test_params.py	test_provider_config_to_dict_never_leaks_key	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：provider config to dict never leaks key
+624a7f1	tests/test_params.py	test_auto_effort_sends_no_extra_field	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：auto 时不发送任何思考相关字段 —— 这是最安全的默认。
+624a7f1	tests/test_params.py	test_effort_translated_to_openai_field	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：统一思考强度应被翻译成 OpenAI 兼容协议的 reasoning_effort 字段。
+624a7f1	tests/test_params.py	test_request_effort_overrides_provider_default	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：request effort overrides provider default
+624a7f1	tests/test_params.py	test_invalid_effort_in_config_is_rejected_early	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_invalid_effort_in_request_falls_back_to_auto	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：★ 请求层则相反：允许容错。
+624a7f1	tests/test_params.py	test_400_error_with_reasoning_effort_gets_actionable_hint	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：★ 部分模型不认识 reasoning_effort，会返回 400。
+624a7f1	tests/test_params.py	test_provider_exposes_context_budget	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_provider_budget_reflects_configured_max_tokens	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_create_provider_from_config	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_describe_token_split_states_the_rule	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_auto_effort_produces_no_hint	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_effort_set_produces_hint_about_auto_fallback	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_to_dict_exposes_both_message_lists	删除/替代	-	DTO 默认/说明/枚举/getter 不单测；参数合法性经 HTTP 与协议入口验证
+624a7f1	tests/test_params.py	test_rejected_effort_is_dropped_and_retried	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：★ 服务端拒绝 reasoning_effort 时：**去掉它重试一次**，并且不打断对话。
+624a7f1	tests/test_params.py	test_unsupported_effort_is_remembered_across_calls	保留/合并	unit	防预算溢出和不支持参数导致请求失败；验证：★ 同一个模型被拒过一次之后，后续请求**不再白试**（否则每次多一次 400 往返）。
+624a7f1	tests/test_plugins.py	test_first_list_creates_two_empty_defaults_plus_theme_then_never_duplicates	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：新账号第一次访问插件列表：2 个空壳 + **1 个默认主题**，且只发一次。
+624a7f1	tests/test_plugins.py	test_toggle_priority_and_delete	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：toggle priority and delete
+624a7f1	tests/test_plugins.py	test_other_users_plugin_is_404	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：other users plugin is 404
+624a7f1	tests/test_plugins.py	test_bad_config_is_rejected	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：bad config is rejected
+624a7f1	tests/test_plugins.py	test_css_sanitizer_blocks_escape_and_remote_import	保留/合并	unit	防插件安装越界、失效及会话降级失败；验证：css sanitizer blocks escape and remote import
+624a7f1	tests/test_plugins.py	test_summary_is_human_readable	删除/替代	-	目录常量、摘要文字和变量集合不独立测试；保留实际启用/渲染和安全边界
+624a7f1	tests/test_plugins.py	test_imagegen_key_is_encrypted_and_never_returned	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：生图 Key 的对外行为必须与模型 Key 同一套：只回脱敏，绝不回密文。
+624a7f1	tests/test_plugins.py	test_imagegen_catalog_entry_is_added_disabled	删除/替代	-	目录常量、摘要文字和变量集合不独立测试；保留实际启用/渲染和安全边界
+624a7f1	tests/test_plugins.py	test_imagegen_auto_mode_attaches_picture_to_reply	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：每轮自动配图：图片必须挂到这一轮 assistant 消息上（刷新后还在）。
+624a7f1	tests/test_plugins.py	test_generated_media_is_served_without_login	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：图片走 <img src>，浏览器不会带 Authorization；随机文件名 + 不列目录是边界。
+624a7f1	tests/test_plugins.py	test_imagegen_failure_does_not_break_the_reply	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：生图失败只提示，正文与这一轮本身都必须完好。
+624a7f1	tests/test_plugins.py	test_install_url_whitelist	保留/合并	unit	防插件安装越界、失效及会话降级失败；验证：install url whitelist
+624a7f1	tests/test_plugins.py	test_blob_url_is_converted_to_raw	保留/合并	unit	防插件安装越界、失效及会话降级失败；验证：blob url is converted to raw
+624a7f1	tests/test_plugins.py	test_gist_urls_are_supported	保留/合并	unit	防插件安装越界、失效及会话降级失败；验证：gist 也是 GitHub：最轻的分享方式，写一个插件不必建仓库。
+624a7f1	tests/test_plugins.py	test_gist_url_rejects_path_traversal_and_short_path	保留/合并	unit	防插件安装越界、失效及会话降级失败；验证：gist url rejects path traversal and short path
+624a7f1	tests/test_plugins.py	test_install_from_gist_url	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：install from gist url
+624a7f1	tests/test_plugins.py	test_install_happy_path_and_reinstall_updates	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：install happy path and reinstall updates
+624a7f1	tests/test_plugins.py	test_install_rejects_redirect_outside_allowlist	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：install rejects redirect outside allowlist
+624a7f1	tests/test_plugins.py	test_install_rejects_oversize_and_bad_manifest	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：install rejects oversize and bad manifest
+624a7f1	tests/test_plugins.py	test_install_surfaces_download_error	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：install surfaces download error
+624a7f1	tests/test_plugins.py	test_prompt_plugin_is_injected_at_the_very_end	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：prompt plugin is injected at the very end
+624a7f1	tests/test_plugins.py	test_prompt_plugin_before_guard_and_start	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：prompt plugin before guard and start
+624a7f1	tests/test_plugins.py	test_regex_plugin_changes_only_what_is_sent	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：regex plugin changes only what is sent
+624a7f1	tests/test_plugins.py	test_disabled_plugin_has_no_effect	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：disabled plugin has no effect
+624a7f1	tests/test_plugins.py	test_preview_matches_the_real_request	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：预览与实际必须一致 —— 这是本项目对"预览骗人"的零容忍条款。
+624a7f1	tests/test_plugins.py	test_imagegen_manifest_is_rejected_from_github_install	保留/合并	unit	防插件安装越界、失效及会话降级失败；验证：生图是内置插件：远程清单不能决定"故事正文发到哪个图像服务器"。
+624a7f1	tests/test_plugins.py	test_imagegen_model_contract_is_in_preview_and_request	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：model 模式的 <hne-image> 协议必须同时出现在预览与真实请求里（同一份装配）。
+624a7f1	tests/test_plugins.py	test_every_catalog_entry_is_valid_and_declarative	删除/替代	-	目录常量、摘要文字和变量集合不独立测试；保留实际启用/渲染和安全边界
+624a7f1	tests/test_plugins.py	test_unsupported_sillytavern_extensions_are_listed_honestly	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：做不到的就如实列出来（TTS / 快捷回复…），不能装作支持。
+624a7f1	tests/test_plugins.py	test_add_from_catalog_then_no_duplicate	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：add from catalog then no duplicate
+624a7f1	tests/test_plugins.py	test_catalog_can_update_a_stale_builtin_copy	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：★ 内置插件升级后，用户那份"添加时拷贝"的旧内容**能一键更新**。
+624a7f1	tests/test_plugins.py	test_catalog_does_not_clobber_same_name_different_kind	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：用户自己建了一个**同名但类型不同**的插件时，内置示例不许把它覆盖掉。
+624a7f1	tests/test_plugins.py	test_catalog_regex_entry_really_rewrites_the_prompt	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：目录里的「清理 Markdown 强调符号」必须真的生效，而不只是列表里好看。
+624a7f1	tests/test_plugins.py	test_theme_css_only_joins_enabled_css_plugins	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：theme css only joins enabled css plugins
+624a7f1	tests/test_plugins.py	test_catalog_yunmeng_starfield_lists_are_consistent	删除/替代	-	目录常量、摘要文字和变量集合不独立测试；保留实际启用/渲染和安全边界
+624a7f1	tests/test_plugins.py	test_catalog_yunmeng_theme_defines_every_variable	删除/替代	-	目录常量、摘要文字和变量集合不独立测试；保留实际启用/渲染和安全边界
+624a7f1	tests/test_plugins.py	test_catalog_yunmeng_theme_composes_with_the_engine	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：装上这条主题后：引擎不再补任何东西（说明它自己给全了），且清洗不会削掉毛玻璃。
+624a7f1	tests/test_plugins.py	test_theme_css_backfills_catalog_accent	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：主题没写 `--catalog-accent` 时，引擎让它跟着该主题的 `--brand`。
+624a7f1	tests/test_plugins.py	test_theme_css_keeps_themes_own_catalog_accent	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：用户自己调过就以他写的为准。
+624a7f1	tests/test_plugins.py	test_theme_css_backfills_alert_border_colors	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：老主题缺 `--*-border` 时，引擎按"文字色 × 柔和底"的中间调补上。
+624a7f1	tests/test_plugins.py	test_theme_css_does_not_override_themes_own_border_colors	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：用户自己写了 `--warn-border` 就以他写的为准。
+624a7f1	tests/test_plugins.py	test_theme_css_backfills_surface_levels_for_old_themes	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：老主题只写了 `--surface` 时，引擎要补上二/三级表面变量。
+624a7f1	tests/test_plugins.py	test_theme_css_maps_legacy_panel_theme_onto_surface	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：更老的主题只知道 `--panel`（没有 `--surface`）—— 也要能完整覆盖。
+624a7f1	tests/test_plugins.py	test_theme_css_keeps_surface_levels_the_theme_already_defines	保留/合并	integration	防插件安装越界、失效及会话降级失败；验证：用户自己写过的变量一律以他写的为准 —— 只补缺的，不覆盖。
+624a7f1	tests/test_prepublish_check.py	test_real_looking_key_outside_tests_is_a_blocker	保留/合并	integration	防发布泄密与扫描漏检；验证：源码里出现高熵密钥 → BLOCKER（这条是闸门的核心价值）。
+624a7f1	tests/test_prepublish_check.py	test_fake_key_in_tests_is_not_a_blocker	保留/合并	integration	防发布泄密与扫描漏检；验证：测试里的**故意假密钥**只提示、不拦（否则闸门永远红着）。
+624a7f1	tests/test_prepublish_check.py	test_personal_path_is_warned	保留/合并	integration	防发布泄密与扫描漏检；验证：本机路径属于个人标识 → WARN（要人工确认，不直接拦）。
+624a7f1	tests/test_prepublish_check.py	test_requested_name_is_reported	保留/合并	integration	防发布泄密与扫描漏检；验证：`--name` 指定的真实用户名要被找出来（发布前最后一次自查用）。
+624a7f1	tests/test_prepublish_check.py	test_requested_name_blocker_does_not_echo_the_name	保留/合并	integration	防发布泄密与扫描漏检；验证：BLOCKER 的**措辞本身**不能带上那个真名。
+624a7f1	tests/test_prepublish_check.py	test_multiple_requested_names_all_count	保留/合并	integration	防发布泄密与扫描漏检；验证：`--name` 可以给多次（真名 + 常用账号名），每一个都要拦。
+624a7f1	tests/test_prepublish_check.py	test_name_check_covers_every_text_file	保留/合并	integration	防发布泄密与扫描漏检；验证：真名可能藏在任何文本文件里（md / py / json / ps1 …），不能只扫文档。
+624a7f1	tests/test_prepublish_check.py	test_runtime_data_directory_is_a_blocker	保留/合并	integration	防发布泄密与扫描漏检；验证：`data/` 下除白名单外都是运行期数据 → BLOCKER。
+624a7f1	tests/test_prepublish_check.py	test_clean_tree_passes	保留/合并	integration	防发布泄密与扫描漏检；验证：干净目录必须通过（正向对照，防止检查器变成"永远红"）。
+624a7f1	tests/test_prepublish_check.py	test_git_scan_includes_chinese_filenames	保留/合并	integration	防发布泄密与扫描漏检；验证：Exercise Git's real path quoting, which previously hid Chinese documents.
+624a7f1	tests/test_prepublish_check.py	test_secret_reports_redact_values_and_ignore_neighboring_comments	保留/合并	integration	防发布泄密与扫描漏检；验证：secret reports redact values and ignore neighboring comments
+624a7f1	tests/test_prepublish_check.py	test_git_enumeration_failure_cannot_pass	保留/合并	integration	防发布泄密与扫描漏检；验证：git enumeration failure cannot pass
+624a7f1	tests/test_prepublish_check.py	test_config_backups_and_sqlite_sidecars_are_blocked	保留/合并	integration	防发布泄密与扫描漏检；验证：config backups and sqlite sidecars are blocked
+624a7f1	tests/test_presets.py	test_import_keeps_order_and_enabled_flags	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：块的顺序与启停必须和酒馆一致（顺序错了模型行为就变了）。
+624a7f1	tests/test_presets.py	test_import_keeps_blocks_missing_from_order_table	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ 不在 prompt_order 里的块**不能丢**：酒馆里它们靠深度注入生效。
+624a7f1	tests/test_presets.py	test_import_classifies_markers_and_unsupported_blocks	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：标记块 = 占位符；本系统没有内容源的块要如实标注"不支持"。
+624a7f1	tests/test_presets.py	test_position_zero_means_system_prompt_not_depth_injection	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ 这条是本次最容易读错的地方：pos=0 的 user/assistant 块归**系统提示词**。
+624a7f1	tests/test_presets.py	test_import_maps_sampling_params_and_flags_useless_ones	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：采样参数要映射过来，且"云端无效"的参数必须**明确告知**。
+624a7f1	tests/test_presets.py	test_roundtrip_is_lossless	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：导出再导入必须还是同一份东西（否则用户的预设会被我们改坏）。
+624a7f1	tests/test_presets.py	test_from_config_accepts_raw_sillytavern_json	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：数据库里万一直接存了原始酒馆 JSON，也要能解析（向前兼容）。
+624a7f1	tests/test_presets.py	test_known_macros_are_replaced	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：known macros are replaced
+624a7f1	tests/test_presets.py	test_unknown_macros_are_kept_and_reported	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ 不认识的宏必须原样保留并报出来，绝不能替换成空串悄悄吃掉半句话。
+624a7f1	tests/test_presets.py	test_macro_supports_whitespace_and_name_alias	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：macro supports whitespace and name alias
+624a7f1	tests/test_presets.py	test_render_puts_markers_in_expected_order	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：按顺序装配时，块的先后必须体现在系统提示词里。
+624a7f1	tests/test_presets.py	test_disabled_block_is_not_rendered	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：被禁用的块（enhanceDefinitions）绝不能出现 —— 否则"关掉"就是假的。
+624a7f1	tests/test_presets.py	test_marker_without_content_is_skipped_not_rendered_empty	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：没有内容的标记块要跳过，而不是渲染出一个小标题占位。
+624a7f1	tests/test_presets.py	test_disabling_a_marker_block_removes_that_content	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ 禁用标记块 = 那段内容不注入（这是预设能"关掉世界书"的机制）。
+624a7f1	tests/test_presets.py	test_main_block_falls_back_to_builtin_prompt	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ main 块没写正文时要回落到内置主提示 / 角色卡自定义提示词。
+624a7f1	tests/test_presets.py	test_zero_width_space_guard	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：模块必须能导入而不炸（防止循环导入之类的问题）。
+624a7f1	tests/test_presets.py	test_depth_injection_produces_messages_with_depth	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ 深度注入的块必须带 depth，而且 role 要保真（user/assistant 成对才是破甲）。
+624a7f1	tests/test_presets.py	test_depth_injected_blocks_are_not_in_head	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：深度块不能又出现在系统提示词里（那样就成了重复注入）。
+624a7f1	tests/test_presets.py	test_depth_injected_blocks_are_macro_resolved	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：深度块里的宏一样要替换（破甲里常常写 {{user}}）。
+624a7f1	tests/test_presets.py	test_chat_history_marker_is_recorded_but_history_stays_in_place	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：chatHistory 标记要被记下来（界面要解释它），但历史**不由它搬位置**。
+624a7f1	tests/test_presets.py	test_non_system_block_without_depth_joins_system_prompt	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：pos=0 的 user/assistant 块要**写进系统提示词**，而不是被丢掉或当成历史。
+624a7f1	tests/test_presets.py	test_default_config_blocks_are_all_known	删除/替代	-	默认常量/说明文本与 getter；实际装配、变量和回环兼容保留
+624a7f1	tests/test_presets.py	test_default_config_is_not_all_enabled	删除/替代	-	默认常量/说明文本与 getter；实际装配、变量和回环兼容保留
+624a7f1	tests/test_presets.py	test_real_preset_file_if_present	删除/替代	-	依赖本机私有样本的可选测试不属于可复现默认套件；用仓库合成样本覆盖导入导出
+624a7f1	tests/test_presets.py	test_setvar_block_becomes_empty_and_getvar_reads_it	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ 最小闭环：定义变量的块变成空块，消费块拿到真值。
+624a7f1	tests/test_presets.py	test_nested_setvar_value_is_resolved_before_storing	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ 嵌套写法：值里的 `{{getvar::y}}` 必须**先求值再存**。
+624a7f1	tests/test_presets.py	test_addvar_appends_and_protocol_lists_accumulate	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ `addvar`：数值相加、非数值则字符串拼接（variables.js:136-164）。
+624a7f1	tests/test_presets.py	test_variables_are_order_sensitive_not_storage_order	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ 变量的读取必须按 **order_index**（而不是列表存储顺序）。
+624a7f1	tests/test_presets.py	test_trim_swallows_surrounding_newlines	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：`{{trim}}` 连同**周围的换行**一起吃掉（MacroEngine.js:314 的原文正则）。
+624a7f1	tests/test_presets.py	test_unresolved_variable_does_not_leak_literal_macro	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：读一个**从未定义**的变量 → 得到空串，而不是把 `{{getvar::x}}` 喂给模型。
+624a7f1	tests/test_presets.py	test_char_if_not_group_falls_back_to_char_name	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：`{{charIfNotGroup}}` 在非群聊里 = 角色名（script.js:2878-2895）。
+624a7f1	tests/test_presets.py	test_import_does_not_report_variable_macros_as_unknown	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ 变量宏已经支持了，导入时就**不该再报**它们"不认识"。
+624a7f1	tests/test_presets.py	test_import_preserves_and_reports_extensions	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：`extensions` 要原样存下、导出时还回去，并且**明确报出**它有多大。
+624a7f1	tests/test_presets.py	test_unwired_regex_placements_are_actually_listed_not_promised	保留/合并	unit	防预设兼容性与变量/注入次序损坏；验证：★ "不生效的正则会列出来"这件事必须**真的做**，不能只写在文案里。
+624a7f1	tests/test_presets.py	test_warnings_contain_no_markdown_emphasis	删除/替代	-	默认常量/说明文本与 getter；实际装配、变量和回环兼容保留
+624a7f1	tests/test_prompt_presets.py	test_real_preset_import_if_file_present	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_prompt_presets.py	test_meta_lists_blocks_macros_and_params	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_prompt_presets.py	test_meta_requires_login	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：meta requires login
+624a7f1	tests/test_prompt_presets.py	test_import_sillytavern_keeps_order_and_flags	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_prompt_presets.py	test_import_rejects_empty_preset	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：import rejects empty preset
+624a7f1	tests/test_prompt_presets.py	test_import_requires_a_body	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_prompt_presets.py	test_create_from_default_gives_editable_starting_point	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_prompt_presets.py	test_export_then_reimport_keeps_everything	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：export then reimport keeps everything
+624a7f1	tests/test_prompt_presets.py	test_list_puts_active_first	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_prompt_presets.py	test_other_users_preset_is_404	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：other users preset is 404
+624a7f1	tests/test_prompt_presets.py	test_cannot_bind_other_users_preset	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：cannot bind other users preset
+624a7f1	tests/test_prompt_presets.py	test_builtin_block_cannot_be_deleted	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：builtin block cannot be deleted
+624a7f1	tests/test_prompt_presets.py	test_custom_block_can_be_added_and_deleted	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：custom block can be added and deleted
+624a7f1	tests/test_prompt_presets.py	test_update_single_block_content	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_prompt_presets.py	test_reordering_blocks_does_not_truncate_content	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：★ 整体替换块列表时，已有块的正文必须保住（不能被截断的预览覆盖）。
+624a7f1	tests/test_prompt_presets.py	test_preset_content_reaches_the_model	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：★ 本功能唯一有意义的验收标准。
+624a7f1	tests/test_prompt_presets.py	test_unbound_session_uses_builtin_assembly	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：没绑预设时：系统提示词仍来自角色卡，且**没有用户预设的破甲文本**。
+624a7f1	tests/test_prompt_presets.py	test_global_default_preset_applies_without_binding	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：★ 会话没绑、但有全局默认预设时，必须用全局默认 —— 并在响应里说清来源。
+624a7f1	tests/test_prompt_presets.py	test_unbind_falls_back_to_builtin	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：★ 解绑必须真的回到内置装配（传 null 的语义就是解绑）。
+624a7f1	tests/test_prompt_presets.py	test_deleting_preset_keeps_session_working	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：删掉预设之后会话照常能聊（外键 SET NULL + 回落内置装配）。
+624a7f1	tests/test_prompt_presets.py	test_preview_without_session_is_structural	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：preview without session is structural
+624a7f1	tests/test_prompt_presets.py	test_preview_with_session_uses_real_context	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：★ 带会话的预览必须反映真实上下文（否则用户会拿着它排查不存在的问题）。
+624a7f1	tests/test_prompt_presets.py	test_preview_of_other_users_session_is_404	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：preview of other users session is 404
+624a7f1	tests/test_prompt_presets.py	test_listed_and_sorted_last	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_prompt_presets.py	test_guard_is_appended_after_user_preset	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：guard is appended after user preset
+624a7f1	tests/test_prompt_presets.py	test_deleting_builtin_really_disables_it	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：deleting builtin really disables it
+624a7f1	tests/test_prompt_presets.py	test_restore_brings_it_back	保留/合并	integration	防预设生命周期/绑定/模型装配错误；验证：restore brings it back
+624a7f1	tests/test_prompt_presets.py	test_builtin_blocks_are_editable	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_prompt_presets.py	test_session_detail_reports_builtin_guard	删除/替代	-	私有文件样本或字段回显由合成导入往返和模型注入覆盖
+624a7f1	tests/test_providers.py	test_endpoints_require_login	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 所有模型配置接口都必须要求登录。
+624a7f1	tests/test_providers.py	test_create_provider	删除/替代	-	字段回显/重复正常 CRUD；保留配置边界、秘密存储、用途和删除关系
+624a7f1	tests/test_providers.py	test_create_response_never_contains_plaintext_key	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 响应里绝不能出现密钥明文。
+624a7f1	tests/test_providers.py	test_api_key_is_encrypted_in_database	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 数据库里存的必须是密文，且能正确解密回明文。
+624a7f1	tests/test_providers.py	test_create_without_api_key_for_local_model	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：本地部署（Ollama / vLLM）允许不填密钥。
+624a7f1	tests/test_providers.py	test_create_duplicate_name_is_conflict	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：create duplicate name is conflict
+624a7f1	tests/test_providers.py	test_same_name_allowed_for_different_users	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：唯一约束是 (user_id, name)，不同用户之间可以重名。
+624a7f1	tests/test_providers.py	test_create_rejects_unknown_provider_type	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：create rejects unknown provider type
+624a7f1	tests/test_providers.py	test_create_rejects_invalid_base_url	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：create rejects invalid base url
+624a7f1	tests/test_providers.py	test_create_rejects_output_larger_than_window	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 跨字段校验必须返回 422，而不是等到组装配置时变成 500。
+624a7f1	tests/test_providers.py	test_create_rejects_invalid_temperature	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：create rejects invalid temperature
+624a7f1	tests/test_providers.py	test_create_rejects_invalid_reasoning_effort	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：create rejects invalid reasoning effort
+624a7f1	tests/test_providers.py	test_list_only_returns_own_providers	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 列表接口只能看到自己的配置。
+624a7f1	tests/test_providers.py	test_get_provider	删除/替代	-	字段回显/重复正常 CRUD；保留配置边界、秘密存储、用途和删除关系
+624a7f1	tests/test_providers.py	test_cannot_read_other_users_provider	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 越权防护：访问别人的配置必须 404（而不是 403）。
+624a7f1	tests/test_providers.py	test_cannot_delete_other_users_provider	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：cannot delete other users provider
+624a7f1	tests/test_providers.py	test_get_missing_provider	删除/替代	-	字段回显/重复正常 CRUD；保留配置边界、秘密存储、用途和删除关系
+624a7f1	tests/test_providers.py	test_response_includes_budget_and_hints	删除/替代	-	字段回显/重复正常 CRUD；保留配置边界、秘密存储、用途和删除关系
+624a7f1	tests/test_providers.py	test_update_name_only_keeps_api_key	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 不改密钥时，密钥必须原样保留。
+624a7f1	tests/test_providers.py	test_update_with_empty_api_key_keeps_original	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：update with empty api key keeps original
+624a7f1	tests/test_providers.py	test_update_api_key_replaces_it	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：update api key replaces it
+624a7f1	tests/test_providers.py	test_clear_api_key	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：clear api key
+624a7f1	tests/test_providers.py	test_update_generation_params	删除/替代	-	字段回显/重复正常 CRUD；保留配置边界、秘密存储、用途和删除关系
+624a7f1	tests/test_providers.py	test_update_validation_uses_final_combination	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 部分更新也要做跨字段校验。
+624a7f1	tests/test_providers.py	test_only_one_default_provider	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 每个用户最多一个默认模型 —— 设置新的会自动取消旧的。
+624a7f1	tests/test_providers.py	test_promote_existing_provider_to_default	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：promote existing provider to default
+624a7f1	tests/test_providers.py	test_default_provider_listed_first	删除/替代	-	字段回显/重复正常 CRUD；保留配置边界、秘密存储、用途和删除关系
+624a7f1	tests/test_providers.py	test_delete_provider	删除/替代	-	字段回显/重复正常 CRUD；保留配置边界、秘密存储、用途和删除关系
+624a7f1	tests/test_providers.py	test_delete_provider_keeps_narrative_sessions	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 删除模型配置**不能**连带删掉用户的故事。
+624a7f1	tests/test_providers.py	test_delete_missing_provider	删除/替代	-	字段回显/重复正常 CRUD；保留配置边界、秘密存储、用途和删除关系
+624a7f1	tests/test_providers.py	test_test_draft_does_not_persist	保留/合并	integration	防模型秘密泄露与配置更新/默认选择错误；验证：★ 「先测再存」的接口不能往数据库写东西。
+624a7f1	tests/test_pure_chat.py	test_create_pure_chat_session_without_card	保留/合并	integration	防纯对话错误套用故事规则；验证：create pure chat session without card
+624a7f1	tests/test_pure_chat.py	test_pure_chat_rejects_greeting_index	保留/合并	integration	防纯对话错误套用故事规则；验证：pure chat rejects greeting index
+624a7f1	tests/test_pure_chat.py	test_provider_line_reflects_stream_switch	删除/替代	-	显示字段与重复人格装配已由无卡对话/故事路径覆盖
+624a7f1	tests/test_pure_chat.py	test_pure_chat_prompt_is_generic_assistant	保留/合并	integration	防纯对话错误套用故事规则；验证：pure chat prompt is generic assistant
+624a7f1	tests/test_pure_chat.py	test_pure_chat_reply_state_block_is_stripped_but_not_saved	保留/合并	integration	防纯对话错误套用故事规则；验证：我们没要求纯聊天输出状态块，所以：剥掉（别让用户看到 JSON）、但不落库、也不提醒。
+624a7f1	tests/test_pure_chat.py	test_deleted_card_story_session_still_warns_and_is_not_pure_chat	保留/合并	integration	防纯对话错误套用故事规则；验证：deleted card story session still warns and is not pure chat
+624a7f1	tests/test_pure_chat.py	test_story_session_still_uses_persona_assembly	删除/替代	-	显示字段与重复人格装配已由无卡对话/故事路径覆盖
+624a7f1	tests/test_pure_chat.py	test_story_session_without_declared_schema_gets_no_state_protocol	保留/合并	integration	防纯对话错误套用故事规则；验证：★ 回归守卫：卡没声明状态栏格式时，提示词里**不该**出现 HP 那一套。
+624a7f1	tests/test_pure_chat.py	test_session_list_does_not_warn_pure_chat	删除/替代	-	显示字段与重复人格装配已由无卡对话/故事路径覆盖
+624a7f1	tests/test_retrieval.py	test_rrf_prefers_a_candidate_hit_by_both_channels	保留/合并	unit	防融合排序/去重/预算错误；验证：两路都召回的候选应当排在只被一路召回的前面（这正是"融合"的意义）。
+624a7f1	tests/test_retrieval.py	test_keyword_mode_ignores_semantic_channel	保留/合并	unit	防融合排序/去重/预算错误；验证：消融用：只用关键词通道时，语义候选一条都不该进。
+624a7f1	tests/test_retrieval.py	test_semantic_mode_ignores_keyword_channel	保留/合并	unit	防融合排序/去重/预算错误；验证：semantic mode ignores keyword channel
+624a7f1	tests/test_retrieval.py	test_weighted_mode_normalizes_each_channel	保留/合并	unit	防融合排序/去重/预算错误；验证：加权模式必须**分通道**归一化：否则量纲不同的两路没法比（关键词 2 分 vs 相似度 0.9）。
+624a7f1	tests/test_retrieval.py	test_unknown_mode_falls_back_to_default	保留/合并	unit	防融合排序/去重/预算错误；验证：unknown mode falls back to default
+624a7f1	tests/test_retrieval.py	test_cross_channel_dedupe_keeps_one_and_merges_votes	保留/合并	unit	防融合排序/去重/预算错误；验证：同一段内容被两路同时召回 → 只留一条（留世界书那条），另一条如实记原因。
+624a7f1	tests/test_retrieval.py	test_dedupe_ignores_punctuation_and_whitespace	保留/合并	unit	防融合排序/去重/预算错误；验证：判重按归一化文本（去空白/标点），不是逐字节比较。
+624a7f1	tests/test_retrieval.py	test_world_book_entries_are_never_evicted_by_memories	保留/合并	unit	防融合排序/去重/预算错误；验证：★ 用户明确的硬规则：**世界书设定绝对不能因为回忆而被挤掉**。
+624a7f1	tests/test_retrieval.py	test_memories_use_only_the_leftover_budget	保留/合并	unit	防融合排序/去重/预算错误；验证：回忆只能用世界书吃剩的预算（不是"谁分高谁先"）。
+624a7f1	tests/test_retrieval.py	test_world_book_too_big_is_dropped_for_its_own_reasons_only	保留/合并	unit	防融合排序/去重/预算错误；验证：世界书自己装不下时只丢它自己（原因如实写明"世界书优先…自己也装不下"）。
+624a7f1	tests/test_retrieval.py	test_tiny_budget_still_injects_the_top_candidate	保留/合并	unit	防融合排序/去重/预算错误；验证：预算配得比单条还小时也要给一条，否则用户只会看到"命中 N 条、注入 0 条"。
+624a7f1	tests/test_retrieval.py	test_budget_zero_means_unlimited	保留/合并	unit	防融合排序/去重/预算错误；验证：budget zero means unlimited
+624a7f1	tests/test_retrieval.py	test_default_tiebreak_never_overturns_fusion	保留/合并	unit	防融合排序/去重/预算错误；验证：★ 回归守卫：默认重排的微调量是 1e-6 级，绝不能翻掉融合得出的次序。
+624a7f1	tests/test_retrieval.py	test_default_tiebreak_prefers_stronger_channel_evidence	保留/合并	unit	防融合排序/去重/预算错误；验证：融合分打平时（两路同名词次），按"每路归一化后的证据强度"裁决先后。
+624a7f1	tests/test_retrieval.py	test_blend_rerank_is_available_for_ablation_only	保留/合并	unit	防融合排序/去重/预算错误；验证：blend（词面重叠加权）保留下来只为消融对照：它能改变次序，但不是默认。
+624a7f1	tests/test_retrieval.py	test_overlap_ratio_is_bounded_and_ignores_punctuation	保留/合并	unit	防融合排序/去重/预算错误；验证：overlap ratio is bounded and ignores punctuation
+624a7f1	tests/test_retrieval.py	test_semantic_channel_failure_degrades_with_reason	保留/合并	unit	防融合排序/去重/预算错误；验证：语义通道挂了 → 关键词照常工作，并且**如实报告**（拒绝静默降级）。
+624a7f1	tests/test_retrieval.py	test_describe_and_debug_lines_tell_the_truth	删除/替代	-	调试文本/配置回显或重复统计；融合、去重、预算、降级和真实注入保留
+624a7f1	tests/test_retrieval.py	test_empty_retrieval_says_so	删除/替代	-	调试文本/配置回显或重复统计；融合、去重、预算、降级和真实注入保留
+624a7f1	tests/test_retrieval.py	test_scan_candidates_reports_which_keys_matched	保留/合并	unit	防融合排序/去重/预算错误；验证：scan candidates reports which keys matched
+624a7f1	tests/test_retrieval.py	test_scan_and_scan_candidates_agree_on_counts	删除/替代	-	调试文本/配置回显或重复统计；融合、去重、预算、降级和真实注入保留
+624a7f1	tests/test_retrieval.py	test_end_to_end_fused_prompt_has_no_duplicate_and_reports_counts	保留/合并	integration	防融合排序/去重/预算错误；验证：★ 端到端：同一条设定被两路同时召回时，提示词里只能出现一次，且计数如实。
+624a7f1	tests/test_retrieval.py	test_end_to_end_preset_preview_uses_the_same_retrieval	删除/替代	-	调试文本/配置回显或重复统计；融合、去重、预算、降级和真实注入保留
+624a7f1	tests/test_retrieval.py	test_end_to_end_budget_squeeze_is_disclosed	保留/合并	integration	防融合排序/去重/预算错误；验证：世界书自己装不下时必须在 warnings 里说清，并且**记忆不许挤掉它**。
+624a7f1	tests/test_schema_upgrade.py	test_plan_is_empty_when_schema_is_current	删除/替代	-	DDL 字符串/已知空计划由真实升级、幂等和安全边界覆盖
+624a7f1	tests/test_schema_upgrade.py	test_plan_detects_missing_column_and_default	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：缺的列要被发现，且**默认值要一起带上**（否则 NOT NULL 列加不上去）。
+624a7f1	tests/test_schema_upgrade.py	test_added_column_ddl_matches_create_table_ddl	删除/替代	-	DDL 字符串/已知空计划由真实升级、幂等和安全边界覆盖
+624a7f1	tests/test_schema_upgrade.py	test_plan_detects_missing_index	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：模型里有索引、库里没有 → 补一条 CREATE INDEX（索引不影响数据，安全）。
+624a7f1	tests/test_schema_upgrade.py	test_unsafe_not_null_without_default_is_skipped	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：★★ NOT NULL 且无默认值的列：**必须跳过并说明原因**，不能替用户猜一个默认值。
+624a7f1	tests/test_schema_upgrade.py	test_primary_key_column_is_skipped	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：主键列不能追加（需要重建整张表）→ 跳过并说明。
+624a7f1	tests/test_schema_upgrade.py	test_only_additive_guard_rejects_destructive_sql	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：★★ 硬门禁：计划里出现破坏性语句必须直接抛，而不是"小心一点就好"。
+624a7f1	tests/test_schema_upgrade.py	test_obsolete_columns_and_tables_are_only_reported	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：模型里删掉的列/表：**只报告，不删**（删列不可逆，多一列几乎不占空间）。
+624a7f1	tests/test_schema_upgrade.py	test_apply_upgrade_actually_adds_the_column_and_keeps_data	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：★ 端到端：加列后旧数据**一条不少**，新列可读可写。
+624a7f1	tests/test_schema_upgrade.py	test_missing_tables_are_left_to_create_all	删除/替代	-	DDL 字符串/已知空计划由真实升级、幂等和安全边界覆盖
+624a7f1	tests/test_schema_upgrade.py	test_apply_upgrade_skips_existing_index	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：★★ 索引已经存在时，`apply_upgrade` 必须跳过它 —— 而不是抛 "Duplicate key name"。
+624a7f1	tests/test_schema_upgrade.py	test_apply_upgrade_skips_existing_column	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：列已经存在时同样跳过（两条来源也可能给出同一条 ADD COLUMN）。
+624a7f1	tests/test_schema_upgrade.py	test_reports_obsolete_for_real_models_when_tables_exist	删除/替代	-	DDL 字符串/已知空计划由真实升级、幂等和安全边界覆盖
+624a7f1	tests/test_schema_upgrade.py	test_real_model_old_database_gets_upgraded_in_place	保留/合并	integration	防升级丢数据或执行破坏性 SQL；验证：★★ 真实场景：一个**缺列的老库**能被就地升级，且原有数据一条不少。
+624a7f1	tests/test_schema_upgrade_guard.py	test_ensure_schema_works_without_importing_the_app	保留/合并	integration	防独立启动时漏表；验证：ensure schema works without importing the app
+624a7f1	tests/test_state.py	test_extract_takes_last_block_and_strips_all	保留/合并	unit	防模型输出破坏状态及上下文；验证：模型偶尔先复述旧状态再给新的：必须取**最后**一块，且正文里不留 JSON。
+624a7f1	tests/test_state.py	test_extract_without_block_is_noop	保留/合并	unit	防模型输出破坏状态及上下文；验证：extract without block is noop
+624a7f1	tests/test_state.py	test_normalize_clamps_hp_and_keeps_previous_max	保留/合并	unit	防模型输出破坏状态及上下文；验证：normalize clamps hp and keeps previous max
+624a7f1	tests/test_state.py	test_normalize_merges_missing_fields_from_previous	保留/合并	unit	防模型输出破坏状态及上下文；验证：模型漏写字段时沿用旧值 —— 状态不能被"少写一个键"抹掉。
+624a7f1	tests/test_state.py	test_normalize_rejects_dirty_values	保留/合并	unit	防模型输出破坏状态及上下文；验证：normalize rejects dirty values
+624a7f1	tests/test_state.py	test_normalize_ignores_fields_the_card_did_not_declare	保留/合并	unit	防模型输出破坏状态及上下文；验证：★ 没声明的字段一律忽略（并如实提醒）—— 模型自己加的字段不该悄悄落库。
+624a7f1	tests/test_state.py	test_normalize_without_schema_does_nothing	保留/合并	unit	防模型输出破坏状态及上下文；验证：空 schema（这张卡没定义状态栏）→ 不解析任何字段。
+624a7f1	tests/test_state.py	test_ensure_shape_follows_the_schema	删除/替代	-	重复渲染文案/形状 getter；保留实际 schema 优先级、状态校验和注入
+624a7f1	tests/test_state.py	test_apply_reply_degrades_on_broken_json	保留/合并	unit	防模型输出破坏状态及上下文；验证：坏 JSON 不能抛异常：沿用上一轮 + 告诉用户。
+624a7f1	tests/test_state.py	test_render_for_prompt_states_protocol	删除/替代	-	重复渲染文案/形状 getter；保留实际 schema 优先级、状态校验和注入
+624a7f1	tests/test_state.py	test_render_for_prompt_is_empty_without_a_declared_schema	保留/合并	unit	防模型输出破坏状态及上下文；验证：★ 这张卡没定义状态栏、也没有任何状态 → 不注入任何协议。
+624a7f1	tests/test_state.py	test_legacy_session_without_schema_still_renders_old_fields	保留/合并	unit	防模型输出破坏状态及上下文；验证：迁移前的旧会话（没有 schema 记录，但已有状态）走兼容分支，状态栏不会变空白。
+624a7f1	tests/test_state.py	test_reply_state_is_stored_stripped_and_reinjected	保留/合并	integration	防模型输出破坏状态及上下文；验证：reply state is stored stripped and reinjected
+624a7f1	tests/test_state.py	test_broken_state_block_does_not_break_the_turn	保留/合并	integration	防模型输出破坏状态及上下文；验证：模型把状态块写坏时，对话必须照常完成（状态只是锦上添花）。
+624a7f1	tests/test_state.py	test_render_contract_demands_every_turn	删除/替代	-	重复渲染文案/形状 getter；保留实际 schema 优先级、状态校验和注入
+624a7f1	tests/test_state.py	test_apply_reply_warns_when_model_skips_the_state_block	保留/合并	unit	防模型输出破坏状态及上下文；验证：拒绝静默降级：模型没按格式输出就得说出来，否则用户只看到空状态栏。
+624a7f1	tests/test_state.py	test_apply_reply_is_quiet_when_the_card_never_asked_for_state	保留/合并	unit	防模型输出破坏状态及上下文；验证：★ 没定义状态栏的卡：模型不输出状态块**不算错**，不该弹提醒（也不该落库）。
+624a7f1	tests/test_state.py	test_contract_sits_after_the_identity_guard	保留/合并	integration	防模型输出破坏状态及上下文；验证：契约必须在守卫**之后** —— 夹在中间时真实模型会直接忽略它。
+624a7f1	tests/test_state.py	test_card_without_any_declaration_yields_empty_schema	删除/替代	-	重复渲染文案/形状 getter；保留实际 schema 优先级、状态校验和注入
+624a7f1	tests/test_state.py	test_card_declared_schema_wins_over_world_book_and_initial_state	保留/合并	unit	防模型输出破坏状态及上下文；验证：三源优先级：卡显式声明 > 世界书条目 > initial_state 推断。
+624a7f1	tests/test_state.py	test_world_book_state_entry_defines_the_fields	保留/合并	unit	防模型输出破坏状态及上下文；验证：★ 作者把状态栏格式写在世界书里（最常用）—— 正文里的示例 JSON 决定字段。
+624a7f1	tests/test_state.py	test_world_book_state_entry_is_found_by_reserved_key	保留/合并	unit	防模型输出破坏状态及上下文；验证：另一种写法：keys 里含 state_definition（别的工具导出的世界书）。
+624a7f1	tests/test_state.py	test_world_book_state_entry_without_example_is_reported	保留/合并	unit	防模型输出破坏状态及上下文；验证：条目里没有示例 JSON → 如实提醒，并退回按 initial_state 推断。
+624a7f1	tests/test_state.py	test_schema_from_nested_initial_state_becomes_a_meter	保留/合并	unit	防模型输出破坏状态及上下文；验证：老写的嵌套 initial_state 也能吃：{"hp":{"current","max"}} → 一条 meter。
+624a7f1	tests/test_state.py	test_schema_parsing_rejects_bad_entries_without_raising	保留/合并	unit	防模型输出破坏状态及上下文；验证：作者写歪一格不该让整张卡的状态栏消失：坏的丢弃 + 如实提醒。
+624a7f1	tests/test_state.py	test_render_contract_lists_the_declared_fields	删除/替代	-	重复渲染文案/形状 getter；保留实际 schema 优先级、状态校验和注入
+624a7f1	tests/test_state.py	test_render_contract_omits_machine_list_when_author_wrote_it	删除/替代	-	重复渲染文案/形状 getter；保留实际 schema 优先级、状态校验和注入
+624a7f1	tests/test_state.py	test_world_book_state_entry_is_not_injected_as_lore	保留/合并	unit	防模型输出破坏状态及上下文；验证：★ 格式条目**不再当普通设定注入** —— 否则同一段话进提示词两遍，
+624a7f1	tests/test_state.py	test_end_to_end_card_schema_from_world_book	保留/合并	integration	防模型输出破坏状态及上下文；验证：端到端：世界书里写格式 → 建会话 → 状态栏字段就是世界书里那些。
+624a7f1	tests/test_state.py	test_card_extension_initial_state_fills_the_bar	保留/合并	integration	防模型输出破坏状态及上下文；验证：card extension initial state fills the bar
+624a7f1	tests/test_state.py	test_greeting_state_block_is_stripped_even_without_a_schema	保留/合并	integration	防模型输出破坏状态及上下文；验证：没定义状态栏的卡：开场白里的 <state> 也要剥掉（不能给用户看原始 JSON），但不落库。
+624a7f1	tests/test_state.py	test_greeting_state_block_becomes_initial_state_and_is_stripped	保留/合并	integration	防模型输出破坏状态及上下文；验证：开场白里自带 <state> 块的老卡（并声明了字段）：状态要落库，正文里不能留 JSON。
+624a7f1	tests/test_state_drift.py	test_simulate_is_deterministic	删除/替代	-	固定脚本样本或 SVG 字符串不是产品状态校验行为；保留统计公式和真实遥测
+624a7f1	tests/test_state_drift.py	test_counterfactual_drifts_while_validated_stays_in_range	删除/替代	-	固定脚本样本或 SVG 字符串不是产品状态校验行为；保留统计公式和真实遥测
+624a7f1	tests/test_state_drift.py	test_bounds_come_from_the_initial_state_not_the_current_one	保留/合并	unit	防状态指标失真和遥测漏记；验证：★ 标尺必须是故事开始时的上限：模型把 max 也写飘了，不能"自己给自己放宽"。
+624a7f1	tests/test_state_drift.py	test_out_of_range_returns_none_when_nothing_is_computable	保留/合并	unit	防状态指标失真和遥测漏记；验证：算不出来 ≠ 合法：hp 被写成文字时必须给 None，否则均值会被假的 0 拉低。
+624a7f1	tests/test_state_drift.py	test_garbage_flags_every_declared_type	保留/合并	unit	防状态指标失真和遥测漏记；验证：★ 每个声明类型都必须真的校验，不能只校验其中一两种。
+624a7f1	tests/test_state_drift.py	test_garbage_accepts_well_formed_state	保留/合并	unit	防状态指标失真和遥测漏记；验证：干净的状态不能误报——否则脏值率会恒为 1，指标就废了。
+624a7f1	tests/test_state_drift.py	test_garbage_rate_only_grows_in_the_counterfactual	删除/替代	-	固定脚本样本或 SVG 字符串不是产品状态校验行为；保留统计公式和真实遥测
+624a7f1	tests/test_state_drift.py	test_missing_block_rounds_are_flagged	保留/合并	unit	防状态指标失真和遥测漏记；验证：脚本里第 7 / 31 轮"模型没输出状态块"，遥测必须如实标出来（而不是靠猜）。
+624a7f1	tests/test_state_drift.py	test_all_four_kinds_show_up_in_the_script	删除/替代	-	固定脚本样本或 SVG 字符串不是产品状态校验行为；保留统计公式和真实遥测
+624a7f1	tests/test_state_drift.py	test_svg_contains_both_series	删除/替代	-	固定脚本样本或 SVG 字符串不是产品状态校验行为；保留统计公式和真实遥测
+624a7f1	tests/test_state_drift.py	test_telemetry_records_a_normalised_state	保留/合并	integration	防状态指标失真和遥测漏记；验证：正常一轮：遥测记下"输出了块 + 修正了 1 处（越界夹取）+ 偏离度 > 0"。
+624a7f1	tests/test_state_drift.py	test_telemetry_records_a_missing_block	保留/合并	integration	防状态指标失真和遥测漏记；验证：模型没输出块：遥测记 had_block=False —— 这才是真实的"漏输出率"依据。
+624a7f1	tests/test_state_drift.py	test_telemetry_marks_unrequired_when_card_has_no_schema	保留/合并	integration	防状态指标失真和遥测漏记；验证：★ 卡没声明状态栏：遥测标 required=False —— 统计漂移时**不该**算它漏输出。
+624a7f1	tests/test_state_drift.py	test_records_from_db_reads_only_telemetry	保留/合并	integration	防状态指标失真和遥测漏记；验证：真实数据聚合：只统计带遥测的轮次，并如实报告有多少条是遥测之前的。
+624a7f1	tests/test_state_drift.py	test_apply_reply_with_meta_keeps_the_two_tuple_wrapper	删除/替代	-	固定脚本样本或 SVG 字符串不是产品状态校验行为；保留统计公式和真实遥测
+624a7f1	tests/test_state_drift.py	test_classify_notes_splits_the_four_mechanisms	保留/合并	unit	防状态指标失真和遥测漏记；验证：四种机制必须分开计数（合成"修正"一类就看不出是哪一层在起作用）。
+624a7f1	tests/test_storage_settings.py	test_只改白名单里的键_密钥与用户手写的配置一字不动	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：只改白名单里的键 密钥与用户手写的配置一字不动
+624a7f1	tests/test_storage_settings.py	test_不在白名单里的键会被忽略_而不是写进文件	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：不在白名单里的键会被忽略 而不是写进文件
+624a7f1	tests/test_storage_settings.py	test_切到_mysql_时口令留空_沿用已存的那份	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★ 这条守着"切换一下就把口令弄丢"那个真实事故。
+624a7f1	tests/test_storage_settings.py	test_用户真的填了新口令_以他填的为准	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：用户真的填了新口令 以他填的为准
+624a7f1	tests/test_storage_settings.py	test_切到_sqlite_时_mysql_连接信息留成注释而不是删除	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：切到 sqlite 时 mysql 连接信息留成注释而不是删除
+624a7f1	tests/test_storage_settings.py	test_切到_mysql_时_sqlite_路径不写进文件	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：反向：切到 mysql 时，本机文件路径不该生效（免得两边都配着让人困惑）。
+624a7f1	tests/test_storage_settings.py	test_切到_mysql_时_DB_BACKEND_这个开关必须真的被改写	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★★ 回归：这条是真实探针抓到的，当时的单测**没覆盖**。
+624a7f1	tests/test_storage_settings.py	test_切回_sqlite_时_DB_BACKEND_开关同样要被改写	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：反方向也要验：否则"切回去"同样会静默失败。
+624a7f1	tests/test_storage_settings.py	test_被环境变量钉住的键_拒绝写入并说明原因	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★ 静默失效是本项目最怕的失效类型。
+624a7f1	tests/test_storage_settings.py	test_选_mysql_时必填项缺失会被拦下	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：选 mysql 时必填项缺失会被拦下
+624a7f1	tests/test_storage_settings.py	test_选_sqlite_时不校验_mysql_字段	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★ 否则默认的零配置会被"口令没填"这种无关错误拦住。
+624a7f1	tests/test_storage_settings.py	test_端口越界会被拦下	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：端口越界会被拦下
+624a7f1	tests/test_storage_settings.py	test_写入前会备份原文件	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：写入前会备份原文件
+624a7f1	tests/test_storage_settings.py	test_写入后会读回来复核	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★ 只信"我写过了"而不复核，正是"看起来对、实际没落地"的来源。
+624a7f1	tests/test_storage_settings.py	test_带空格的值会被加引号并能原样读回	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：带空格的值会被加引号并能原样读回
+624a7f1	tests/test_storage_settings.py	test_读取状态时不回传口令内容	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：读取状态时不回传口令内容
+624a7f1	tests/test_storage_settings.py	test_读取状态会标出每个键的来源	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：读取状态会标出每个键的来源
+624a7f1	tests/test_storage_settings.py	test_存储接口_未登录也能读_因为登不上时正需要它自救	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★★ 这一条是**本轮的核心契约**：登录前必须可用。
+624a7f1	tests/test_storage_settings.py	test_存储接口_带令牌访问结果一致	删除/替代	-	字段回显/重复访问入口；保留来源、隐私、只读检查和来源限制
+624a7f1	tests/test_storage_settings.py	test_缺少自定义头会被拒	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★ 自定义头是**无登录**之后的主要闸门之一。
+624a7f1	tests/test_storage_settings.py	test_非本机来源会被拒	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★ 这个接口能改数据库配置，不该被局域网里任何人调用。
+624a7f1	tests/test_storage_settings.py	test_Host_头不是本机名会被拒	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★★ 防 **DNS rebinding**。
+624a7f1	tests/test_storage_settings.py	test_Host_带端口号的正常访问不受影响	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：本机访问常带端口（127.0.0.1:8000），这条别被自己的检查误伤。
+624a7f1	tests/test_storage_settings.py	test_localhost_也允许	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：localhost 也允许
+624a7f1	tests/test_storage_settings.py	test_体检_不存在的路径会被标成_warn	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★ 这一条守着用户**真实踩过的坑**：换到空位置后登录不上。
+624a7f1	tests/test_storage_settings.py	test_体检_有账号的库会被标成_ok	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：体检 有账号的库会被标成 ok
+624a7f1	tests/test_storage_settings.py	test_体检_空库会被标成_warn	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：文件在、有表、但一个账号都没有 —— 换过去同样登不上。
+624a7f1	tests/test_storage_settings.py	test_体检_只读不会建出新文件	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★ 体检必须是**纯读**的。
+624a7f1	tests/test_storage_settings.py	test_换到空路径_后端会先拒绝并要求确认	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★★ 方案 A 的后端半边：没有 `confirm_empty` 时必须**拦住**。
+624a7f1	tests/test_storage_settings.py	test_换到空路径_带上确认标记就放行	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：用户看过警告、明确点了"仍然要换"之后，要能真的保存成功。
+624a7f1	tests/test_storage_settings.py	test_换成有账号的库_不需要确认	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：目标里**确实有账号**时不该弹警告（否则每次都会吓用户一跳）。
+624a7f1	tests/test_storage_settings.py	test_路径历史_换一次后旧路径仍能看到	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：★★ 这一条直接对应"我原来的文件去哪了"。
+624a7f1	tests/test_storage_settings.py	test_路径历史_最多只留3条	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：按用户要求：只留最近的 2~3 条，不能无限堆积。
+624a7f1	tests/test_storage_settings.py	test_路径历史_每条附带体检信息	删除/替代	-	字段回显/重复访问入口；保留来源、隐私、只读检查和来源限制
+624a7f1	tests/test_storage_settings.py	test_路径历史_文件损坏也不影响保存	保留/合并	integration	防配置丢失、秘密泄露和危险切库；验证：历史只是便利功能：它读坏了**绝不能**连累保存本身。
+624a7f1	tests/test_storage_settings.py	test_读取状态里带当前本机文件的体检	删除/替代	-	字段回显/重复访问入口；保留来源、隐私、只读检查和来源限制
+624a7f1	tests/test_summary.py	test_round_index_map_counts_user_turns_and_puts_greeting_in_round_one	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证：round index map counts user turns and puts greeting in round one
+624a7f1	tests/test_summary.py	test_should_merge_only_when_a_full_block_accumulated	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证：每攒够一整块（设置里的 rounds）才算"到点" —— 不是每轮都总结。
+624a7f1	tests/test_summary.py	test_block_messages_selects_the_right_rounds	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证：block messages selects the right rounds
+624a7f1	tests/test_summary.py	test_split_previous_strips_the_round_header	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证：split previous strips the round header
+624a7f1	tests/test_summary.py	test_clamp_summary_keeps_both_ends	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证：超长时掐中间留两头：开头是前提、结尾是最新处境，中间最不致命。
+624a7f1	tests/test_summary.py	test_build_summarize_messages_carries_old_summary_and_new_block	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：合并提示里必须同时给出「旧总结」和「新对话」—— 这就是"先遍历旧总结"那一步。
+624a7f1	tests/test_summary.py	test_filter_uncovered_drops_summarized_messages	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证：filter uncovered drops summarized messages
+624a7f1	tests/test_summary.py	test_summary_is_merged_at_the_block_boundary	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：★ 开了自动总结后，第 8 轮攒满、下一轮开始时合并，标记「第 1~8 轮」。
+624a7f1	tests/test_summary.py	test_summary_merges_old_summary_into_a_new_one_at_the_second_block	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：★ 第二块：把「旧总结 + 第 9~16 轮」合并成**一份**新总结（1~16），旧的不残留。
+624a7f1	tests/test_summary.py	test_auto_off_only_reminds_and_never_spends_tokens	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：★ 用户要求"不强制"：没开自动时，到点**只提醒**，一次模型调用都不许多花。
+624a7f1	tests/test_summary.py	test_manual_run_summarizes_whatever_is_pending	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：点「立即总结」：有几轮就总结几轮（不要求攒够一整块）。
+624a7f1	tests/test_summary.py	test_summary_call_always_lowers_thinking	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：★ 剧情总结是**机械任务**（把对话压成摘要），思考纯烧钱 ⇒ 一律降到最小。
+624a7f1	tests/test_summary.py	test_summary_does_not_lower_thinking_when_adapter_opts_out	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：适配器显式声明"我不参与思考强度适配"时，才不发这个参数。
+624a7f1	tests/test_summary.py	test_copy_mode_costs_nothing	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：模式 4「照抄旧记忆生成新记忆」：不调模型（0 token），内容照抄 + 追加本地摘录。
+624a7f1	tests/test_summary.py	test_summary_content_is_editable_and_restorable	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：面板上的「编辑」与「恢复上一次」：改得动、也回得来。
+624a7f1	tests/test_summary.py	test_panel_exposes_five_modes_and_settings	删除/替代	-	面板枚举/指令文字不独立测试；保留实际注入、预算和摘要执行
+624a7f1	tests/test_summary.py	test_disabled_summary_refuses_manual_run	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：关掉总开关后连手动总结也不做（并且明确告诉用户原因，不是静默失败）。
+624a7f1	tests/test_summary.py	test_second_run_without_new_content_does_not_summarize_again	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：★ 连点两下（顺序到达）不该总结两遍：第二遍已经没有新内容可总结了。
+624a7f1	tests/test_summary.py	test_concurrent_run_is_rejected_with_busy	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：★ 并发重复点击必须被**挡住并说明**（409），而不是再跑一遍模型。
+624a7f1	tests/test_summary.py	test_busy_state_is_visible_to_the_api	删除/替代	-	面板枚举/指令文字不独立测试；保留实际注入、预算和摘要执行
+624a7f1	tests/test_summary.py	test_manual_run_refuses_when_no_complete_round	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：★ 一轮完整对话都没有时拒绝总结（别把开场白当成"第 1 轮"白花一次调用）。
+624a7f1	tests/test_summary.py	test_summary_falls_back_to_local_compression_when_model_fails	保留/合并	integration	防摘要丢内容、重复计费和并发覆盖；验证：★ 总结调用失败：对话照常、总结退回本地压缩，并把原因说出来（不静默降级）。
+624a7f1	tests/test_summary.py	test_summary_can_be_disabled	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证：关掉总开关 → 一行总结都不做（用户对成本敏感，必须能关）。
+624a7f1	tests/test_summary.py	test_every_mode_has_its_own_instruction_text	删除/替代	-	面板枚举/指令文字不独立测试；保留实际注入、预算和摘要执行
+624a7f1	tests/test_summary.py	test_mode_instruction_reaches_the_system_prompt	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证：选中的那一档必须出现在**系统提示词**里（而不是只存在于常量里）。
+624a7f1	tests/test_summary.py	test_custom_prompt_replaces_the_whole_system_prompt	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证："自定义"是**整段替换**（包括公共约束）—— 否则用户改不掉那些他不想要的规矩。
+624a7f1	tests/test_summary.py	test_cost_estimate_counts_the_mode_instruction	保留/合并	unit	防摘要丢内容、重复计费和并发覆盖；验证：预估消耗要**如实**：五档指令长短不同，少报会让用户低估成本（界面上是决策依据）。
+624a7f1	tests/test_tavern_regex.py	test_split_literal_parses_js_regex_literal	删除/替代	-	私有解析器不单测，改由 apply_scripts 的公开行为参数化覆盖
+624a7f1	tests/test_tavern_regex.py	test_split_literal_handles_missing_slash_form	删除/替代	-	私有解析器不单测，改由 apply_scripts 的公开行为参数化覆盖
+624a7f1	tests/test_tavern_regex.py	test_split_literal_rejects_illegal_flags	删除/替代	-	私有解析器不单测，改由 apply_scripts 的公开行为参数化覆盖
+624a7f1	tests/test_tavern_regex.py	test_named_group_syntax_is_converted	删除/替代	-	私有解析器不单测，改由 apply_scripts 的公开行为参数化覆盖
+624a7f1	tests/test_tavern_regex.py	test_replacement_expands_numbered_groups	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：`$1` 要展开成捕获组内容（JS 写法），而不是 Python 的 `\1`。
+624a7f1	tests/test_tavern_regex.py	test_missing_group_becomes_empty_not_literal	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：★ 引用了不存在的组 → 替换成**空串**，绝不能把 `$9` 原样留在文本里。
+624a7f1	tests/test_tavern_regex.py	test_match_placeholder_is_supported	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：`{{match}}`（不分大小写）等价于 `$0`（engine.js:421）。
+624a7f1	tests/test_tavern_regex.py	test_trim_strings_are_stripped_from_captured_group	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：捕获组内容要过一遍 `trimStrings`（engine.js:438 / 457-465）。
+624a7f1	tests/test_tavern_regex.py	test_non_global_regex_replaces_only_first	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：没有 `g` 的 JS 正则只替换**第一处**（`String.replace` 的语义）。
+624a7f1	tests/test_tavern_regex.py	test_global_regex_replaces_all	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：global regex replaces all
+624a7f1	tests/test_tavern_regex.py	test_flag_matrix_matches_sillytavern	删除/替代	-	私有解析器不单测，改由 apply_scripts 的公开行为参数化覆盖
+624a7f1	tests/test_tavern_regex.py	test_placement_filter	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：placement 不含当前场景就不跑。
+624a7f1	tests/test_tavern_regex.py	test_min_depth_skips_recent_messages	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：`minDepth=2` = 只对"倒数第 2 条及更早"生效（engine.js:363）。
+624a7f1	tests/test_tavern_regex.py	test_max_depth_skips_old_messages	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：`maxDepth=10` = 只对"倒数第 10 条以内（最近的那批）"生效。
+624a7f1	tests/test_tavern_regex.py	test_depth_none_means_no_depth_filtering	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：★ `depth=None` 时酒馆**整段跳过**深浅判断（`typeof depth === 'number'`）。
+624a7f1	tests/test_tavern_regex.py	test_scripts_run_in_list_order	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：★ 按清单顺序依次作用（前一条的输出是后一条的输入）。
+624a7f1	tests/test_tavern_regex.py	test_combined_names_run_ordered_and_counted	删除/替代	-	顺序规则已有 scripts_run_in_list_order 覆盖
+624a7f1	tests/test_tavern_regex.py	test_compile_failure_is_reported_not_silent	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：正则编译不过时**必须留下痕迹**（不能安静地看起来"没效果"）。
+624a7f1	tests/test_tavern_regex.py	test_substitute_regex_nonzero_is_reported_unsupported	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：`substituteRegex≠0` 需要先对正则做宏替换，本系统不支持 —— 必须报出来。
+624a7f1	tests/test_tavern_regex.py	test_disabled_scripts_are_skipped	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：disabled scripts are skipped
+624a7f1	tests/test_tavern_regex.py	test_unwired_placement_is_reported	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：作用于我们没接钩子的位置（世界书等）要说出来，否则用户以为全都跑了。
+624a7f1	tests/test_tavern_regex.py	test_catastrophic_backtracking_is_stopped_by_timeout	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：★ 灾难性回溯必须被超时掐掉，而不是把请求挂死。
+624a7f1	tests/test_tavern_regex.py	test_timeout_error_is_surfaced_in_stats	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：超时的脚本要在统计里报出来（不能静默跳过）。
+624a7f1	tests/test_tavern_regex.py	test_apply_to_plan_strips_tags_and_keeps_db_untouched	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：装配层：标签被剥掉，且**原始消息对象不被就地改动**。
+624a7f1	tests/test_tavern_regex.py	test_apply_to_plan_noop_without_scripts	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：没有正则脚本时行为必须与改造前完全一致（空 extensions 不碰任何东西）。
+624a7f1	tests/test_tavern_regex.py	test_apply_to_plan_reports_errors_to_caller	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：执行出错要经 `on_error` 交给调用方（进 warnings），不能吞掉。
+624a7f1	tests/test_tavern_regex.py	test_merge_configs_keeps_raw_extensions	保留/合并	unit	防误改正文、配置失效和回溯卡死；验证：★ 这条守的是一个**真实发生过的静默失效**。
+624a7f1	tests/test_translate.py	test_defaults_are_off_and_never_spend_tokens	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：★ 默认必须关闭：本项目对"未经同意花用户 token"零容忍（与记忆总结同一条规矩）。
+624a7f1	tests/test_translate.py	test_disabling_forces_the_mode_to_off	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：关掉总开关后模式必须归零：否则界面会显示"中间件翻译"却什么都没发生。
+624a7f1	tests/test_translate.py	test_invalid_mode_and_direction_fall_back	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：invalid mode and direction fall back
+624a7f1	tests/test_translate.py	test_direction_controls_each_side_independently	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：direction controls each side independently
+624a7f1	tests/test_translate.py	test_prompt_mode_costs_nothing_but_still_tells_the_model	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：prompt mode costs nothing but still tells the model
+624a7f1	tests/test_translate.py	test_local_language_check_spares_the_call	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：★ 已经是目标语言就不调模型 —— 这是真实省下来的钱，不是假装译了。
+624a7f1	tests/test_translate.py	test_too_long_text_is_skipped_with_a_reason	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：too long text is skipped with a reason
+624a7f1	tests/test_translate.py	test_success_records_text_tokens_and_which_side_to_display	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：success records text tokens and which side to display
+624a7f1	tests/test_translate.py	test_model_failure_is_reported_not_raised	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：★ 翻译失败绝不能影响对话（与剧情总结降级同一套哲学）。
+624a7f1	tests/test_translate.py	test_empty_model_output_is_treated_as_failure	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：empty model output is treated as failure
+624a7f1	tests/test_translate.py	test_translation_prompt_forbids_explanations	删除/替代	-	简单 DTO/JSON getter 与选项枚举；保留实际翻译、费用保护、错误降级
+624a7f1	tests/test_translate.py	test_json_helpers_never_break_the_reader	删除/替代	-	简单 DTO/JSON getter 与选项枚举；保留实际翻译、费用保护、错误降级
+624a7f1	tests/test_translate.py	test_panel_state_lists_the_choices	删除/替代	-	简单 DTO/JSON getter 与选项枚举；保留实际翻译、费用保护、错误降级
+624a7f1	tests/test_translate.py	test_settings_round_trip_and_patch_semantics	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：settings round trip and patch semantics
+624a7f1	tests/test_translate.py	test_reply_translation_keeps_both_texts	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：★ 输出侧：content = 模型原文，另一份 = 译文，界面默认显示译文。
+624a7f1	tests/test_translate.py	test_translation_is_skipped_when_the_reply_is_already_in_the_target_language	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：translation is skipped when the reply is already in the target language
+624a7f1	tests/test_translate.py	test_japanese_reply_is_auto_detected_and_translated	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：★ 第十六轮：日文回复必须被自动识别并翻译。
+624a7f1	tests/test_translate.py	test_prompt_mode_only_touches_the_prompt	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：prompt mode only touches the prompt
+624a7f1	tests/test_translate.py	test_input_translation_reaches_the_model	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：★ 输入侧：用户中文 → 译成英文再发；content 是模型看到的英文，原文另存。
+624a7f1	tests/test_translate.py	test_both_directions_at_once	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：★ 双向：一个目标语言同时管两边（英文输入 → 中文；英文回复 → 中文）。
+624a7f1	tests/test_translate.py	test_translation_failure_never_breaks_the_reply	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：translation failure never breaks the reply
+624a7f1	tests/test_translate.py	test_independent_translation_model_is_used	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：可以指定**另一个**模型配置来翻译（论文里"用哪个模型译"是可对比的实验变量）。
+624a7f1	tests/test_translate.py	test_long_reply_is_skipped_and_said_so	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：long reply is skipped and said so
+624a7f1	tests/test_translate.py	test_will_call_model_matches_the_real_skip_rules	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：★ 界面靠它决定"要不要显示『正在翻译…』"：判据必须与 `run()` 一致 ——
+624a7f1	tests/test_translate.py	test_thinking_is_lowered_for_translation	保留/合并	unit	防正文覆盖、错误方向和意外计费；验证：★ 翻译是机械任务，思考纯烧钱（实测：1618 字符的英文译一次烧 5291 token）。
+624a7f1	tests/test_translate.py	test_stream_announces_translation_before_it_happens	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：★ 第十六轮：正文流完之后还要等**一次模型调用**才出译文（好几秒）。
+624a7f1	tests/test_translate.py	test_manual_translate_of_one_message_ignores_the_switch	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：★ 第十六轮：逐条「🌐 翻译」**不看总开关**。
+624a7f1	tests/test_translate.py	test_per_turn_usage_is_persisted_for_the_accuracy_report	保留/合并	integration	防正文覆盖、错误方向和意外计费；验证：★ 第十六轮：逐轮**真实用量**（厂商分项 + 我们发出去前的输入估算）必须落库。
+624a7f1	tests/test_vn.py	test_image_urls_are_restricted_to_safe_schemes	保留/合并	unit	防危险资源与立绘状态错误；验证：★ 这份配置会进 `<img src>`：unsafe 一律拒绝，并说清为什么。
+624a7f1	tests/test_vn.py	test_url_length_is_capped	保留/合并	unit	防危险资源与立绘状态错误；验证：url length is capped
+624a7f1	tests/test_vn.py	test_sprite_count_is_capped	保留/合并	unit	防危险资源与立绘状态错误；验证：sprite count is capped
+624a7f1	tests/test_vn.py	test_sprites_accept_both_written_forms	保留/合并	unit	防危险资源与立绘状态错误；验证：对象与数组两种写法都收（网上下载的卡两种都见过）。
+624a7f1	tests/test_vn.py	test_default_expression_falls_back_sensibly	删除/替代	-	默认/getter/描述字符串；保留 URL 安全、阶段选择、声明兼容和导出回环
+624a7f1	tests/test_vn.py	test_expression_field_name_is_validated	保留/合并	unit	防危险资源与立绘状态错误；验证：expression field name is validated
+624a7f1	tests/test_vn.py	test_enabled_defaults_to_true_when_configured	删除/替代	-	默认/getter/描述字符串；保留 URL 安全、阶段选择、声明兼容和导出回环
+624a7f1	tests/test_vn.py	test_sprite_lookup_is_forgiving_about_case_and_spaces	删除/替代	-	默认/getter/描述字符串；保留 URL 安全、阶段选择、声明兼容和导出回环
+624a7f1	tests/test_vn.py	test_expression_is_read_from_the_state_field	删除/替代	-	默认/getter/描述字符串；保留 URL 安全、阶段选择、声明兼容和导出回环
+624a7f1	tests/test_vn.py	test_stage_explains_when_the_expression_has_no_sprite	保留/合并	unit	防危险资源与立绘状态错误；验证：stage explains when the expression has no sprite
+624a7f1	tests/test_vn.py	test_no_stage_when_the_card_does_not_declare_vn	保留/合并	unit	防危险资源与立绘状态错误；验证：no stage when the card does not declare vn
+624a7f1	tests/test_vn.py	test_expression_field_is_added_to_the_schema_with_the_choices	保留/合并	unit	防危险资源与立绘状态错误；验证：★ 没这个字段立绘永远不会变 —— 自动补一个，并把可选值告诉模型。
+624a7f1	tests/test_vn.py	test_author_defined_expression_field_is_respected	保留/合并	unit	防危险资源与立绘状态错误；验证：作者自己定义过就一个字都不动（标签/描述按他的来）。
+624a7f1	tests/test_vn.py	test_merge_keeps_the_other_namespaces	保留/合并	unit	防危险资源与立绘状态错误；验证：merge keeps the other namespaces
+624a7f1	tests/test_vn.py	test_describe_says_what_is_configured	删除/替代	-	默认/getter/描述字符串；保留 URL 安全、阶段选择、声明兼容和导出回环
+624a7f1	tests/test_vn.py	test_bad_sprite_is_dropped_at_write_time	保留/合并	integration	防危险资源与立绘状态错误；验证：★ 存进去的就应该是干净的（脏数据不该等到渲染时才被前端过滤）。
+624a7f1	tests/test_vn.py	test_session_detail_exposes_the_stage_and_adds_the_expression_field	保留/合并	integration	防危险资源与立绘状态错误；验证：session detail exposes the stage and adds the expression field
+624a7f1	tests/test_vn.py	test_stage_follows_the_state_field	保留/合并	integration	防危险资源与立绘状态错误；验证：★ 本轮重点：模型改了状态里的表情 → 舞台换图（不是前端各写一套映射）。
+624a7f1	tests/test_vn.py	test_unknown_expression_falls_back_and_says_so	保留/合并	integration	防危险资源与立绘状态错误；验证：unknown expression falls back and says so
+624a7f1	tests/test_vn.py	test_pure_chat_and_plain_cards_have_no_stage	保留/合并	integration	防危险资源与立绘状态错误；验证：没开 VN 就不该有舞台（界面据此隐藏开关）。
+624a7f1	tests/test_vn.py	test_vn_config_survives_export	保留/合并	integration	防危险资源与立绘状态错误；验证：导出必须把 VN 配置带回去（V2 的 extensions 是往返无损的那一份）。
+624a7f1	tests/test_world_books.py	test_endpoints_require_login	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 所有世界书接口都必须要求登录。
+624a7f1	tests/test_world_books.py	test_create_book	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_create_normalizes_entries	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 条目要规范化：补默认值、关键词去重去空白、保留未知字段。
+624a7f1	tests/test_world_books.py	test_create_tolerates_string_keys	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：有些工具会把 keys 写成单个字符串，宽容地当成只含一个关键词。
+624a7f1	tests/test_world_books.py	test_create_rejects_entry_without_content	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 缺 content 的条目要**报错**，而不是悄悄丢掉。
+624a7f1	tests/test_world_books.py	test_create_rejects_too_many_entries	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：create rejects too many entries
+624a7f1	tests/test_world_books.py	test_create_rejects_blank_name	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：create rejects blank name
+624a7f1	tests/test_world_books.py	test_create_empty_book_is_allowed	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_list_returns_brief_without_entries	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_list_works_with_a_large_world_book	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 回归：条目很大的世界书**不能**把列表接口打挂。
+624a7f1	tests/test_world_books.py	test_detail_still_returns_full_entries_for_a_large_book	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：反向断言：修列表的时候**不能**把详情页的全文弄丢。
+624a7f1	tests/test_world_books.py	test_list_pagination	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：list pagination
+624a7f1	tests/test_world_books.py	test_list_search	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：list search
+624a7f1	tests/test_world_books.py	test_list_only_returns_own_books	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：list only returns own books
+624a7f1	tests/test_world_books.py	test_get_book_detail	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_detail_lists_cards_using_it	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 详情要告知「正在被哪些卡使用」，便于删除前确认影响范围。
+624a7f1	tests/test_world_books.py	test_cannot_read_others_book	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 世界书是私有资产，别人的书一律 404（不存在 403 的分支）。
+624a7f1	tests/test_world_books.py	test_cannot_modify_others_book	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：cannot modify others book
+624a7f1	tests/test_world_books.py	test_get_missing_book	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_update_name_only	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_update_description_to_null	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_update_name_null_is_ignored	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_update_entries_replaces_whole_array	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ entries 是整体替换，不是按条目合并。
+624a7f1	tests/test_world_books.py	test_update_entries_to_empty	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_update_without_entries_keeps_them	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：空请求体不该动到条目。
+624a7f1	tests/test_world_books.py	test_update_entries_rejects_invalid	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：update entries rejects invalid
+624a7f1	tests/test_world_books.py	test_delete_unused_book	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_delete_book_in_use_is_rejected	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 还有角色卡在用这本书时，默认拒绝删除，并列出是哪几张卡。
+624a7f1	tests/test_world_books.py	test_delete_book_force	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 加 force=true 才真删；卡片本身不受影响，只是关联被解除。
+624a7f1	tests/test_world_books.py	test_delete_missing_book	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_unnamed_book_gets_display_name	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_import_preserves_book_level_settings	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 规范里世界书可以带扫描深度、token 预算等设置。
+624a7f1	tests/test_world_books.py	test_scan_settings_can_be_set_via_api	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：★ 3.9 之前 scan_depth / token_budget 只能从角色卡带进来，界面改不了 ——
+624a7f1	tests/test_world_books.py	test_scan_settings_default_when_not_set	删除/替代	-	简单 CRUD 字段回显/默认值；保留大书性能、完整生命周期、引用和权限边界
+624a7f1	tests/test_world_books.py	test_scan_settings_reject_illegal_values	保留/合并	integration	防世界书内容、引用和隔离损坏；验证：scan_depth 为 0 / 负数没有含义，要在参数校验阶段就拦下（422）。

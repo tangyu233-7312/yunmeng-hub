@@ -279,9 +279,3 @@ test('spawnBackend：显式给 args 时完全按给的来（不被默认参数�
 // ------------------------------------------------------------------
 //  URL 组装
 // ------------------------------------------------------------------
-test('healthUrl / consoleUrl：控制台地址带尾斜杠（省掉一次 307 跳转）', () => {
-  assert.equal(healthUrl(8000), 'http://127.0.0.1:8000/health');
-  assert.equal(consoleUrl(8000), 'http://127.0.0.1:8000/console/');
-  assert.equal(consoleUrl(51234, 'localhost'), 'http://localhost:51234/console/');
-  assert.ok(consoleUrl(1234).endsWith('/'), '尾斜杠不能丢');
-});

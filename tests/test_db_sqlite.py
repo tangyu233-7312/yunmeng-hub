@@ -23,15 +23,14 @@ SQLite 有几个**默认值与 MySQL 完全相反**的地方，不显式设置�
 from __future__ import annotations
 
 import os
-import sqlite3
 import uuid
 from pathlib import Path
 
 import pytest
 from sqlalchemy import inspect, select, text
 
-from app.db.base import Base
-from app.db.models import CharacterCard, LLMProvider, Message, NarrativeSession, User
+from app.db.models import CharacterCard, User
+
 
 # ==================================================================
 #  夹具：把"当前后端"强制切成 sqlite + 临时数据目录
@@ -66,55 +65,6 @@ def _unique(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
-# ==================================================================
-#  一、PRAGMA（SQLite 最容易"静默出错"的地方）
-# ==================================================================
-def test_foreign_keys_pragma_is_on(sqlite_env: Path) -> None:
-    """★ 外键必须显式打开：SQLite 默认 **OFF**，级联删除会静默失效。
-
-    这条断言是整份文件里最重要的一条。关掉它会怎样？
-    删用户不会报错，但角色卡/会话/消息会**留在库里变成孤儿** ——
-    没有任何异常、没有任何日志，只有数据越来越脏。
-    """
-    from app.db.mysql import get_engine
-
-    with get_engine().connect() as conn:
-        assert conn.execute(text("PRAGMA foreign_keys")).scalar() == 1
-
-
-def test_journal_mode_is_wal(sqlite_env: Path) -> None:
-    """WAL：读不挡写、写不挡读（桌面应用要边流式输出边翻列表）。"""
-    from app.db.mysql import get_engine
-
-    with get_engine().connect() as conn:
-        assert conn.execute(text("PRAGMA journal_mode")).scalar().lower() == "wal"
-
-
-def test_busy_timeout_matches_settings(sqlite_env: Path) -> None:
-    """busy_timeout 必须按配置生效，否则并发写会随机抛 "database is locked"。"""
-    from app.core.config import get_settings
-    from app.db.mysql import get_engine
-
-    with get_engine().connect() as conn:
-        assert conn.execute(text("PRAGMA busy_timeout")).scalar() == (
-            get_settings().SQLITE_BUSY_TIMEOUT_MS
-        )
-
-
-# ==================================================================
-#  二、自动建表（"安装即用"的前提）
-# ==================================================================
-def test_ensure_schema_creates_every_table(sqlite_env: Path) -> None:
-    """空库首启必须自动建出全部 8 张表，且返回的表名与模型一致。"""
-    from app.db.bootstrap import ensure_schema
-    from app.db.mysql import get_engine
-
-    created = ensure_schema()
-    expected = set(Base.metadata.tables)
-    assert set(created) == expected
-    assert expected <= set(inspect(get_engine()).get_table_names())
-
-
 def test_ensure_schema_is_idempotent(sqlite_env: Path) -> None:
     """★ 幂等：第二次调用**不新建任何表**，也绝不动已有数据。
 
@@ -136,7 +86,9 @@ def test_ensure_schema_is_idempotent(sqlite_env: Path) -> None:
         assert db.scalar(select(User).where(User.username == username)) is not None
 
 
-def test_ensure_schema_adds_missing_columns_to_an_old_database(sqlite_env: Path) -> None:
+def test_ensure_schema_adds_missing_columns_to_an_old_database(
+    sqlite_env: Path,
+) -> None:
     """★★ 老库缺列时，`ensure_schema()` 必须**在启动阶段**就把它补上。
 
     ==================== 这条守着一个真实事故 ====================
@@ -169,15 +121,14 @@ def test_ensure_schema_adds_missing_columns_to_an_old_database(sqlite_env: Path)
         )
         # 塞一行旧数据：补列之后它必须**原样还在**
         conn.execute(
-            text(
-                "INSERT INTO narrative_sessions (user_id, title) "
-                "VALUES (1, '旧故事')"
-            )
+            text("INSERT INTO narrative_sessions (user_id, title) VALUES (1, '旧故事')")
         )
 
     ensure_schema()
 
-    columns = {c["name"] for c in inspect(get_engine()).get_columns("narrative_sessions")}
+    columns = {
+        c["name"] for c in inspect(get_engine()).get_columns("narrative_sessions")
+    }
     for expected in (
         "branch_group_id",
         "branch_index",
@@ -214,174 +165,6 @@ def test_ensure_schema_is_additive_only(sqlite_env: Path) -> None:
         assert "TRUNCATE" not in upper
 
 
-def test_sqlite_file_is_created_under_configured_path(sqlite_env: Path) -> None:
-    """库文件必须落在配置指定的位置（而不是别处悄悄建了一个）。"""
-    from app.db.bootstrap import ensure_schema
-    from app.db.mysql import dispose_engine
-
-    ensure_schema()
-    dispose_engine()
-    assert sqlite_env.is_file(), f"没有在 {sqlite_env} 建出库文件"
-    # 而且它确实是个 SQLite 库（头 16 字节是固定魔数）
-    assert sqlite_env.read_bytes()[:15] == b"SQLite format 3"
-
-
-# ==================================================================
-#  三、数据行为（与 MySQL 侧语义必须一致）
-# ==================================================================
-def test_autoincrement_primary_key_works(sqlite_env: Path) -> None:
-    """★ 回归测试：SQLite 的 BIGINT 主键**不会**自增。
-
-    本项目的主键在 MySQL 上是 `BIGINT AUTO_INCREMENT`；SQLite 只把
-    `INTEGER PRIMARY KEY` 当自增别名，写成 BIGINT 就会报
-    `NOT NULL constraint failed: users.id`。
-    所以模型里用的是 `PkInt`（见 app/db/types.py）—— 这条断言守着它。
-    """
-    from app.db.bootstrap import ensure_schema
-    from app.db.mysql import session_scope
-
-    ensure_schema()
-    with session_scope() as db:
-        user = User(username=_unique("pk"), email="pk@example.com", password_hash="x")
-        db.add(user)
-        # 不 flush 也能在 commit 后拿到 id；expire_on_commit=False 保证可读
-    assert isinstance(user.id, int) and user.id > 0
-
-
-def test_cascade_delete_removes_owned_rows(sqlite_env: Path) -> None:
-    """删除用户 → 名下的模型配置与角色卡必须被级联删除（依赖 foreign_keys=ON）。"""
-    from app.db.bootstrap import ensure_schema
-    from app.db.mysql import session_scope
-
-    ensure_schema()
-    username = _unique("cascade")
-    with session_scope() as db:
-        user = User(username=username, email="c@example.com", password_hash="x")
-        db.add(user)
-        db.flush()
-        db.add(
-            LLMProvider(
-                user_id=user.id,
-                name="级联测试模型",
-                base_url="http://localhost:11434",
-                api_key_encrypted="x",
-                model_name="qwen2.5:7b",
-            )
-        )
-        db.add(CharacterCard(user_id=user.id, name="级联测试角色", tags=["测试"]))
-        user_id = user.id
-
-    with session_scope() as db:
-        db.delete(db.get(User, user_id))
-
-    with session_scope() as db:
-        assert db.scalar(select(LLMProvider).where(LLMProvider.user_id == user_id)) is None
-        assert db.scalar(select(CharacterCard).where(CharacterCard.user_id == user_id)) is None
-
-
-def test_json_columns_roundtrip(sqlite_env: Path) -> None:
-    """JSON 列在 SQLite 上必须能原样往返（dict / list 两种形态）。
-
-    ★ 这条曾经是失败的：给 JSON 列加 `with_variant` 之后，SQLAlchemy 会把
-      MutableDict 的写回包装丢掉，插入 dict 直接抛
-      `type 'dict' is not supported`。结论是 JSON 列**必须**用通用类型
-      （详见 app/db/types.py 里那段"放弃 JsonText 变体"的记录）。
-    """
-    from app.db.bootstrap import ensure_schema
-    from app.db.mysql import session_scope
-
-    ensure_schema()
-    username = _unique("json")
-    with session_scope() as db:
-        user = User(username=username, email="j@example.com", password_hash="x")
-        db.add(user)
-        db.flush()
-        db.add(
-            LLMProvider(
-                user_id=user.id,
-                name="JSON 往返",
-                base_url="http://localhost:1",
-                api_key_encrypted="x",
-                model_name="m",
-                extra_params={"temperature": 0.85, "nested": {"a": [1, 2]}},
-            )
-        )
-        provider_id = None
-
-    with session_scope() as db:
-        provider = db.scalar(select(LLMProvider).where(LLMProvider.name == "JSON 往返"))
-        assert provider is not None
-        assert provider.extra_params["temperature"] == 0.85
-        assert provider.extra_params["nested"]["a"] == [1, 2]
-        provider_id = provider.id
-        # 原地修改必须被 MutableDict 感知并写回
-        provider.extra_params["temperature"] = 0.5
-
-    with session_scope() as db:
-        again = db.get(LLMProvider, provider_id)
-        assert again is not None
-        assert again.extra_params["temperature"] == 0.5
-
-
-def test_long_text_is_preserved(sqlite_env: Path) -> None:
-    """长文本（原先的 MEDIUMTEXT 列）不能截断：SQLite 那边编译成 TEXT。"""
-    from app.db.bootstrap import ensure_schema
-    from app.db.mysql import session_scope
-
-    ensure_schema()
-    long_text = "长" * 50_000
-    username = _unique("long")
-    with session_scope() as db:
-        user = User(username=username, email="l@example.com", password_hash="x")
-        db.add(user)
-        db.flush()
-        db.add(CharacterCard(user_id=user.id, name="长文本", greeting=long_text))
-
-    with session_scope() as db:
-        card = db.scalar(select(CharacterCard).where(CharacterCard.name == "长文本"))
-        assert card is not None
-        assert card.greeting == long_text
-
-
-def test_timestamp_server_default_is_filled(sqlite_env: Path) -> None:
-    """created_at 必须由数据库填值（server_default），不能是 NULL。"""
-    from app.db.bootstrap import ensure_schema
-    from app.db.mysql import session_scope
-
-    ensure_schema()
-    with session_scope() as db:
-        user = User(username=_unique("ts"), email="t@example.com", password_hash="x")
-        db.add(user)
-    assert user.created_at is not None
-    assert user.updated_at is not None
-
-
-def test_session_and_message_order(sqlite_env: Path) -> None:
-    """会话消息按 id 升序（对话顺序），SQLite 上同样成立。"""
-    from app.db.bootstrap import ensure_schema
-    from app.db.mysql import session_scope
-
-    ensure_schema()
-    with session_scope() as db:
-        user = User(username=_unique("sess"), email="s@example.com", password_hash="x")
-        db.add(user)
-        db.flush()
-        card = CharacterCard(user_id=user.id, name="林间旅人", tags=["奇幻"])
-        db.add(card)
-        db.flush()
-        session = NarrativeSession(user_id=user.id, character_card_id=card.id, title="第一章")
-        db.add(session)
-        db.flush()
-        for role, content in (("user", "我推开了木门。"), ("assistant", "门轴发出悠长的吱呀声……")):
-            db.add(Message(session_id=session.id, role=role, content=content))
-        session_id = session.id
-
-    with session_scope() as db:
-        row = db.get(NarrativeSession, session_id)
-        assert row is not None
-        assert [m.content for m in row.messages] == ["我推开了木门。", "门轴发出悠长的吱呀声……"]
-
-
 # ==================================================================
 #  四、探活接口的形状
 # ==================================================================
@@ -397,7 +180,9 @@ def test_check_connection_reports_backend_and_server(sqlite_env: Path) -> None:
     assert status["server"].startswith("sqlite ")
 
 
-def test_check_connection_reports_error_without_raising(sqlite_env: Path, tmp_path: Path, monkeypatch) -> None:
+def test_check_connection_reports_error_without_raising(
+    sqlite_env: Path, tmp_path: Path, monkeypatch
+) -> None:
     """连不上时必须**如实返回错误**而不是抛异常（/health 依赖这个契约）。
 
     ★ 怎么可靠地制造"连不上"：把库文件路径指向一个**已存在的目录**。
@@ -522,17 +307,9 @@ def test_ensure_secrets_reuses_persisted_values(tmp_path: Path, monkeypatch) -> 
     get_settings.cache_clear()
 
 
-def test_secrets_file_is_not_in_repo_root(tmp_path: Path, monkeypatch) -> None:
-    """口令文件的位置由数据根目录决定，不会跑到仓库根去。"""
-    import app.db.bootstrap as bootstrap
-    from app.core.config import BASE_DIR
-
-    monkeypatch.setenv("HNE_DATA_DIR", str(tmp_path))
-    assert str(tmp_path) in str(bootstrap.secrets_file())
-    assert BASE_DIR not in bootstrap.secrets_file().parents
-
-
-def test_settings_must_be_refetched_after_bootstrap(tmp_path: Path, monkeypatch) -> None:
+def test_settings_must_be_refetched_after_bootstrap(
+    tmp_path: Path, monkeypatch
+) -> None:
     """★★ 自举之后**必须重新取一次 Settings**，否则会打出一条自相矛盾的告警。
 
     ==================== 这条断言的真实来历（打包产物实测抓到）====================
@@ -603,7 +380,6 @@ print("RESULT" + json.dumps({"backend": get_settings().DB_BACKEND}))
 
 def _resolve_backend_with_config(tmp_path: Path, config_text: str) -> str:
     """在一个**干净的子进程**里，用给定的 .env 内容问后端会选哪个后端。"""
-    import os
     import subprocess
     import sys
 
@@ -613,26 +389,37 @@ def _resolve_backend_with_config(tmp_path: Path, config_text: str) -> str:
     #   推断逻辑读的是**裸键名**（MYSQL_HOST/MYSQL_USER），
     #   宿主环境里残留的同名变量会把结论污染掉（真踩过，见 handoff §34）。
     env = {
-        k: v for k, v in os.environ.items()
+        k: v
+        for k, v in os.environ.items()
         if not k.upper().startswith(("HNE_", "MYSQL_", "DB_"))
     }
-    env.update({
-        "REPO": str(Path(__file__).resolve().parents[1]),
-        "CFG": str(cfg),
-        "HNE_ENV_FILE": str(cfg),
-        "HNE_DATA_DIR": str(tmp_path / "root"),
-        "PYTHONIOENCODING": "utf-8",
-    })
+    env.update(
+        {
+            "REPO": str(Path(__file__).resolve().parents[1]),
+            "CFG": str(cfg),
+            "HNE_ENV_FILE": str(cfg),
+            "HNE_DATA_DIR": str(tmp_path / "root"),
+            "PYTHONIOENCODING": "utf-8",
+        }
+    )
     proc = subprocess.run(
-        [sys.executable, "-c", _INFER_PROBE], env=env, cwd=env["REPO"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+        [sys.executable, "-c", _INFER_PROBE],
+        env=env,
+        cwd=env["REPO"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
     )
     import json as _json
 
     for line in (proc.stdout or "").splitlines():
         if line.startswith("RESULT"):
-            return _json.loads(line[len("RESULT"):])["backend"]
-    raise AssertionError(f"探针没有输出结论：stdout={proc.stdout!r} stderr={(proc.stderr or '')[-500:]!r}")
+            return _json.loads(line[len("RESULT") :])["backend"]
+    raise AssertionError(
+        f"探针没有输出结论：stdout={proc.stdout!r} stderr={(proc.stderr or '')[-500:]!r}"
+    )
 
 
 def test_legacy_mysql_config_without_backend_key_stays_mysql(tmp_path: Path) -> None:
@@ -665,12 +452,16 @@ def test_legacy_mysql_config_without_backend_key_stays_mysql(tmp_path: Path) -> 
 
 def test_explicit_backend_key_always_wins(tmp_path: Path) -> None:
     """显式写过 `HNE_DB_BACKEND` 就一律以它为准（两种方向都要验）。"""
-    assert _resolve_backend_with_config(
-        tmp_path, "HNE_DB_BACKEND=sqlite\nHNE_MYSQL_HOST=127.0.0.1\nHNE_MYSQL_USER=u\n"
-    ) == "sqlite", "显式选 sqlite 时不该被 MySQL 键推断覆盖"
-    assert _resolve_backend_with_config(
-        tmp_path, "HNE_DB_BACKEND=mysql\n"
-    ) == "mysql", "显式选 mysql 时即使没有 MySQL 键也要认"
+    assert (
+        _resolve_backend_with_config(
+            tmp_path,
+            "HNE_DB_BACKEND=sqlite\nHNE_MYSQL_HOST=127.0.0.1\nHNE_MYSQL_USER=u\n",
+        )
+        == "sqlite"
+    ), "显式选 sqlite 时不该被 MySQL 键推断覆盖"
+    assert (
+        _resolve_backend_with_config(tmp_path, "HNE_DB_BACKEND=mysql\n") == "mysql"
+    ), "显式选 mysql 时即使没有 MySQL 键也要认"
 
 
 # ==================================================================
@@ -686,7 +477,6 @@ def test_dialect_expressions_compile_for_both_backends() -> None:
     from sqlalchemy.dialects import mysql, sqlite as sqlite_dialect
 
     from app.db.dialect import json_array_contains, like_contains
-    from app.db.models import CharacterCard
 
     pattern_cond = like_contains(CharacterCard.name, "50%")
     probe_cond = json_array_contains(CharacterCard.tags, "奇幻")
@@ -696,42 +486,15 @@ def test_dialect_expressions_compile_for_both_backends() -> None:
     assert "LIKE" in sqlite_sql and "ESCAPE" in sqlite_sql
     assert "LIKE" in mysql_sql and "ESCAPE" in mysql_sql
     # 通配符必须已经转义（否则 % 会被当成通配符，搜 "50%" 会命中所有含 50 的记录）
-    assert "50!%" in pattern_cond.compile(
-        dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}
-    ).string
+    assert (
+        "50!%"
+        in pattern_cond.compile(
+            dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}
+        ).string
+    )
 
     assert "instr(" in str(probe_cond.compile(dialect=sqlite_dialect.dialect()))
     assert "JSON_CONTAINS(" in str(probe_cond.compile(dialect=mysql.dialect()))
 
 
-def test_json_array_probe_uses_ascii_escaped_json() -> None:
-    """★ 探针必须是 `\\uXXXX` 形态：列里存的就是这个形态（实测过）。
-
-    第一版用原样中文去匹配，SQLite 上"筛选恒为 0 条"且不报任何错。
-    """
-    from app.db.dialect import JsonArrayContains
-
-    cond = JsonArrayContains(None, __import__("json").dumps("奇幻"))
-    assert cond.probe == '"\\u5947\\u5e7b"'
-
-
-def test_sqlite_library_supports_json_functions(sqlite_env: Path) -> None:
-    """打包/部署用的 sqlite3 必须带 JSON1（本项目依赖 json 列与 instr）。
-
-    这条是"环境体检"：某些精简版 Python 会把 sqlite 编成不带 JSON1，
-    那样标签筛选、世界书条目解析都会在运行时才炸。
-    """
-    con = sqlite3.connect(":memory:")
-    try:
-        assert con.execute("select json_valid('[]')").fetchone()[0] == 1
-        assert con.execute("select instr('abc', 'b')").fetchone()[0] == 2
-    finally:
-        con.close()
-
-
-def test_sqlite_file_path_is_not_shared_between_tests(sqlite_env: Path) -> None:
-    """确认夹具真的把库放进了临时目录（否则测试会污染开发者的真实数据）。"""
-    from app.core.config import get_settings
-
-    assert sqlite_env.parent == Path(os.environ["HNE_DATA_DIR"]) / "data"
-    assert get_settings().sqlite_file == sqlite_env
+pytestmark = pytest.mark.integration

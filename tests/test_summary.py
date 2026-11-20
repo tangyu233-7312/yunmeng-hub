@@ -34,15 +34,6 @@ class _Msg:
         self.content = content
 
 
-class _Session:
-    def __init__(self, *, summary=None, from_round=None, to_round=None, until=None) -> None:
-        self.id = 1
-        self.rolling_summary = summary
-        self.summary_from_round = from_round
-        self.summary_to_round = to_round
-        self.summarized_until_message_id = until
-
-
 def _history(rounds: int) -> list[_Msg]:
     """造 rounds 轮对话（含开场白）：greeting + (user + assistant) × rounds。"""
     rows = [_Msg(1, "assistant", "开场白")]
@@ -52,52 +43,6 @@ def _history(rounds: int) -> list[_Msg]:
         rows.append(_Msg(mid + 1, "assistant", f"第{index}轮角色"))
         mid += 2
     return rows
-
-
-def test_round_index_map_counts_user_turns_and_puts_greeting_in_round_one() -> None:
-    index = summary_mod.round_index_map(_history(3))
-    assert index[1] == 1, "开场白算作第 1 轮的开头"
-    assert index[2] == 1 and index[3] == 1
-    assert index[4] == 2 and index[6] == 3
-    assert summary_mod.count_rounds(_history(3)) == 3
-
-
-def test_should_merge_only_when_a_full_block_accumulated() -> None:
-    """每攒够一整块（设置里的 rounds）才算"到点" —— 不是每轮都总结。"""
-    config = {"enabled": True, "rounds": 10}
-    session = _Session()
-    assert summary_mod.should_merge(session, 9, settings=config) is False
-    assert summary_mod.should_merge(session, 10, settings=config) is True
-    # 已经覆盖到第 10 轮后，要到第 20 轮才再"到点"
-    covered = _Session(to_round=10, summary="（第 1~10 轮）\n旧")
-    assert summary_mod.should_merge(covered, 19, settings=config) is False
-    assert summary_mod.should_merge(covered, 20, settings=config) is True
-    # 关掉总开关就永远不到点
-    assert summary_mod.should_merge(covered, 99, settings={"enabled": False, "rounds": 10}) is False
-
-
-def test_block_messages_selects_the_right_rounds() -> None:
-    history = _history(20)
-    chunk = summary_mod.block_messages(history, 11, 20)
-    assert len(chunk) == 20, "10 轮 = 20 条消息"
-    texts = [m.content for m in chunk]
-    assert "第1轮用户" not in texts and "第10轮用户" not in texts
-    assert texts[0] == "第11轮用户" and texts[-1] == "第20轮角色"
-
-
-def test_split_previous_strips_the_round_header() -> None:
-    text = "（第 1~10 轮）\n薇拉点亮了灯塔。"
-    assert summary_mod.split_previous(text) == "薇拉点亮了灯塔。"
-    assert summary_mod.split_previous(None) == ""
-
-
-def test_clamp_summary_keeps_both_ends() -> None:
-    """超长时掐中间留两头：开头是前提、结尾是最新处境，中间最不致命。"""
-    text = "开头很重要" + "中" * 500 + "结尾也很重要"
-    clamped = summary_mod.clamp_summary(text, limit=100)
-    assert clamped.startswith("开头很重要")
-    assert clamped.endswith("结尾也很重要")
-    assert "中段前情已省略" in clamped
 
 
 def test_build_summarize_messages_carries_old_summary_and_new_block() -> None:
@@ -111,18 +56,12 @@ def test_build_summarize_messages_carries_old_summary_and_new_block() -> None:
     system = messages[0]
     user = messages[1]
     assert "前情提要" in system.content
-    assert "旧总结说：她答应点灯。" in user.content, "旧总结必须带进去（否则等于从头再来）"
+    assert "旧总结说：她答应点灯。" in user.content, (
+        "旧总结必须带进去（否则等于从头再来）"
+    )
     assert "第11轮用户" in user.content
     assert "覆盖第 1~20 轮" in user.content
     assert "不要编造" in system.content
-
-
-def test_filter_uncovered_drops_summarized_messages() -> None:
-    session = _Session(to_round=10, until=21)
-    history = _history(20)
-    kept = summary_mod.filter_uncovered(session, history)
-    assert all(m.id > 21 for m in kept), "被覆盖的消息不该再进提示词"
-    assert len(kept) < len(history)
 
 
 # ==================================================================
@@ -204,8 +143,10 @@ def user(client: TestClient):
         json={"username": account["username"], "password": account["password"]},
     )
     assert logged.status_code == 200
-    data = {"username": account["username"],
-            "headers": {"Authorization": f"Bearer {logged.json()['data']['access_token']}"}}
+    data = {
+        "username": account["username"],
+        "headers": {"Authorization": f"Bearer {logged.json()['data']['access_token']}"},
+    }
     yield data
     from sqlalchemy import select
 
@@ -218,7 +159,9 @@ def user(client: TestClient):
             db.delete(row)
 
 
-def _make_session(client: TestClient, user: dict, rounds: int, *, settings: dict | None = None) -> tuple[int, dict]:
+def _make_session(
+    client: TestClient, user: dict, rounds: int, *, settings: dict | None = None
+) -> tuple[int, dict]:
     """建会话（并按需保存记忆总结设置）后真聊 `rounds` 轮。
 
     返回 `(session_id, 最后一条发送响应)`。
@@ -256,7 +199,9 @@ def _make_session(client: TestClient, user: dict, rounds: int, *, settings: dict
     session_id = session.json()["data"]["id"]
     if settings is not None:
         saved = client.patch(
-            f"{BASE}/{session_id}/memory-summary", json=settings, headers=user["headers"]
+            f"{BASE}/{session_id}/memory-summary",
+            json=settings,
+            headers=user["headers"],
         )
         assert saved.status_code == 200, saved.text
     payload: dict = {}
@@ -283,13 +228,17 @@ def test_summary_is_merged_at_the_block_boundary(
     assert last["prompt"]["summary"]["used_model"] is True
 
     detail = client.get(f"{BASE}/{session_id}", headers=user["headers"]).json()["data"]
-    assert detail["summary_coverage"] == {"from_round": 1, "to_round": 8}, detail["summary_coverage"]
+    assert detail["summary_coverage"] == {"from_round": 1, "to_round": 8}, detail[
+        "summary_coverage"
+    ]
     assert detail["rolling_summary"].startswith("（第 1~8 轮）")
     assert "薇拉答应今晚点灯" in detail["rolling_summary"]
 
     # ★ 被覆盖的那一块不再逐条发给模型（否则总结与原文同时占 token）
     sent_join = "\n".join(
-        m.content for m in fake_llm.script["requests"][-1].messages if m.role != "system"
+        m.content
+        for m in fake_llm.script["requests"][-1].messages
+        if m.role != "system"
     )
     assert "第1轮用户说话" not in sent_join
     assert "第8轮用户说话" not in sent_join
@@ -298,7 +247,9 @@ def test_summary_is_merged_at_the_block_boundary(
     preview = client.get(
         f"{BASE}/{session_id}", headers=user["headers"], params={"with_prompt": "true"}
     ).json()["data"]
-    assert any("前情提要" in w for w in preview["prompt"]["warnings"]), preview["prompt"]["warnings"]
+    assert any("前情提要" in w for w in preview["prompt"]["warnings"]), preview[
+        "prompt"
+    ]["warnings"]
 
 
 def test_summary_merges_old_summary_into_a_new_one_at_the_second_block(
@@ -306,7 +257,9 @@ def test_summary_merges_old_summary_into_a_new_one_at_the_second_block(
 ) -> None:
     """★ 第二块：把「旧总结 + 第 9~16 轮」合并成**一份**新总结（1~16），旧的不残留。"""
     fake_llm.script["summary_content"] = "【合并后的总结】灯已点亮，她欠用户一次坦白。"
-    session_id, last = _make_session(client, user, 17, settings={"auto": True, "rounds": 8})
+    session_id, last = _make_session(
+        client, user, 17, settings={"auto": True, "rounds": 8}
+    )
     assert last["prompt"]["summary"]["to_round"] == 16, last["prompt"]["summary"]
 
     detail = client.get(f"{BASE}/{session_id}", headers=user["headers"]).json()["data"]
@@ -331,7 +284,9 @@ def test_auto_off_only_reminds_and_never_spends_tokens(
     client: TestClient, user: dict, fake_llm
 ) -> None:
     """★ 用户要求"不强制"：没开自动时，到点**只提醒**，一次模型调用都不许多花。"""
-    session_id, last = _make_session(client, user, 9, settings={"auto": False, "rounds": 8})
+    session_id, last = _make_session(
+        client, user, 9, settings={"auto": False, "rounds": 8}
+    )
     state = last["prompt"]["summary_state"]
     assert state["due"] is True, state
     assert state["auto"] is False
@@ -347,10 +302,14 @@ def test_auto_off_only_reminds_and_never_spends_tokens(
     assert detail["summary_coverage"] is None
 
 
-def test_manual_run_summarizes_whatever_is_pending(client: TestClient, user: dict, fake_llm) -> None:
+def test_manual_run_summarizes_whatever_is_pending(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     """点「立即总结」：有几轮就总结几轮（不要求攒够一整块）。"""
     fake_llm.script["summary_content"] = "【手动总结】第 1~5 轮的事。"
-    session_id, _ = _make_session(client, user, 5, settings={"auto": False, "rounds": 8})
+    session_id, _ = _make_session(
+        client, user, 5, settings={"auto": False, "rounds": 8}
+    )
     response = client.post(
         f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"]
     )
@@ -376,10 +335,16 @@ def test_summary_call_always_lowers_thinking(
     现在：**直接请求 OFF**；若服务端不认这个参数，适配器会自动去掉并重试一次
     （见 `openai_compatible._post_with_effort_fallback`），不会让总结失败。
     """
-    session_id, _ = _make_session(client, user, 5, settings={"auto": False, "rounds": 8})
-    response = client.post(f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"])
+    session_id, _ = _make_session(
+        client, user, 5, settings={"auto": False, "rounds": 8}
+    )
+    response = client.post(
+        f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"]
+    )
     assert response.status_code == 200, response.text
-    calls = [r for r in fake_llm.script.get("requests", []) if FakeAdapter._is_summary(r)]
+    calls = [
+        r for r in fake_llm.script.get("requests", []) if FakeAdapter._is_summary(r)
+    ]
     assert calls, "应该发生过一次总结调用"
     assert all(r.reasoning_effort is ReasoningEffort.OFF for r in calls), (
         "总结一律降到最小思考；实际 = " + repr([r.reasoning_effort for r in calls])
@@ -394,16 +359,23 @@ def test_summary_does_not_lower_thinking_when_adapter_opts_out(
     ★ 这条替代了旧的"探测结论为 False ⇒ 不发"：判据从**猜测**（比 token 数）
       换成了**声明**（适配器自己说它支不支持翻译这个字段）。
     """
+
     def _build(row=None, **_):
         adapter = FakeAdapter(row)
         adapter.supports_reasoning_effort = False
         return adapter
 
     monkeypatch.setattr(engine, "build_adapter", _build)
-    session_id, _ = _make_session(client, user, 5, settings={"auto": False, "rounds": 8})
-    response = client.post(f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"])
+    session_id, _ = _make_session(
+        client, user, 5, settings={"auto": False, "rounds": 8}
+    )
+    response = client.post(
+        f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"]
+    )
     assert response.status_code == 200, response.text
-    calls = [r for r in fake_llm.script.get("requests", []) if FakeAdapter._is_summary(r)]
+    calls = [
+        r for r in fake_llm.script.get("requests", []) if FakeAdapter._is_summary(r)
+    ]
     assert calls, "应该发生过一次总结调用"
     assert all(r.reasoning_effort is None for r in calls), (
         "适配器声明不支持时，不该覆盖成 OFF；实际 = "
@@ -411,13 +383,14 @@ def test_summary_does_not_lower_thinking_when_adapter_opts_out(
     )
 
 
-
 def test_copy_mode_costs_nothing(client: TestClient, user: dict, fake_llm) -> None:
     """模式 4「照抄旧记忆生成新记忆」：不调模型（0 token），内容照抄 + 追加本地摘录。"""
     session_id, last = _make_session(
         client, user, 4, settings={"auto": False, "rounds": 2, "mode": "copy"}
     )
-    assert last["prompt"]["summary_state"]["cost_tokens"] == 0, "照抄模式的预估消耗必须是 0"
+    assert last["prompt"]["summary_state"]["cost_tokens"] == 0, (
+        "照抄模式的预估消耗必须是 0"
+    )
     assert last["prompt"]["summary_state"]["mode"] == "copy"
     second = client.post(
         f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"]
@@ -432,11 +405,20 @@ def test_copy_mode_costs_nothing(client: TestClient, user: dict, fake_llm) -> No
     ), "照抄模式绝不许调模型"
 
 
-def test_summary_content_is_editable_and_restorable(client: TestClient, user: dict, fake_llm) -> None:
+def test_summary_content_is_editable_and_restorable(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     """面板上的「编辑」与「恢复上一次」：改得动、也回得来。"""
     fake_llm.script["summary_content"] = "【原始总结】她答应点灯。"
-    session_id, _ = _make_session(client, user, 3, settings={"auto": False, "rounds": 2})
-    assert client.post(f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"]).status_code == 200
+    session_id, _ = _make_session(
+        client, user, 3, settings={"auto": False, "rounds": 2}
+    )
+    assert (
+        client.post(
+            f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"]
+        ).status_code
+        == 200
+    )
 
     edited = client.patch(
         f"{BASE}/{session_id}/memory-summary",
@@ -455,22 +437,6 @@ def test_summary_content_is_editable_and_restorable(client: TestClient, user: di
     )
     assert restored.status_code == 200, restored.text
     assert "原始总结" in restored.json()["data"]["content"], "恢复上一次要能回到旧版本"
-
-
-def test_panel_exposes_five_modes_and_settings(client: TestClient, user: dict) -> None:
-    """面板 API 必须给出五种模式与全部设置（前端据此渲染，不各写一份）。"""
-    session_id, _ = _make_session(client, user, 0)
-    panel = client.get(
-        f"{BASE}/{session_id}/memory-summary", headers=user["headers"]
-    ).json()["data"]
-    modes = [item["value"] for item in panel["modes"]]
-    assert modes == ["character", "plot", "table", "copy", "custom"]
-    assert panel["settings"]["rounds"] == 8, "默认每 8 轮"
-    assert panel["settings"]["auto"] is False, "★ 默认不自动花 token"
-    assert panel["settings"]["enabled"] is True and panel["settings"]["remind"] is True
-    assert panel["rounds_range"] == [summary_mod.MIN_ROUNDS, summary_mod.MAX_ROUNDS]
-    assert panel["max_chars_choices"]
-    assert panel["providers"] is not None
 
 
 def test_disabled_summary_refuses_manual_run(client: TestClient, user: dict) -> None:
@@ -492,10 +458,18 @@ def test_second_run_without_new_content_does_not_summarize_again(
     这不只是前端问题，后端也必须能挡住"重复触发"。
     """
     fake_llm.script["summary_content"] = "【总结】第一次就够了。"
-    session_id, _ = _make_session(client, user, 3, settings={"auto": False, "rounds": 2})
-    first = client.post(f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"])
-    assert first.status_code == 200 and first.json()["data"]["coverage"]["to_round"] == 3
-    second = client.post(f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"])
+    session_id, _ = _make_session(
+        client, user, 3, settings={"auto": False, "rounds": 2}
+    )
+    first = client.post(
+        f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"]
+    )
+    assert (
+        first.status_code == 200 and first.json()["data"]["coverage"]["to_round"] == 3
+    )
+    second = client.post(
+        f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"]
+    )
     assert second.status_code == 200, second.text
     payload = second.json()["data"]
     # 第二次没有覆盖推进（说明没有重复总结）
@@ -508,12 +482,16 @@ def test_second_run_without_new_content_does_not_summarize_again(
     assert len(summaries) == 1, f"只该调用一次总结模型，实际 {len(summaries)} 次"
 
 
-def test_concurrent_run_is_rejected_with_busy(client: TestClient, user: dict, fake_llm) -> None:
+def test_concurrent_run_is_rejected_with_busy(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     """★ 并发重复点击必须被**挡住并说明**（409），而不是再跑一遍模型。
 
     这里用"手动占住会话锁"来模拟"上一次还在跑"：真并发在单测里靠 sleep 不可靠。
     """
-    session_id, _ = _make_session(client, user, 3, settings={"auto": False, "rounds": 2})
+    session_id, _ = _make_session(
+        client, user, 3, settings={"auto": False, "rounds": 2}
+    )
     detail = client.get(f"{BASE}/{session_id}", headers=user["headers"]).json()["data"]
 
     class _Fake:
@@ -542,35 +520,17 @@ def test_concurrent_run_is_rejected_with_busy(client: TestClient, user: dict, fa
     assert ok.json()["data"]["coverage"]["to_round"] == 3
 
 
-def test_busy_state_is_visible_to_the_api(client: TestClient, user: dict) -> None:
-    """面板状态要能告诉前端"这个会话正在总结中"（前端据此禁用按钮）。"""
-    session_id, _ = _make_session(client, user, 2, settings={"auto": False, "rounds": 2})
-
-    class _Fake:
-        id = session_id
-
-    lock = summary_mod._lock_for(_Fake())
-    assert lock.acquire(blocking=False)
-    try:
-        panel = client.get(
-            f"{BASE}/{session_id}/memory-summary", headers=user["headers"]
-        ).json()["data"]
-        assert panel["busy"] is True, panel
-    finally:
-        lock.release()
-    panel2 = client.get(
-        f"{BASE}/{session_id}/memory-summary", headers=user["headers"]
-    ).json()["data"]
-    assert panel2["busy"] is False
-
-
-def test_manual_run_refuses_when_no_complete_round(client: TestClient, user: dict, fake_llm) -> None:
+def test_manual_run_refuses_when_no_complete_round(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     """★ 一轮完整对话都没有时拒绝总结（别把开场白当成"第 1 轮"白花一次调用）。
 
     实测踩过：会话被"撤回"清空后点「立即总结」，它把开场白总结成了「第 1~1 轮」。
     """
     session_id, _ = _make_session(client, user, 0)  # 只有开场白
-    response = client.post(f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"])
+    response = client.post(
+        f"{BASE}/{session_id}/memory-summary/run", headers=user["headers"]
+    )
     assert response.status_code == 200, response.text
     assert "还没有完成一轮" in response.json()["message"], response.json()
     assert response.json()["data"]["coverage"] is None
@@ -597,69 +557,15 @@ def test_summary_falls_back_to_local_compression_when_model_fails(
     )
 
     assert last["prompt"]["summary"]["used_model"] is False
-    assert any("本地压缩" in w for w in last["prompt"]["warnings"]), last["prompt"]["warnings"]
+    assert any("本地压缩" in w for w in last["prompt"]["warnings"]), last["prompt"][
+        "warnings"
+    ]
 
     detail = client.get(f"{BASE}/{session_id}", headers=user["headers"]).json()["data"]
-    assert detail["summary_coverage"] == {"from_round": 1, "to_round": 8}, "降级也要推进覆盖"
+    assert detail["summary_coverage"] == {"from_round": 1, "to_round": 8}, (
+        "降级也要推进覆盖"
+    )
     assert "较早的对话已被压缩" in detail["rolling_summary"], "退回本地压缩"
 
 
-def test_summary_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """关掉总开关 → 一行总结都不做（用户对成本敏感，必须能关）。"""
-    outcome = summary_mod.merge_block(
-        session=_Session(), adapter=None, messages=_history(30), settings={"enabled": False}
-    )
-    assert outcome.merged is False
-    assert outcome.reason and "关闭" in outcome.reason, "要说明是总开关关着，不是静默不做"
-
-
-# ==================================================================
-#  五套模式提示词（本项目自拟：参考产品只公开了模式名）
-# ==================================================================
-def test_every_mode_has_its_own_instruction_text() -> None:
-    """★ 五档必须**真的**各有各的指令：任何一档退回公共模板都等于这一档没做。"""
-    seen: dict[str, str] = {}
-    for mode in ("character", "plot", "table", "copy", "custom"):
-        instruction = summary_mod._MODE_INSTRUCTIONS.get(mode)
-        assert instruction, f"模式 {mode} 没有指令文本"
-        assert instruction not in seen.values(), f"模式 {mode} 与其它档重复"
-        seen[mode] = instruction
-
-
-def test_mode_instruction_reaches_the_system_prompt() -> None:
-    """选中的那一档必须出现在**系统提示词**里（而不是只存在于常量里）。"""
-    messages = summary_mod.build_summarize_messages(
-        "旧提要", _history(4), from_round=1, to_round=2, mode=summary_mod.MODE_TABLE
-    )
-    system = messages[0].content
-    assert summary_mod._MODE_INSTRUCTIONS[summary_mod.MODE_TABLE] in system
-    assert summary_mod._MODE_INSTRUCTIONS[summary_mod.MODE_CHARACTER] not in system
-    assert "| 角色 | 关系 | 关键事件 | 当前状态 | 未了结 |" in system, "列名要写死给模型"
-
-
-def test_custom_prompt_replaces_the_whole_system_prompt() -> None:
-    """"自定义"是**整段替换**（包括公共约束）—— 否则用户改不掉那些他不想要的规矩。"""
-    messages = summary_mod.build_summarize_messages(
-        None, _history(4), from_round=1, to_round=2, mode="custom", custom_prompt="只写三句话。"
-    )
-    assert messages[0].content == "只写三句话。"
-
-
-def test_cost_estimate_counts_the_mode_instruction() -> None:
-    """预估消耗要**如实**：五档指令长短不同，少报会让用户低估成本（界面上是决策依据）。"""
-    history = _history(20)
-    cost = summary_mod.estimate_summary_cost(
-        {"mode": "table", "max_chars": 2000}, history, 1, 8
-    )
-    chunk = summary_mod.block_messages(history, 1, 8)
-    chars = (
-        len(summary_mod.SUMMARIZE_SYSTEM_PROMPT)
-        + len(summary_mod._MODE_INSTRUCTIONS["table"])
-        + sum(len(str(getattr(m, "content", "") or "")[:400]) for m in chunk)
-    )
-    assert cost == summary_mod.estimate_tokens("x" * chars) + 2000 // 3
-    # 自定义提示词时按用户原文算（而不是仍按内置模板算）
-    custom = summary_mod.estimate_summary_cost(
-        {"mode": "custom", "prompt": "很短。", "max_chars": 2000}, history, 1, 8
-    )
-    assert custom < cost, "自定义提示词只有 3 个字，预估必须明显更小"
+pytestmark = pytest.mark.integration

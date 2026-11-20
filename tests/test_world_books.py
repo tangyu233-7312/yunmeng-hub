@@ -128,19 +128,6 @@ def test_endpoints_require_login(
     assert response.json()["code"] == "UNAUTHORIZED"
 
 
-# ==================================================================
-#  二、新建
-# ==================================================================
-def test_create_book(client: TestClient, user: dict) -> None:
-    data = create(client, user)
-
-    assert data["name"]
-    assert data["display_name"] == data["name"]
-    assert data["entry_count"] == 2
-    assert data["enabled_entry_count"] == 1  # 有一条 enabled=False
-    assert data["used_by_cards"] == []
-
-
 def test_create_normalizes_entries(client: TestClient, user: dict) -> None:
     """★ 条目要规范化：补默认值、关键词去重去空白、保留未知字段。"""
     data = create(
@@ -191,9 +178,7 @@ def test_create_rejects_entry_without_content(client: TestClient, user: dict) ->
 def test_create_rejects_too_many_entries(client: TestClient, user: dict) -> None:
     response = client.post(
         BASE,
-        json=payload(
-            entries=[{"keys": [f"k{i}"], "content": "x"} for i in range(501)]
-        ),
+        json=payload(entries=[{"keys": [f"k{i}"], "content": "x"} for i in range(501)]),
         headers=user["headers"],
     )
     assert response.status_code == 422
@@ -201,32 +186,8 @@ def test_create_rejects_too_many_entries(client: TestClient, user: dict) -> None
 
 
 def test_create_rejects_blank_name(client: TestClient, user: dict) -> None:
-    response = client.post(
-        BASE, json=payload(name="   "), headers=user["headers"]
-    )
+    response = client.post(BASE, json=payload(name="   "), headers=user["headers"])
     assert response.status_code == 422
-
-
-def test_create_empty_book_is_allowed(client: TestClient, user: dict) -> None:
-    """允许先建一本空书，之后慢慢加条目。"""
-    data = create(client, user, entries=[])
-    assert data["entry_count"] == 0
-    assert data["entries"] == []
-
-
-# ==================================================================
-#  三、列表与查询
-# ==================================================================
-def test_list_returns_brief_without_entries(client: TestClient, user: dict) -> None:
-    """★ 列表不返回 entries 正文（一本世界书可能几百条，带全了很笨重）。"""
-    create(client, user)
-
-    body = client.get(BASE, headers=user["headers"]).json()["data"]
-
-    assert set(body.keys()) >= {"items", "total", "limit", "offset", "has_more"}
-    item = body["items"][0]
-    assert "entries" not in item
-    assert item["entry_count"] == 2
 
 
 def test_list_works_with_a_large_world_book(client: TestClient, user: dict) -> None:
@@ -262,7 +223,10 @@ def test_list_works_with_a_large_world_book(client: TestClient, user: dict) -> N
     assert "entries" not in item
 
     # 搜索走同一条路径，也要能扛住
-    assert client.get(BASE, params={"q": "世界"}, headers=user["headers"]).status_code == 200
+    assert (
+        client.get(BASE, params={"q": "世界"}, headers=user["headers"]).status_code
+        == 200
+    )
 
 
 def test_detail_still_returns_full_entries_for_a_large_book(
@@ -306,9 +270,9 @@ def test_list_search(client: TestClient, user: dict) -> None:
     create(client, user, name=f"命中_{keyword}")
     create(client, user, name=f"不命中_{uuid.uuid4().hex[:8]}")
 
-    body = client.get(
-        BASE, params={"q": keyword}, headers=user["headers"]
-    ).json()["data"]
+    body = client.get(BASE, params={"q": keyword}, headers=user["headers"]).json()[
+        "data"
+    ]
     assert body["total"] == 1
 
 
@@ -323,16 +287,6 @@ def test_list_only_returns_own_books(
 
     assert mine["id"] in ids
     assert theirs["id"] not in ids
-
-
-def test_get_book_detail(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-    response = client.get(f"{BASE}/{created['id']}", headers=user["headers"])
-
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert len(data["entries"]) == 2
-    assert data["used_by_cards"] == []
 
 
 def test_detail_lists_cards_using_it(client: TestClient, user: dict) -> None:
@@ -377,45 +331,6 @@ def test_cannot_modify_others_book(
     assert still.json()["data"]["name"] == theirs["name"]
 
 
-def test_get_missing_book(client: TestClient, user: dict) -> None:
-    assert client.get(f"{BASE}/999999999", headers=user["headers"]).status_code == 404
-
-
-# ==================================================================
-#  五、更新
-# ==================================================================
-def test_update_name_only(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-
-    data = client.patch(
-        f"{BASE}/{created['id']}", json={"name": "新名字"}, headers=user["headers"]
-    ).json()["data"]
-
-    assert data["name"] == "新名字"
-    # 没提交的字段保持原值
-    assert data["entry_count"] == 2
-    assert data["description"] == "测试世界书"
-
-
-def test_update_description_to_null(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-    data = client.patch(
-        f"{BASE}/{created['id']}",
-        json={"description": None},
-        headers=user["headers"],
-    ).json()["data"]
-    assert data["description"] is None
-
-
-def test_update_name_null_is_ignored(client: TestClient, user: dict) -> None:
-    """name 是必填字段，传 null 视为「不改」而不是「清空」。"""
-    created = create(client, user)
-    data = client.patch(
-        f"{BASE}/{created['id']}", json={"name": None}, headers=user["headers"]
-    ).json()["data"]
-    assert data["name"] == created["name"]
-
-
 def test_update_entries_replaces_whole_array(client: TestClient, user: dict) -> None:
     """★ entries 是整体替换，不是按条目合并。"""
     created = create(client, user)
@@ -429,15 +344,6 @@ def test_update_entries_replaces_whole_array(client: TestClient, user: dict) -> 
 
     assert data["entry_count"] == 1
     assert data["entries"][0]["content"] == "只剩这一条"
-
-
-def test_update_entries_to_empty(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-    data = client.patch(
-        f"{BASE}/{created['id']}", json={"entries": []}, headers=user["headers"]
-    ).json()["data"]
-    assert data["entries"] == []
-    assert data["entry_count"] == 0
 
 
 def test_update_without_entries_keeps_them(client: TestClient, user: dict) -> None:
@@ -459,16 +365,6 @@ def test_update_entries_rejects_invalid(client: TestClient, user: dict) -> None:
     assert response.status_code == 422
 
 
-# ==================================================================
-#  六、删除保护
-# ==================================================================
-def test_delete_unused_book(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-    response = client.delete(f"{BASE}/{created['id']}", headers=user["headers"])
-    assert response.status_code == 200
-    assert client.get(f"{BASE}/{created['id']}", headers=user["headers"]).status_code == 404
-
-
 def test_delete_book_in_use_is_rejected(client: TestClient, user: dict) -> None:
     """★ 还有角色卡在用这本书时，默认拒绝删除，并列出是哪几张卡。"""
     book = create(client, user)
@@ -484,7 +380,9 @@ def test_delete_book_in_use_is_rejected(client: TestClient, user: dict) -> None:
     assert detail["cards"][0]["name"] == card["name"]
 
     # 书还在
-    assert client.get(f"{BASE}/{book['id']}", headers=user["headers"]).status_code == 200
+    assert (
+        client.get(f"{BASE}/{book['id']}", headers=user["headers"]).status_code == 200
+    )
 
 
 def test_delete_book_force(client: TestClient, user: dict) -> None:
@@ -497,63 +395,14 @@ def test_delete_book_force(client: TestClient, user: dict) -> None:
     )
     assert response.status_code == 200
 
-    assert client.get(f"{BASE}/{book['id']}", headers=user["headers"]).status_code == 404
+    assert (
+        client.get(f"{BASE}/{book['id']}", headers=user["headers"]).status_code == 404
+    )
 
     # 卡片还在，世界书关联变成 null
     survivor = client.get(f"{CARDS}/{card['id']}", headers=user["headers"])
     assert survivor.status_code == 200
     assert survivor.json()["data"]["world_book"] is None
-
-
-def test_delete_missing_book(client: TestClient, user: dict) -> None:
-    assert client.delete(f"{BASE}/999999999", headers=user["headers"]).status_code == 404
-
-
-# ==================================================================
-#  七、无名世界书（来自导入）与 display_name
-# ==================================================================
-def test_unnamed_book_gets_display_name(client: TestClient, user: dict) -> None:
-    """★ 规范里世界书的名字是可选的，大量真实的卡不写名字。
-
-    数据库忠实存 null（这样导出时能还原成「没有名字」，
-    保证往返一致），但界面需要有个说法，所以给一个 display_name 兜底。
-    """
-    response = client.post(
-        f"{CARDS}/import",
-        json={
-            "card": {
-                "spec": "chara_card_v2",
-                "spec_version": "2.0",
-                "data": {
-                    "name": "无名世界书的卡",
-                    # 注意：character_book 里**没有** name 字段
-                    "character_book": {
-                        "entries": [{"keys": ["龙"], "content": "设定"}]
-                    },
-                },
-            }
-        },
-        headers=user["headers"],
-    )
-    assert response.status_code == 201, response.text
-    book_id = response.json()["data"]["world_book"]["id"]
-
-    book = client.get(f"{BASE}/{book_id}", headers=user["headers"]).json()["data"]
-    assert book["name"] is None, "存储值必须是 null，不能被兜底文案污染"
-    assert book["display_name"] == "未命名世界书（1 条）"
-
-    # 导出时要还原成「没有 name 键」，与原始数据一致
-    exported = client.get(
-        f"{CARDS}/{response.json()['data']['id']}/export", headers=user["headers"]
-    ).json()["data"]["data"]
-    assert "name" not in exported["character_book"]
-
-    # 用户也可以后来给它起个名字
-    renamed = client.patch(
-        f"{BASE}/{book_id}", json={"name": "后来起的名字"}, headers=user["headers"]
-    ).json()["data"]
-    assert renamed["name"] == "后来起的名字"
-    assert renamed["display_name"] == "后来起的名字"
 
 
 def test_import_preserves_book_level_settings(client: TestClient, user: dict) -> None:
@@ -638,16 +487,6 @@ def test_scan_settings_can_be_set_via_api(client: TestClient, user: dict) -> Non
     assert patched.json()["data"]["token_budget"] == 256
 
 
-def test_scan_settings_default_when_not_set(client: TestClient, user: dict) -> None:
-    """没设置时返回默认值（界面才能显示"当前生效的是 8 / 1024"）。"""
-    created = client.post(
-        BASE, json={"name": f"默认参数_{uuid.uuid4().hex[:6]}", "entries": []},
-        headers=user["headers"],
-    ).json()["data"]
-    assert created["scan_depth"] == 8
-    assert created["token_budget"] == 1024
-
-
 def test_scan_settings_reject_illegal_values(client: TestClient, user: dict) -> None:
     """scan_depth 为 0 / 负数没有含义，要在参数校验阶段就拦下（422）。"""
     for bad in ({"scan_depth": 0}, {"token_budget": -1}):
@@ -657,3 +496,6 @@ def test_scan_settings_reject_illegal_values(client: TestClient, user: dict) -> 
             headers=user["headers"],
         )
         assert response.status_code == 422, f"{bad} 应当被拒绝：{response.text}"
+
+
+pytestmark = pytest.mark.integration

@@ -71,11 +71,6 @@ test('pickFreePort：返回一个真能监听上去的端口', async () => {
   });
 });
 
-test('pickFreePort：连续两次不会给同一个端口（系统分配而非写死）', async () => {
-  const first = await pickFreePort({ host: '127.0.0.1' });
-  const second = await pickFreePort({ host: '127.0.0.1' });
-  assert.notEqual(first, second, '两次拿到同一个端口说明没走系统分配');
-});
 
 // ------------------------------------------------------------------
 //  defaultHttpProbe

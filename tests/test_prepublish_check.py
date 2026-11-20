@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+from types import ModuleType
 import json
 import subprocess
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
@@ -35,7 +35,9 @@ def _load_checker() -> ModuleType:
 checker = _load_checker()
 
 
-def _scan(tmp_path: Path, files: dict[str, str], names: list[str] | None = None) -> dict:
+def _scan(
+    tmp_path: Path, files: dict[str, str], names: list[str] | None = None
+) -> dict:
     for rel, text in files.items():
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,7 +135,9 @@ def test_name_check_covers_every_text_file(tmp_path: Path) -> None:
         },
         names=["张三"],
     )
-    files = {b.split("：", 1)[-1].split(":")[0] for b in result["blockers"] if "真名" in b}
+    files = {
+        b.split("：", 1)[-1].split(":")[0] for b in result["blockers"] if "真名" in b
+    }
     assert "desktop/scripts/make-ico.ps1" in files, result["blockers"]
     assert "desktop/package.json" in files, result["blockers"]
 
@@ -160,7 +164,9 @@ def test_clean_tree_passes(tmp_path: Path) -> None:
 def test_git_scan_includes_chinese_filenames(tmp_path: Path) -> None:
     """Exercise Git's real path quoting, which previously hid Chinese documents."""
     document = tmp_path / "说明.md"
-    document.write_text('API_KEY = "sk-9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"', encoding="utf-8")
+    document.write_text(
+        'API_KEY = "sk-9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"', encoding="utf-8"
+    )
     for args in (("init",), ("config", "core.quotePath", "true"), ("add", "说明.md")):
         subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
     result = _scan(tmp_path, {})
@@ -169,7 +175,9 @@ def test_git_scan_includes_chinese_filenames(tmp_path: Path) -> None:
     assert not any("读取失败" in item for item in result["warns"])
 
 
-def test_secret_reports_redact_values_and_ignore_neighboring_comments(tmp_path: Path) -> None:
+def test_secret_reports_redact_values_and_ignore_neighboring_comments(
+    tmp_path: Path,
+) -> None:
     key = "sk-9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
     result = _scan(tmp_path, {"app.py": f'API_KEY = "{key}"  # test the connection\n'})
     assert result["blockers"], "A neighboring 'test' comment must not hide a credential"
@@ -178,17 +186,25 @@ def test_secret_reports_redact_values_and_ignore_neighboring_comments(tmp_path: 
 
 def test_git_enumeration_failure_cannot_pass(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / ".git").mkdir()
+
     def fail(*args, **kwargs):
         raise OSError("git unavailable")
+
     monkeypatch.setattr(checker.subprocess, "run", fail)
     with pytest.raises(RuntimeError, match="无法枚举"):
         checker.published_files(tmp_path)
 
 
 def test_config_backups_and_sqlite_sidecars_are_blocked(tmp_path: Path) -> None:
-    result = _scan(tmp_path, {
-        "nested/.env.bak": "local settings",
-        "backup.sqlite3-wal": "database changes",
-    })
+    result = _scan(
+        tmp_path,
+        {
+            "nested/.env.bak": "local settings",
+            "backup.sqlite3-wal": "database changes",
+        },
+    )
     assert any("nested/.env.bak" in item for item in result["blockers"])
     assert any("backup.sqlite3-wal" in item for item in result["blockers"])
+
+
+pytestmark = pytest.mark.integration

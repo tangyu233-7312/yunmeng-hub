@@ -1,0 +1,193 @@
+baseline	file	test	action	reason
+624a7f1	desktop/test/backend-config.test.js	parseEnvText：基本键值、跳过注释与空行	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	parseEnvText：成对引号被去掉，值里的等号保留	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	parseEnvText：不成对的引号不当成引号（避免把值吃掉一半）	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	parseEnvText：值里可以带 # 与中文	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	parseEnvText：非法键名被跳过，不会污染结果	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	readEnvFile：文件不存在返回空对象（首次运行还没配 .env 是正常状态）	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	readEnvFile：真读一个文件（含中文与 BOM 也不会崩）	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	buildBackendEnv：进程环境优先级高于 .env，HNE_HOST/PORT 覆盖全部	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	buildBackendEnv：显式覆盖（HNE_HOST/HNE_PORT）赢过 .env 与进程环境	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	buildBackendEnv：强制 UTF-8（否则中文日志在 Windows 上会 UnicodeEncodeError）	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	buildBackendEnv：不会凭空造出 HNE_ 前缀之外的键	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	choosePort：优先端口空闲就用它，并说明来源	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	choosePort：优先端口被占 → 换系统分配的空闲端口，来源标成 preferred-busy	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	choosePort：没有优先端口 → 用系统分配的	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	choosePort：优先端口非法（0 / 越界）不采用	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	preferredPort：默认不指定 → 返回 null（不是 8000）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/backend-config.test.js	preferredPort：HNE_DESKTOP_PORT 优先于 .env 里的 HNE_PORT	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	preferredPort：空串 / 空白 / 非法值一律当"没指定"（而不是 0 或 NaN）	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	★ 回归：preferredPort 返回 null 时，choosePort 必须走"系统分配"而不是把 null 当端口	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	detectPython：候选列表包含项目虚拟环境、PATH 与显式指定的解释器	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/backend-config.test.js	detectPython：第一个可用的解释器胜出，后面的不再探测	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	detectPython：解释器无法执行（spawn error）时如实记录原因	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	detectPython：默认（非严格）下，显式指定的不可用会继续回退给别的解释器	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	detectPython：严格模式下，显式指定的不可用就立刻失败（不静默换解释器）	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	detectPython：严格模式 + 指定的解释器可用 → 正常用它的	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	detectPython：没设 HNE_DESKTOP_PYTHON 时，严格开关不会误触发	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	detectPython：空的 HNE_DESKTOP_PYTHON 当作没设（避免空字符串被拿去 spawn）	保留	配置优先级、端口分配、解释器失效的公开结果
+624a7f1	desktop/test/backend-config.test.js	isTruthy：认得 1/true/yes/on，其余为假	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/backend-config.test.js	truncate：超长截断并加省略号，短的原样返回	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/backend-process.test.js	isAlive：自己的进程算活着，非法 PID 直接是 false	保留	真实子进程启动、存活判断和进程树退出
+624a7f1	desktop/test/backend-process.test.js	isAlive：子进程活着 → true；杀掉之后 → false（不依赖任何命令输出）	保留	真实子进程启动、存活判断和进程树退出
+624a7f1	desktop/test/backend-process.test.js	killTree：对已经死掉的进程是幂等的（返回 false，不抛异常）	保留	真实子进程启动、存活判断和进程树退出
+624a7f1	desktop/test/backend-process.test.js	killTree：连子进程的子孙一起带走（uvicorn 会 fork，只杀根会留残余）	保留	真实子进程启动、存活判断和进程树退出
+624a7f1	desktop/test/backend-process.test.js	spawnBackend：参数、HNE_HOST/HNE_PORT 注入与 cwd 都对	保留	真实子进程启动、存活判断和进程树退出
+624a7f1	desktop/test/backend-process.test.js	spawnBackend：真的能拿起一个进程并让它跑起来（用 node 冒充解释器）	保留	真实子进程启动、存活判断和进程树退出
+624a7f1	desktop/test/backend-process.test.js	spawnBackend：sidecar 模式传的是 backend.exe 的参数，不带 uvicorn 那一套	保留	真实子进程启动、存活判断和进程树退出
+624a7f1	desktop/test/backend-process.test.js	spawnBackend：显式给 args 时完全按给的来（不被默认参数覆盖）	保留	真实子进程启动、存活判断和进程树退出
+624a7f1	desktop/test/backend-process.test.js	healthUrl / consoleUrl：控制台地址带尾斜杠（省掉一次 307 跳转）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/data-dir.test.js	★ 字段表里有 HNE_DATA_DIR，且不是必填、不跟存储方式绑定	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/data-dir.test.js	★ 用户填了数据目录 → 必须写进 .env（不能只停在界面上）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/data-dir.test.js	★ 留空 → **不写**这一行（让后端用默认位置，别写个空值进去）	保留	目录配置写读、空值和旧值保留
+624a7f1	desktop/test/data-dir.test.js	★ 数据目录那段要带上"不会自动搬家"的警告	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/data-dir.test.js	★★ 数据目录与存储方式正交：选 mysql / sqlite 都要写得出来	保留	目录配置写读、空值和旧值保留
+624a7f1	desktop/test/data-dir.test.js	★★ 数据目录里的值会被解析回来（写-读闭环，切换页才能预填）	保留	目录配置写读、空值和旧值保留
+624a7f1	desktop/test/data-dir.test.js	★ 手改过数据目录的老配置：以表单为准，但不会被当成"未知键"重复写两遍	保留	目录配置写读、空值和旧值保留
+624a7f1	desktop/test/net-utils.test.js	pickFreePort：返回一个真能监听上去的端口	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	pickFreePort：连续两次不会给同一个端口（系统分配而非写死）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/net-utils.test.js	defaultHttpProbe：2xx 判为健康，并回报状态码	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	defaultHttpProbe：503 判为不健康（"起来了但不可用"不能算健康）	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	defaultHttpProbe：连不上时报 ECONNREFUSED 的人话	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	describeFetchError：超时与拒绝各自有可读说法	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth：先失败几次、后来就绪 → reason=ready 且尝试次数对得上	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth：一直探不到 → reason=timeout 且带最后一次错误	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth：探测器抛异常不会被当成成功	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth：shouldAbort 为真时立刻放弃（后端子进程已经退了，再等是白等）	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth：onProgress 只在"原因变了"时回报（不刷屏）	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth：原因变化时会再回报一次	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth：某次探测永远不返回时，整体仍然会超时（不会永远转圈）	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth：缺少 url 时明确报错，而不是静默转圈	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth 与真实 HTTP 服务端到端：先 503 后 200	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	defaultHttpProbe：端口有人监听但不说 HTTP → 超时，不假装健康	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/net-utils.test.js	waitForHealth 与真实 TCP 服务：一直不说 HTTP → 超时而不是假装成功	保留	真实端口/HTTP/超时/中止，不把不可用误报就绪
+624a7f1	desktop/test/packaging.test.js	isPackagedLayout：resources/app.asar 存在 = 打包形态（这是磁盘上唯一确定的标记）	保留	发布配置保留用户数据、禁止读安装目录凭据、与真实打包配置一致
+624a7f1	desktop/test/packaging.test.js	isPackagedLayout：Electron 自己说 isPackaged 时，不看磁盘也认	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/packaging.test.js	isPackagedLayout：没有 resourcesPath 时安全返回 false（不抛异常）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/packaging.test.js	★★ 红线：打包态**不许**仓库根/安装目录兜底读 .env	保留	发布配置保留用户数据、禁止读安装目录凭据、与真实打包配置一致
+624a7f1	desktop/test/packaging.test.js	allowRepoFallback：开发态照旧允许（现有开发与验收流程一字不变）	保留	发布配置保留用户数据、禁止读安装目录凭据、与真实打包配置一致
+624a7f1	desktop/test/packaging.test.js	allowRepoFallback：HNE_DESKTOP_STRICT_CONFIG=1 在开发态也能关掉兜底	保留	发布配置保留用户数据、禁止读安装目录凭据、与真实打包配置一致
+624a7f1	desktop/test/packaging.test.js	electronBuilderConfig：★★ 卸载不删用户数据（红线，必须是显式的 false）	保留	发布配置保留用户数据、禁止读安装目录凭据、与真实打包配置一致
+624a7f1	desktop/test/packaging.test.js	electronBuilderConfig：只装给当前用户（不要求管理员权限）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/packaging.test.js	electronBuilderConfig：sidecar 作为 extraResources 打进 resources/backend	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/packaging.test.js	★ 接线：extraResources 的落点必须与 sidecar.js 的候选路径一致	保留	发布配置保留用户数据、禁止读安装目录凭据、与真实打包配置一致
+624a7f1	desktop/test/packaging.test.js	electronBuilderConfig：app.asar 里只放壳自己的代码（白名单，不是黑名单）	保留	发布配置保留用户数据、禁止读安装目录凭据、与真实打包配置一致
+624a7f1	desktop/test/packaging.test.js	electronBuilderConfig：输出到仓库根的 release/（安装包绝不进仓库）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/packaging.test.js	electronBuilderConfig：Windows x64 + NSIS + 图标	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/packaging.test.js	★ 对账：desktop/build/icon.ico 真的存在（否则打包会中途失败）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/packaging.test.js	★ 对账：package.json 里的 build 配置与 packaging.js 生成的一致	保留	发布配置保留用户数据、禁止读安装目录凭据、与真实打包配置一致
+624a7f1	desktop/test/packaging.test.js	（旁证）若 sidecar 已构建，产物目录里确实有 backend.exe	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/paths.test.js	resolvePaths：所有日志都落在 userData 下，绝不落在仓库/安装目录里	保留	数据/日志必须写用户目录及目录重复创建
+624a7f1	desktop/test/paths.test.js	resolvePaths：安装目录内的路径（图标 / 加载页）被正确解析出来	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/paths.test.js	resolvePaths：打包版的数据目录在 userData 下（安装目录之外）	保留	数据/日志必须写用户目录及目录重复创建
+624a7f1	desktop/test/paths.test.js	resolvePaths：.env 在仓库根，且它本身是被 gitignore 的（绝不入库）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/paths.test.js	ensureDir：目录不存在时创建，已存在时不报错（可重复调用）	保留	数据/日志必须写用户目录及目录重复创建
+624a7f1	desktop/test/setup-config.test.js	SETUP_FIELDS：键名都带 HNE_ 前缀（项目硬约定：否则会与系统变量撞车）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-config.test.js	defaultValues：给出所有字段的默认值，且必填项默认能过校验的是连库那几项	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-config.test.js	validateValues：缺必填项时逐字段报错（不是只给一句"配置不对"）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	★★ validateValues：默认（本机文件）配置**一项都不用填**就通过	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-config.test.js	★★ validateValues：默认模式下 MySQL 字段**完全不参与校验**	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	validateValues：显式选 MySQL 之后，那一组又重新变成必填	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	★★ validateValues：两个密钥**可以留空**（后端会自动生成）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-config.test.js	validateValues：密钥填了就得合法（否则用户以为"我设了"，后端却另生成一把）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	validateValues：合法配置通过	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-config.test.js	validateValues：端口必须是 1~65535 的整数	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	validateValues：签名密钥太短会被拦（后端会拒绝启动，不如在这里说）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	validateValues：主机名里有空格会被拦（最常见的粘贴事故）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	suggestSecrets：只给空着的密钥字段生成值，不覆盖用户已填的	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	生成的密钥能通过校验，且两次生成不同（真的是随机的）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	renderEnvFile：口令里有空格与 # 时会被引号包住（否则会被截断/弄脏）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	renderEnvFile：解析回来的值必须与填进去的**逐字节一致**（含各种刁钻口令）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	renderEnvFile：写进固定值（只监听本机、用本地嵌入），不写会被误读的项	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	★ renderEnvFile：从 MySQL 改回「本机文件」时，MySQL 的键必须被清掉	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	★ renderEnvFile：用户手工加过的其它配置必须原样保留（不能悄悄抹掉）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	renderEnvFile：高级项只有填了才写进去（不塞一堆用户没设过的东西）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	parseEnvText：去 BOM、跳过注释、去成对引号、值里保留 =	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	quoteIfNeeded：只有需要时才加引号	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-config.test.js	readEnvFile：文件不存在返回 null（而不是抛异常）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	writeEnvFile：能写出并读回，且不会留下 .tmp 残file	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	configIsUsable：缺必填项的配置判为不可用（否则应用会反复启动失败却没有入口去改）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	resolvedBackend：缺 HNE_DB_BACKEND 时按"有没有 MySQL 配置"推断（向后兼容的关键）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	configIsUsable：被手改坏（必填项被清空）的配置判为不可用	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	missingRequired：列出缺哪些必填项（给界面显示"还缺什么"）	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	端到端（MySQL 模式）：表单值 → .env 文本 → 解析 → 通过可用性判定	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-config.test.js	★★ 端到端（零配置 / SQLite）：默认表单直接产出可用配置，且**不含任何 MySQL 键**	保留	秘密生成、配置读写回环、后端切换和旧配置兼容
+624a7f1	desktop/test/setup-ui.test.js	setup.html：按钮的判据必须是布尔量 generatable（不能是 typeof === function）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	setup.html：「随机生成」按钮存在，且调用的入口名与 preload 暴露的一致	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	setup.html：提示文字里提到的按钮，代码里真的会创建它	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 数据目录：IPC 契约里必须带 dirOnly（否则会掉进 MySQL 组被隐藏）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 数据目录：页面必须把它放进独立分组，不能落进 mysqlGrid	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 数据目录：页面真的有一个 datadir-grid 容器	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	setup.html：密码框有「小眼睛」，可切换明文/圆点	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 回归：显示/隐藏的布尔参数必须按"用户视角"命名（本轮踩到语义反了）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	setup.html：「随机生成」之后顺手把内容显示出来	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	setup.html：可生成的字段带「复制」按钮（抄进密码管理器用）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★ 接线：眼睛按钮被存进 inputs，否则 setMasked 改不动图标	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★ 没有 eval：CSP 里没有 unsafe-eval，用了就会当场被拦	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	main.js：发给渲染端的字段里，generatable 必须是布尔量	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★ 契约两侧一致：一个发 generatable，一个读 generatable	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	setup-config.js：至少有一个字段带 generate 函数（密钥类）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	setup-config.js：不可生成的字段不该带 generate（否则会画出没用的按钮）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 接线：切换模式必须走 setup:switch，而不是当首启 save	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★ 接线：preload 要暴露 switchFields 与 switchBackend 两个入口	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 回归：`switchMode` 必须在模块作用域声明（曾在 boot 里声明 → 提交必抛错）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 回归：提交处理函数必须用 finally 兜底解开按钮（否则一次异常就永久禁用）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 接线：切到本机文件时不许有**生效**的 MySQL 键，但必须留注释版	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 接线：切换页要把注释里那份连接信息填回表单（含口令）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-ui.test.js	★★ 接线：切换必须先自检、成功后才停旧后端（失败不能把在跑的后端弄停）	删除/替代	替换为实际页面脚本事件测试，覆盖生成/可见性/保存/失败恢复；不声称真实 IPC 与布局
+624a7f1	desktop/test/setup-validate.test.js	全部填好 → 放行（不该拦）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-validate.test.js	★★ 零配置：默认表单（本机文件）直接放行 —— 一格都不用填	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-validate.test.js	★★ 零配置：选本机文件时，MySQL 字段填成什么样都不拦	保留	浏览器提交前校验与可读错误，防无效后端启动
+624a7f1	desktop/test/setup-validate.test.js	★★ 零配置：两个密钥留空也放行（后端会自己生成）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-validate.test.js	★★ 回归：选了 MySQL 之后，口令留空 → 就地拦住，并且**不去起后端**	保留	浏览器提交前校验与可读错误，防无效后端启动
+624a7f1	desktop/test/setup-validate.test.js	只有空格也算没填（不许拿空白糊过去）	保留	浏览器提交前校验与可读错误，防无效后端启动
+624a7f1	desktop/test/setup-validate.test.js	签名密钥：留空放行，但填了太短要被拦（后端会拒绝启动，不如在这里说）	保留	浏览器提交前校验与可读错误，防无效后端启动
+624a7f1	desktop/test/setup-validate.test.js	Fernet 口令：留空放行；形状不对要拦（后端要到"第一次存 API Key"才报错）	保留	浏览器提交前校验与可读错误，防无效后端启动
+624a7f1	desktop/test/setup-validate.test.js	端口必须是 1~65535 的数字	保留	浏览器提交前校验与可读错误，防无效后端启动
+624a7f1	desktop/test/setup-validate.test.js	非必填项留空不该被拦（比如 Fernet 口令、高级项）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/setup-validate.test.js	一次报多项：提示里把缺的都列出来（不让用户挤牙膏）	保留	浏览器提交前校验与可读错误，防无效后端启动
+624a7f1	desktop/test/setup-validate.test.js	★ 不越界：它**不**假装能判断"口令对不对"	保留	浏览器提交前校验与可读错误，防无效后端启动
+624a7f1	desktop/test/setup-validate.test.js	字段定义来自主进程：缺字段时安全返回（不抛异常）	保留	浏览器提交前校验与可读错误，防无效后端启动
+624a7f1	desktop/test/sidecar.test.js	sidecarCandidates：Windows 下找 backend.exe，且覆盖开发态多个可能位置	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	sidecarCandidates：非 Windows 下不带 .exe 后缀	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/sidecar.test.js	sidecarCandidates：显式指定的路径排在最前面（优先级最高）	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	sidecarCandidates：去重但保持顺序（同一路径不会出现两次）	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	sidecarCandidates：没有可选路径时返回空数组（不抛异常）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/sidecar.test.js	chooseBackend：找到打包后端就用它，并说明"无需本机 Python"	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	chooseBackend：没指定也没找到 → kind=none 且 explicitSpecified=false（调用方自行回退）	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	chooseBackend：显式指定的后端不存在 → kind=none 且 explicitSpecified=true（调用方必须停下）	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	★ 回归：显式指定失败时，判据不能依赖"有没有传 python"（曾经因此静默回退）	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	chooseBackend：显式指定的后端存在 → 用它，并在理由里点明来自环境变量	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	chooseBackend：显式指定为空白串时当作没指定（避免空值被当成路径）	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	chooseBackend：候选顺序决定优先级（第一个命中的赢）	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	★★ 回归（接线）：显式指定时，main.js 必须只把"那一个"路径当候选	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/sidecar.test.js	★★ 回归（接线）：显式指定的路径存在时，用的必须是**它**	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/sidecar.test.js	sidecarArgs：--host/--port 与 uvicorn 同名同义（消费者不用记两套）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/sidecar.test.js	sidecarArgs：数据与日志目录会作为参数传下去（落在 userData，不在安装目录）	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/sidecar.test.js	sidecarArgs：不传目录时只给 host/port（不硬塞空值）	保留	显式后端优先级、缺失后端报错及参数传递
+624a7f1	desktop/test/web-boot.test.js	web boot reloads a stale page using the live version and no-store	保留	执行实际脚本检查重载、防循环和断网恢复
+624a7f1	desktop/test/web-boot.test.js	web boot keeps a matching version without recording a reload	保留	执行实际脚本检查重载、防循环和断网恢复
+624a7f1	desktop/test/web-boot.test.js	web boot shows a recovery banner if the requested version is still stale	保留	执行实际脚本检查重载、防循环和断网恢复
+624a7f1	desktop/test/web-boot.test.js	web boot limits automatic reloads within one minute	保留	执行实际脚本检查重载、防循环和断网恢复
+624a7f1	desktop/test/web-boot.test.js	web boot tolerates an unavailable server without reloading	保留	执行实际脚本检查重载、防循环和断网恢复
+624a7f1	desktop/test/zero-config.test.js	★ 默认存储方式是 sqlite（"安装即用"的前提）	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/zero-config.test.js	★ 默认表单里，MySQL 字段不该被当成必填拦住用户	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/zero-config.test.js	★★ databaseDefaults 与 databaseEnvDefaults 讲的是同一件事	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/zero-config.test.js	★ 注入的 SQLite 文件必须在数据目录之下（而不是相对当前工作目录）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★★ 用户选了 MySQL：注入里绝不能出现 sqlite	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★★ 老配置（只有 HNE_MYSQL_*、没有 DB_BACKEND）绝不能被改成 sqlite	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★ 向导写出的 sqlite 配置：仍要注入数据目录（否则数据落到安装目录附近）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★ 用户自己设过 HNE_DATA_DIR 时不覆盖它（逐键判断）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★ 真实进程环境里的显式设置同样优先（临时用环境变量试一个值不会被悄悄忽略）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★ 空字符串不算"用户设过"（向导会把没填的项写成空值）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★★ paths.dataRoot 必须是 dataDir 的父级（否则会建出 data\\data）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★★ 把 dataRoot 喂给注入逻辑，SQLite 文件正好落在 dataDir 下	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★★ preserveSecrets：密钥留空 → 沿用已存值（否则已保存的 API Key 会解不开）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★ preserveSecrets：用户重新填了密钥 → 以他填的为准（不能反过来覆盖用户）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★ preserveSecrets：两边都空 → 还是空（交给后端自动生成，不要凭空造一个）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★★★ 切到 SQLite：MySQL 连接信息写成注释留存（否则切回来口令就丢了）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★★ 切回 MySQL：口令从注释里恢复，且**不再**留注释	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★★ preferPythonFromSource：必须显式开启，默认关（避免静默降低验收形态）	保留	新旧配置的数据位置、秘密保留和存储切换
+624a7f1	desktop/test/zero-config.test.js	★ 接线：main.js 必须真的用这个开关把打包后端跳过	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/zero-config.test.js	★★ 接线：两条后端启动路径都必须注入数据库默认值	删除/替代	简单配置/getter、重复路径、源码检查或仅检查产物存在；保留对应配置回环/行为与实际启动验证
+624a7f1	desktop/test/zero-config.test.js	★★ 端到端：默认向导产物喂给注入逻辑，两条路径指向同一个库文件	保留	新旧配置的数据位置、秘密保留和存储切换

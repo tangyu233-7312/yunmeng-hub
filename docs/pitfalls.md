@@ -1191,7 +1191,7 @@ while (true) {
 
 1. 判据改成**只看 `injection_position`**：
    `1` 才是深度注入；`0` 一律归入系统提示词（哪怕 role 是 user/assistant）。
-2. **拿用户的真实文件当断言依据**：`tests/test_presets.py` 里加了一条
+2. **拿用户的真实文件当断言依据**：历史版本的 `tests/test_presets.py` 里曾加过一条
    "真实文件存在才跑"的用例，直接断言
    `[b for b in config.blocks if b.depth_injected] == []` ——
    把"真实文件里没有一个块是深度注入"这件事钉死在测试里。
@@ -1233,7 +1233,7 @@ while (true) {
 - 所有写路径显式 `db.commit()`，并在注释里写清"接口层不自动提交"。
 - 需要拿到自增 id 后再做同事务更新（例如"设为全局默认"要排除自己）时，
   顺序是 **`db.flush()` → 同事务更新 → `db.commit()`**，不要 commit 两次。
-- `tests/test_prompt_presets.py` 的用例全部是
+- 历史版本 `tests/test_prompt_presets.py` 的用例全部是
   "写 → **换一个请求**读"，天然能抓到这类问题。
 
 ---

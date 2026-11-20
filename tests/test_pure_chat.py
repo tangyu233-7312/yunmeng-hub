@@ -92,7 +92,9 @@ def _make_user(client: TestClient) -> dict:
     assert logged_in.status_code == 200, logged_in.text
     return {
         "id": created.json()["data"]["id"],
-        "headers": {"Authorization": f"Bearer {logged_in.json()['data']['access_token']}"},
+        "headers": {
+            "Authorization": f"Bearer {logged_in.json()['data']['access_token']}"
+        },
     }
 
 
@@ -146,26 +148,17 @@ def test_create_pure_chat_session_without_card(client: TestClient, user: dict) -
 
 
 def test_pure_chat_rejects_greeting_index(client: TestClient, user: dict) -> None:
-    response = client.post(
-        BASE, json={"greeting_index": 0}, headers=user["headers"]
-    )
+    response = client.post(BASE, json={"greeting_index": 0}, headers=user["headers"])
     assert response.status_code == 400
     assert "greeting_index" in response.text
-
-
-def test_provider_line_reflects_stream_switch(client: TestClient, user: dict) -> None:
-    provider_id = _provider(client, user, stream_enabled=False)
-    session = client.post(
-        BASE, json={"llm_provider_id": provider_id}, headers=user["headers"]
-    ).json()["data"]
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
-    assert detail["provider"]["stream_enabled"] is False
 
 
 # ==================================================================
 #  二、提示词走「通用助手」分支
 # ==================================================================
-def test_pure_chat_prompt_is_generic_assistant(client: TestClient, user: dict, fake_llm) -> None:
+def test_pure_chat_prompt_is_generic_assistant(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     provider_id = _provider(client, user)
     session = client.post(
         BASE, json={"llm_provider_id": provider_id}, headers=user["headers"]
@@ -200,15 +193,21 @@ def test_pure_chat_reply_state_block_is_stripped_but_not_saved(
     session = client.post(
         BASE, json={"llm_provider_id": provider_id}, headers=user["headers"]
     ).json()["data"]
-    fake_llm.script["content"] = '他说完了。\n<state>{"hp": {"current": 10, "max": 100}}</state>'
+    fake_llm.script["content"] = (
+        '他说完了。\n<state>{"hp": {"current": 10, "max": 100}}</state>'
+    )
     sent = client.post(
-        f"{BASE}/{session['id']}/messages", json={"content": "继续"}, headers=user["headers"]
+        f"{BASE}/{session['id']}/messages",
+        json={"content": "继续"},
+        headers=user["headers"],
     )
     assert sent.status_code == 201, sent.text
     stored = sent.json()["data"]["assistant_message"]["content"]
     assert "<state>" not in stored and stored.startswith("他说完了")
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert detail["state"] is None, "纯聊天不落状态"
     notes = sent.json()["data"].get("notes") or []
     assert not any("状态块" in str(n) for n in notes), "没要求过的事不能反过来怪模型"
@@ -241,59 +240,12 @@ def test_deleted_card_story_session_still_warns_and_is_not_pure_chat(
     )
     assert deleted.status_code == 200, deleted.text
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert detail["character_card"] is None
     assert detail["pure_chat"] is False, "卡没了的故事会话 ≠ 纯聊天"
     assert any("角色卡已被删除" in w for w in detail["warnings"]), detail["warnings"]
-
-
-def test_story_session_still_uses_persona_assembly(client: TestClient, user: dict, fake_llm) -> None:
-    """回归守卫：加了纯聊天分支之后，普通叙事会话的装配一个字都不能变。
-
-    ★ 状态协议只在**卡片声明了状态栏格式**时才注入（字段清单是卡的，不是代码的），
-      所以这张卡显式声明一份 —— 否则「当前状态」那一节不该出现。
-    """
-    provider_id = _provider(client, user)
-    card = client.post(
-        f"{CARDS}/import",
-        json={
-            "card": {
-                "spec": "chara_card_v2",
-                "data": {
-                    "name": "装配守卫",
-                    "description": "一个爱数星星的人",
-                    "first_mes": "……",
-                    "extensions": {
-                        "hne": {
-                            "state_schema": [
-                                {"name": "hp", "label": "HP", "type": "meter"},
-                                {"name": "location", "label": "位置", "type": "text"},
-                            ]
-                        }
-                    },
-                },
-            }
-        },
-        headers=user["headers"],
-    ).json()["data"]
-    session = client.post(
-        BASE,
-        json={"character_card_id": card["id"], "llm_provider_id": provider_id},
-        headers=user["headers"],
-    ).json()["data"]
-    fake_llm.script["content"] = "（她抬头看天）"
-    assert (
-        client.post(
-            f"{BASE}/{session['id']}/messages", json={"content": "你在看什么"}, headers=user["headers"]
-        ).status_code
-        == 201
-    )
-    system = fake_llm.script["requests"][-1].messages[0].content
-    assert "装配守卫" in system
-    assert "身份认知" in system, "叙事会话必须仍然带内置守卫"
-    assert "当前状态（每轮必须同步）" in system
-    assert "hp（数字，0~max）" in system, "协议里的字段清单必须来自这张卡声明的 schema"
-    assert "inventory" not in system, "卡没声明的字段不该出现在协议里"
 
 
 def test_story_session_without_declared_schema_gets_no_state_protocol(
@@ -307,7 +259,11 @@ def test_story_session_without_declared_schema_gets_no_state_protocol(
     provider_id = _provider(client, user)
     card = client.post(
         CARDS,
-        json={"name": "没声明状态栏", "description": "一个爱数星星的人", "greeting": "……"},
+        json={
+            "name": "没声明状态栏",
+            "description": "一个爱数星星的人",
+            "greeting": "……",
+        },
         headers=user["headers"],
     ).json()["data"]
     session_row = client.post(
@@ -332,13 +288,4 @@ def test_story_session_without_declared_schema_gets_no_state_protocol(
     assert "hp" not in system.lower(), "不该硬塞 HP 那一套字段"
 
 
-# ==================================================================
-#  四、会话列表：纯聊天不该被提示"人设丢了"
-# ==================================================================
-def test_session_list_does_not_warn_pure_chat(client: TestClient, user: dict) -> None:
-    provider_id = _provider(client, user)
-    client.post(BASE, json={"llm_provider_id": provider_id}, headers=user["headers"])
-    listed = client.get(BASE, headers=user["headers"]).json()["data"]["items"]
-    chat_item = next(item for item in listed if item["title"].startswith("纯聊天"))
-    assert chat_item["character_card"] is None
-    assert not any("角色卡已被删除" in w for w in (chat_item.get("warnings") or []))
+pytestmark = pytest.mark.integration

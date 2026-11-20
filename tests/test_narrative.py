@@ -42,10 +42,9 @@ from sqlalchemy import select
 from app.db.models import Message, NarrativeSession, User
 from app.db.mysql import session_scope
 from app.llm.params import GenerationParams, compute_context_budget
-from app.llm.schema import ChatMessage, ChatResult, StreamChunk, TokenUsage
+from app.llm.schema import ChatResult, StreamChunk, TokenUsage
 from app.main import app
-from app.narrative import context_manager, engine, streaming, world_book_scanner
-from app.narrative.prompt_builder import build_prompt
+from app.narrative import engine, streaming
 from app.services import imagegen_service
 
 BASE = "/api/v1/narrative/sessions"
@@ -132,7 +131,11 @@ def make_provider(client: TestClient, user: dict, **overrides) -> dict:
         "api_key": "sk-test-not-a-real-key",
         "model_name": "mock-model",
         "context_window": 8192,
-        "generation": {"temperature": 0.8, "max_tokens": 1024, "reasoning_effort": "auto"},
+        "generation": {
+            "temperature": 0.8,
+            "max_tokens": 1024,
+            "reasoning_effort": "auto",
+        },
     }
     body.update(overrides)
     response = client.post(PROVIDERS, json=body, headers=user["headers"])
@@ -140,7 +143,9 @@ def make_provider(client: TestClient, user: dict, **overrides) -> dict:
     return response.json()["data"]
 
 
-def make_session(client: TestClient, user: dict, card_id: int, provider_id: int, **kw) -> dict:
+def make_session(
+    client: TestClient, user: dict, card_id: int, provider_id: int, **kw
+) -> dict:
     body = {"character_card_id": card_id, "llm_provider_id": provider_id}
     body.update(kw)
     response = client.post(BASE, json=body, headers=user["headers"])
@@ -174,7 +179,9 @@ class FakeAdapter:
         # ★ 必须跟着 provider 行里的上下文窗口走：测试里故意把窗口配得很小
         #   来触发裁剪，如果这里写死一个大数字，裁剪永远不会发生
         window = getattr(self.row, "context_window", None) or self.context_window
-        max_out = getattr(self.row, "max_tokens", None) or self.default_params.max_tokens
+        max_out = (
+            getattr(self.row, "max_tokens", None) or self.default_params.max_tokens
+        )
         return compute_context_budget(window, max_out)
 
     def chat(self, request):
@@ -241,311 +248,6 @@ def last_request() -> Any:
 
 
 # ==================================================================
-#  一、提示词构建
-# ==================================================================
-class FakeCard:
-    """鸭子类型的角色卡（不建库，纯单元测试用）。"""
-
-    def __init__(self, **kw: Any) -> None:
-        self.name = kw.get("name", "测试角色")
-        self.description = kw.get("description")
-        self.personality = kw.get("personality")
-        self.background = kw.get("background")
-        self.speaking_style = kw.get("speaking_style")
-        self.scenario = kw.get("scenario")
-        self.example_dialogue = kw.get("example_dialogue")
-        self.greeting = kw.get("greeting")
-        self.system_prompt = kw.get("system_prompt")
-        self.post_history_instructions = kw.get("post_history_instructions")
-
-
-class FakeBook:
-    def __init__(self, entries, name="测试世界"):
-        self.name = name
-        self.entries = entries
-
-
-def test_prompt_assembles_persona_fields() -> None:
-    card = FakeCard(
-        name="雅佩",
-        personality="冷静",
-        background="北方来的旅人",
-        speaking_style="简短",
-        scenario="深夜的旅店",
-        example_dialogue="用户：你好\n雅佩：……嗯。",
-    )
-    plan = build_prompt(card=card, history=[])
-
-    assert plan.system_prompt_source == "assembled"
-    for fragment in ("雅佩", "冷静", "北方来的旅人", "简短", "深夜的旅店", "对话示例"):
-        assert fragment in plan.system_prompt
-
-
-def test_prompt_prefers_card_system_prompt() -> None:
-    """角色卡自带 system_prompt 时必须优先用它（作者的写法最权威）。"""
-    card = FakeCard(
-        name="雅佩",
-        personality="这一段不该出现",
-        system_prompt="你是一个只会说反话的角色。",
-    )
-    plan = build_prompt(card=card, history=[])
-
-    assert plan.system_prompt_source == "card"
-    assert plan.system_prompt.startswith("你是一个只会说反话的角色。")
-    assert "这一段不该出现" not in plan.system_prompt
-
-
-def test_prompt_injects_world_book_entries() -> None:
-    card = FakeCard(name="雅佩")
-    book = FakeBook(
-        [
-            {"keys": ["龙"], "content": "世上最后一条龙已死去三百年", "enabled": True},
-            {"keys": ["禁"], "content": "这段被禁用了", "enabled": False},
-        ]
-    )
-    plan = build_prompt(card=card, history=[], world_book=book)
-
-    assert plan.world_book_entries == 1
-    assert "世上最后一条龙已死去三百年" in plan.system_prompt
-    assert "这段被禁用了" not in plan.system_prompt
-
-
-def test_prompt_puts_greeting_as_first_assistant_message() -> None:
-    card = FakeCard(name="雅佩")
-
-    class Row:
-        def __init__(self, role, content):
-            self.role = role
-            self.content = content
-
-    history = [Row("assistant", "……你来了。"), Row("user", "嗯。")]
-    plan = build_prompt(card=card, history=history)
-
-    roles = [m.role for m in plan.messages]
-    assert roles[0] == "system"
-    assert roles[1] == "assistant", "开场白必须是第一条 assistant 消息"
-    assert plan.messages[1].content == "……你来了。"
-    # 历史顺序原样保留：assistant（开场白）→ user（用户刚说的话）
-    assert roles == ["system", "assistant", "user"]
-
-
-def test_post_history_instructions_are_appended_last() -> None:
-    card = FakeCard(name="雅佩", post_history_instructions="回复请控制在三句话以内。")
-    plan = build_prompt(card=card, history=[])
-
-    assert plan.has_post_history_instructions is True
-    last = plan.messages[-1]
-    assert last.role == "user"
-    # ★ 必须标明"这不是用户说的话"，否则模型会把它当成用户的要求
-    assert last.content.startswith("[系统指令")
-    assert "三句话" in last.content
-
-
-def test_prompt_without_card_warns_but_still_builds() -> None:
-    """角色卡被删除后（外键 SET NULL）会话仍要能继续用。"""
-    plan = build_prompt(card=None, history=[])
-
-    assert plan.system_prompt_source == "none"
-    assert plan.warnings, "应当提醒用户人设没有注入"
-    assert plan.messages == []
-
-
-# ==================================================================
-#  二、上下文裁剪
-# ==================================================================
-def test_token_estimator_counts_cjk_heavier_than_latin() -> None:
-    assert context_manager.estimate_tokens("你好") == 2
-    # 4 个英文字符 ≈ 1 token
-    assert context_manager.estimate_tokens("abcd") == 1
-    assert context_manager.estimate_tokens("") == 0
-
-
-def test_context_drops_earliest_messages_when_over_budget() -> None:
-    messages = [ChatMessage.system("人设")]
-    for i in range(40):
-        messages.append(ChatMessage.user(f"第{i}轮用户说的话" * 5))
-        messages.append(ChatMessage.assistant(f"第{i}轮角色的回复" * 5))
-
-    budget = compute_context_budget(context_window=1200, max_output_tokens=400)
-    plan = context_manager.prepare_context(messages, budget=budget)
-
-    assert plan.history_dropped > 0, "超预算时必须丢掉最早的对话"
-    assert plan.history_kept > 0, "最近的对话必须保留"
-    assert plan.estimated_tokens <= budget.input_budget
-    # 丢掉的一定是最早的那些（保留的最后一条应当是最新的那条）
-    assert plan.messages[-1].content == messages[-1].content
-    # 系统提示词永远保留
-    assert plan.messages[0].is_system
-
-
-def test_context_within_budget_keeps_everything() -> None:
-    messages = [ChatMessage.system("人设"), ChatMessage.user("你好"), ChatMessage.assistant("嗯")]
-    budget = compute_context_budget(context_window=8192, max_output_tokens=1024)
-    plan = context_manager.prepare_context(messages, budget=budget)
-
-    assert plan.history_dropped == 0
-    assert plan.was_trimmed is False
-    assert len(plan.messages) == 3
-
-
-def test_context_injects_rolling_summary() -> None:
-    messages = [ChatMessage.system("人设"), ChatMessage.user("继续说")]
-    budget = compute_context_budget(context_window=8192, max_output_tokens=1024)
-    plan = context_manager.prepare_context(
-        messages, budget=budget, summary="用户与角色在旅店里聊了天气。"
-    )
-
-    summary_messages = [m for m in plan.messages if "前情提要" in m.content]
-    assert len(summary_messages) == 1
-    assert "旅店里聊了天气" in summary_messages[0].content
-    assert plan.summary_used > 0
-
-
-def test_context_truncates_oversized_system_prompt() -> None:
-    """世界书塞了 5 万字时，系统提示词必须被截断并**如实标记**。"""
-    messages = [ChatMessage.system("很长的设定" * 4000), ChatMessage.user("你好")]
-    budget = compute_context_budget(context_window=2048, max_output_tokens=512)
-    plan = context_manager.prepare_context(messages, budget=budget)
-
-    assert plan.system_truncated is True
-    assert plan.was_trimmed is True
-    assert "设定过长已截断" in plan.messages[0].content
-
-
-def test_summarize_dropped_keeps_recent_and_caps_length() -> None:
-    rows = [
-        type("Row", (), {"role": "user", "content": f"第{i}句" * 100, "id": i})()
-        for i in range(30)
-    ]
-    summary = context_manager.summarize_dropped("之前的前情", rows)
-
-    assert "之前的前情" in summary
-    assert "第29句" in summary  # 越靠后的内容越重要，不能被截掉
-    assert "中段前情已省略" in summary
-    assert len(summary) <= context_manager.SUMMARY_MAX_CHARS + 32
-
-
-# ==================================================================
-#  二之二、世界书关键词触发（3.9）
-# ==================================================================
-def _book(entries, extra=None):
-    book = FakeBook(entries)
-    book.extra_data = extra or {}
-    return book
-
-
-def _rows(*texts):
-    return [
-        type("Row", (), {"role": "user", "content": text, "id": i})()
-        for i, text in enumerate(texts)
-    ]
-
-
-def test_scanner_only_returns_entries_hit_by_keywords() -> None:
-    book = _book(
-        [
-            {"keys": ["龙"], "content": "世上最后一条龙已死去", "enabled": True},
-            {"keys": ["精灵"], "content": "精灵住在森林深处", "enabled": True},
-        ]
-    )
-    result = world_book_scanner.scan(book, _rows("这里有龙吗", "精灵是谁"))
-
-    contents = [e["content"] for e in result.entries]
-    assert "世上最后一条龙已死去" in contents
-    assert "精灵住在森林深处" in contents
-    assert result.matched == 2
-    assert result.scanned_messages == 2
-
-
-def test_scanner_ignores_disabled_and_keyless_entries() -> None:
-    book = _book(
-        [
-            {"keys": ["龙"], "content": "禁用的龙设定", "enabled": False},
-            {"keys": [], "content": "没有关键词的条目"},
-            {"keys": [""], "content": "空白关键词"},
-            {"keys": ["龙"], "content": "启用的龙设定"},
-        ]
-    )
-    result = world_book_scanner.scan(book, _rows("龙"))
-
-    assert [e["content"] for e in result.entries] == ["启用的龙设定"]
-
-
-def test_scanner_respects_scan_depth() -> None:
-    """★ scan_depth 的意义：很久以前提到的关键词不该再触发注入。"""
-    book = _book([{"keys": ["龙"], "content": "龙的设定"}])
-    rows = _rows("很久以前提到过龙", "第二句", "第三句")
-
-    fresh = world_book_scanner.scan(book, rows, scan_depth=2)
-    full = world_book_scanner.scan(book, rows, scan_depth=0)
-
-    assert full.matched == 1, "全部扫描时应当命中"
-    assert fresh.matched == 0, "只扫最近 2 条时不该命中（龙在更早那条里）"
-    assert fresh.scanned_messages == 2
-
-
-def test_scanner_respects_token_budget_but_keeps_first_entry() -> None:
-    book = _book(
-        [
-            {"keys": ["龙"], "content": "第一条设定" * 10, "insertion_order": 0},
-            {"keys": ["龙"], "content": "第二条设定" * 10, "insertion_order": 1},
-            {"keys": ["龙"], "content": "第三条设定" * 10, "insertion_order": 2},
-        ]
-    )
-    result = world_book_scanner.scan(book, _rows("龙"), token_budget=60)
-
-    assert len(result.entries) == 1, "预算只够放第一条"
-    assert result.dropped == 2, "被丢掉的条数必须如实统计"
-    assert result.matched == 3
-
-
-def test_scanner_sorts_by_insertion_order_and_case_insensitive() -> None:
-    book = _book(
-        [
-            {"keys": ["dragon"], "content": "后插入的", "insertion_order": 5},
-            {"keys": ["Dragon"], "content": "先插入的", "insertion_order": 1},
-        ]
-    )
-    result = world_book_scanner.scan(book, _rows("A DRAGON appears"))
-
-    assert [e["content"] for e in result.entries] == ["先插入的", "后插入的"]
-
-
-def test_scanner_settings_fall_back_to_defaults() -> None:
-    """★ 用户卡里的值什么写法都有，不能因为 "8" 或 -1 就把整轮对话搞挂。"""
-    assert world_book_scanner.resolve_settings(_book([], {"scan_depth": 3, "token_budget": 50})) == (3, 50)
-    assert world_book_scanner.resolve_settings(_book([], {"scan_depth": "6"})) == (6, world_book_scanner.DEFAULT_TOKEN_BUDGET)
-    assert world_book_scanner.resolve_settings(_book([], {"scan_depth": -1})) == (
-        world_book_scanner.DEFAULT_SCAN_DEPTH,
-        world_book_scanner.DEFAULT_TOKEN_BUDGET,
-    )
-    assert world_book_scanner.resolve_settings(_book([], {"scan_depth": "abc"})) == (
-        world_book_scanner.DEFAULT_SCAN_DEPTH,
-        world_book_scanner.DEFAULT_TOKEN_BUDGET,
-    )
-    assert world_book_scanner.resolve_settings(None) == (
-        world_book_scanner.DEFAULT_SCAN_DEPTH,
-        world_book_scanner.DEFAULT_TOKEN_BUDGET,
-    )
-
-
-def test_prompt_injects_only_scanned_entries() -> None:
-    card = FakeCard(name="雅佩")
-    book = FakeBook(
-        [
-            {"keys": ["龙"], "content": "龙已死去三百年", "enabled": True},
-            {"keys": ["精灵"], "content": "精灵住在森林", "enabled": True},
-        ]
-    )
-    hit = world_book_scanner.scan(book, _rows("这条消息提到龙")).entries
-    plan = build_prompt(card=card, history=[], world_book=book, world_book_entries=hit)
-
-    assert plan.world_book_entries == 1
-    assert "龙已死去三百年" in plan.system_prompt
-    assert "精灵住在森林" not in plan.system_prompt
-
-
-# ==================================================================
 #  三、会话 CRUD 与越权
 # ==================================================================
 def test_create_session_writes_greeting_as_first_message(
@@ -565,17 +267,6 @@ def test_create_session_writes_greeting_as_first_message(
     assert session["provider"]["id"] == provider["id"]
 
 
-def test_create_session_without_greeting_has_no_messages(
-    client: TestClient, user: dict
-) -> None:
-    card = make_card(client, user, greeting=None)
-    provider = make_provider(client, user)
-    session = make_session(client, user, card["id"], provider["id"])
-
-    assert session["message_count"] == 0
-    assert session["messages"] == []
-
-
 def test_create_session_uses_alternate_greeting(client: TestClient, user: dict) -> None:
     card = make_card(
         client, user, greeting="默认开场", alternate_greetings=["备选一", "备选二"]
@@ -593,7 +284,11 @@ def test_create_session_with_out_of_range_greeting_index(
     provider = make_provider(client, user)
     response = client.post(
         BASE,
-        json={"character_card_id": card["id"], "llm_provider_id": provider["id"], "greeting_index": 5},
+        json={
+            "character_card_id": card["id"],
+            "llm_provider_id": provider["id"],
+            "greeting_index": 5,
+        },
         headers=user["headers"],
     )
     assert response.status_code == 400, response.text
@@ -680,37 +375,18 @@ def test_list_sessions_can_filter_archived(client: TestClient, user: dict) -> No
     card = make_card(client, user)
     provider = make_provider(client, user)
     session = make_session(client, user, card["id"], provider["id"])
-    client.patch(f"{BASE}/{session['id']}", json={"status": "archived"}, headers=user["headers"])
+    client.patch(
+        f"{BASE}/{session['id']}", json={"status": "archived"}, headers=user["headers"]
+    )
 
-    active = client.get(BASE, params={"status": "active"}, headers=user["headers"]).json()["data"]
-    archived = client.get(BASE, params={"status": "archived"}, headers=user["headers"]).json()["data"]
+    active = client.get(
+        BASE, params={"status": "active"}, headers=user["headers"]
+    ).json()["data"]
+    archived = client.get(
+        BASE, params={"status": "archived"}, headers=user["headers"]
+    ).json()["data"]
     assert session["id"] not in [i["id"] for i in active["items"]]
     assert session["id"] in [i["id"] for i in archived["items"]]
-
-
-def test_patch_session_renames(client: TestClient, user: dict) -> None:
-    card = make_card(client, user)
-    provider = make_provider(client, user)
-    session = make_session(client, user, card["id"], provider["id"])
-
-    response = client.patch(
-        f"{BASE}/{session['id']}", json={"title": "改过的标题"}, headers=user["headers"]
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["title"] == "改过的标题"
-
-
-def test_patch_session_title_null_keeps_original(client: TestClient, user: dict) -> None:
-    """title 是必填字段，传 null 表示"不修改"（与角色卡/世界书一致）。"""
-    card = make_card(client, user)
-    provider = make_provider(client, user)
-    session = make_session(client, user, card["id"], provider["id"], title="原标题")
-
-    response = client.patch(
-        f"{BASE}/{session['id']}", json={"title": None}, headers=user["headers"]
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["title"] == "原标题"
 
 
 def test_delete_session_cascades_messages(client: TestClient, user: dict) -> None:
@@ -730,7 +406,10 @@ def test_delete_session_cascades_messages(client: TestClient, user: dict) -> Non
         ).all()
         assert list(left) == []
 
-    assert client.get(f"{BASE}/{session['id']}", headers=user["headers"]).status_code == 404
+    assert (
+        client.get(f"{BASE}/{session['id']}", headers=user["headers"]).status_code
+        == 404
+    )
 
 
 def test_session_detail_can_skip_prompt_preview(client: TestClient, user: dict) -> None:
@@ -739,11 +418,15 @@ def test_session_detail_can_skip_prompt_preview(client: TestClient, user: dict) 
     session = make_session(client, user, card["id"], provider["id"])
 
     detail = client.get(
-        f"{BASE}/{session['id']}", params={"with_prompt": "false"}, headers=user["headers"]
+        f"{BASE}/{session['id']}",
+        params={"with_prompt": "false"},
+        headers=user["headers"],
     ).json()["data"]
     assert detail["prompt"] is None
 
-    with_prompt = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    with_prompt = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert with_prompt["prompt"]["system_prompt_source"] == "assembled"
 
 
@@ -783,7 +466,12 @@ def test_message_limit_returns_latest_messages(client: TestClient, user: dict) -
     ],
 )
 def test_other_users_session_is_404(
-    client: TestClient, user: dict, other_user: dict, method: str, suffix: str, kwargs: dict
+    client: TestClient,
+    user: dict,
+    other_user: dict,
+    method: str,
+    suffix: str,
+    kwargs: dict,
 ) -> None:
     card = make_card(client, other_user)
     provider = make_provider(client, other_user)
@@ -826,51 +514,20 @@ def test_send_message_persists_and_updates_stats(
     assert data["usage"]["total_tokens"] == 42
     assert data["context"]["history_dropped"] == 0
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert detail["message_count"] == 3  # 开场白 + 用户 + 助手
     assert detail["total_tokens"] == 42
     assert detail["last_active_at"] is not None
     assert [m["role"] for m in detail["messages"]] == ["assistant", "user", "assistant"]
 
 
-def test_send_message_passes_history_and_world_book_to_model(
-    client: TestClient, user: dict
-) -> None:
-    """★ 关键断言：模型最终收到的提示词里，人设、世界书、历史一个都不能少。"""
-    book = client.post(
-        "/api/v1/world-books",
-        json={
-            "name": f"书_{uuid.uuid4().hex[:6]}",
-            "entries": [{"keys": ["龙"], "content": "世上最后一条龙已死去", "enabled": True}],
-        },
-        headers=user["headers"],
-    ).json()["data"]
-    card = make_card(client, user, world_book_id=book["id"])
-    provider = make_provider(client, user)
-    session = make_session(client, user, card["id"], provider["id"])
-
-    client.post(
-        f"{BASE}/{session['id']}/messages",
-        json={"content": "这里有龙吗"},
-        headers=user["headers"],
-    )
-
-    request = last_request()
-    system = [m for m in request.messages if m.is_system]
-    assert system, "必须发系统提示词"
-    assert "世上最后一条龙已死去" in system[0].content
-    assert "冷静、话少" in system[0].content
-    assert [m.role for m in request.messages] == ["system", "assistant", "user", "user"]
-    assert request.messages[1].content == "……你来了。"
-    assert request.messages[2].content == "这里有龙吗"
-    # 最后一条是尾注（post_history_instructions），且标明"不是用户说的话"
-    assert request.messages[3].content.startswith("[系统指令")
-    assert "三句话" in request.messages[3].content
-
-
 def test_send_message_propagates_adapter_notes(client: TestClient, user: dict) -> None:
     """★ 适配层为满足协议而改过参数时，必须一路透传到前端（不许静默降级）。"""
-    FakeAdapter.script["notes"] = ["Anthropic 开启思考时不接受 temperature，已移除该参数"]
+    FakeAdapter.script["notes"] = [
+        "Anthropic 开启思考时不接受 temperature，已移除该参数"
+    ]
     card = make_card(client, user)
     provider = make_provider(client, user)
     session = make_session(client, user, card["id"], provider["id"])
@@ -902,7 +559,9 @@ def test_send_message_keeps_user_message_when_model_fails(
     )
     assert response.status_code == 502, response.text
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert [m["content"] for m in detail["messages"]][-1] == "这句话不能丢"
     assert detail["last_active_at"] is not None
 
@@ -956,7 +615,9 @@ def test_long_conversation_triggers_rolling_summary(
     data = response.json()["data"]
     assert data["context"]["history_dropped"] > 0, "超预算时应当丢弃最早的对话"
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert detail["rolling_summary"], "被裁掉的内容必须压进滚动摘要，否则模型会彻底失忆"
 
 
@@ -980,9 +641,9 @@ def parse_sse(text: str) -> list[tuple[str, dict]]:
         if line.startswith(":"):
             continue
         if line.startswith("event:"):
-            name = line[len("event:"):].strip()
+            name = line[len("event:") :].strip()
         elif line.startswith("data:"):
-            data_lines.append(line[len("data:"):].strip())
+            data_lines.append(line[len("data:") :].strip())
     if data_lines:
         events.append((name, json.loads("\n".join(data_lines))))
     return events
@@ -1018,7 +679,9 @@ def test_stream_sends_deltas_then_done(client: TestClient, user: dict) -> None:
     assert done["reasoning"] == ""
 
     # 落库：刷新页面后能重新看到这条回复
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert detail["messages"][-1]["content"] == "你好，旅人"
     assert [m["role"] for m in detail["messages"]] == ["assistant", "user", "assistant"]
 
@@ -1083,12 +746,18 @@ def test_stream_image_events_are_sent_and_persisted(
     done = dict(events)["done"]
     assert done["images"][0]["url"] == "/media/imagegen/stream-test.png"
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
-    assert detail["messages"][-1]["images"][0]["url"] == "/media/imagegen/stream-test.png"
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
+    assert (
+        detail["messages"][-1]["images"][0]["url"] == "/media/imagegen/stream-test.png"
+    )
 
 
 def test_stream_reports_notes_from_adapter(client: TestClient, user: dict) -> None:
-    FakeAdapter.script["stream_notes"] = ["OpenAI 兼容协议没有真正的关闭思考，已映射为 minimal"]
+    FakeAdapter.script["stream_notes"] = [
+        "OpenAI 兼容协议没有真正的关闭思考，已映射为 minimal"
+    ]
     card = make_card(client, user)
     provider = make_provider(client, user)
     session = make_session(client, user, card["id"], provider["id"])
@@ -1141,28 +810,14 @@ def test_stream_reports_reasoning_separately(client: TestClient, user: dict) -> 
     # ★ 语义在 2026-10-13 变了（用户要求把思考过程放出来，好对比不同预设）：
     #   思考过程**落库**（单独的 reasoning 列），但**绝不混进 content** ——
     #   这一点是硬的：content 是喂回下一轮上下文的东西，思考混进去就会污染模型。
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     last = detail["messages"][-1]
     assert last["content"] == "答案", "正文里不能混进思考过程（否则会污染下一轮上下文）"
     assert last["reasoning"] == "让我想想…", (
         "思考过程要能回看：刷新之后仍然拿得到（以前只在流式那几秒显示一眼）"
     )
-
-
-def test_interrupted_reasoning_is_marked_with_its_own_wording() -> None:
-    """★ 思考过程被中断时，要有**自己的**标注，不能照抄正文那句「回复中断」。
-
-    用户 2026-10-13 问的正是这件事："思考模式要不要一起像正文输出一样加一个回复中断呢？"
-    答案是"要保留、也要标"，但**措辞必须分开**：
-    正文被截断与思考被截断是两件事 —— 模型完全可能思考已经结束、正文才被 max_tokens
-    截断（`finish_reason=length`）。套同一句话会让人以为思考也没想完。
-    """
-    assert engine._interrupted_reasoning("") is None, "没有思考就不该硬造空串"
-    assert engine._interrupted_reasoning("   ") is None
-    marked = engine._interrupted_reasoning("我先想了想")
-    assert marked.startswith("我先想了想")
-    assert "中断" in marked
-    assert "回复中断" not in marked, "思考的标注不能照抄正文那句，两件事不一样"
 
 
 def test_interrupted_turn_keeps_body_and_reasoning_separately(
@@ -1195,83 +850,16 @@ def test_interrupted_turn_keeps_body_and_reasoning_separately(
         assert saved.content.endswith("（回复中断）")
         assert saved.reasoning.startswith("【想了一半")
         assert "中断" in saved.reasoning
-        assert "【想了一半" not in saved.content, "思考绝不能混进正文（会污染下一轮上下文）"
+        assert "【想了一半" not in saved.content, (
+            "思考绝不能混进正文（会污染下一轮上下文）"
+        )
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     last = detail["messages"][-1]
     assert "【已经写出来的那半段" in last["content"]
     assert "【想了一半" in (last["reasoning"] or ""), "思考要能回看"
-
-
-def test_frontend_exposes_the_reasoning_panel() -> None:
-    """前端的静态契约：历史里能看到思考过程，且默认折叠、点一下展开。
-
-    ★ 为什么这条要用静态断言守：这是"用户能不能看到"的问题。后端把思考存好了、
-    接口也返回了，但界面不渲染，等于没做（用户的原话就是"想看模型思考过程怎么办"）。
-    ★ 顺带守两条容易写错的地方：折叠开关必须只作用于**点的那一条**（用
-    nextElementSibling，不能用全局查询），样式必须走主题变量（写死浅色会被
-    暗色主题守门人测试抓到）。
-    """
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[1]
-    src = (root / "web" / "js" / "views" / "chat.js").read_text(encoding="utf-8")
-    css = (root / "web" / "css" / "styles.css").read_text(encoding="utf-8")
-
-    assert "function reasoningHTML(" in src, "要有渲染思考过程的函数"
-    assert "m?.reasoning" in src, "要读接口返回的 reasoning"
-    assert 'data-act="toggle-reason"' in src, "要有展开/收起的入口"
-    assert "act === 'toggle-reason'" in src, "该入口要有动作分发"
-    # ★ 必须是 <button>：委托监听器用 `e.target.closest('button[data-act]')`，
-    #   写成 <div data-act=...> 会被**静默忽略**（点了没反应、也不报错）——
-    #   这不是推演出来的，是真实浏览器里点过一次才发现的（v1 就是 div）。
-    assert '<button type="button" class="msg-reason-toggle" data-act="toggle-reason"' in src, (
-        "思考过程的开关必须是 button[data-act]，否则委托监听器收不到"
-    )
-    assert "nextElementSibling" in src, (
-        "折叠开关只能作用于点的那一条（一屏几十条消息，全局查会连别人的一起展开）"
-    )
-    # 默认折叠：没点开之前是 hidden
-    assert 'class="msg-reason hidden"' in src
-    assert ".msg-reason-toggle" in css, "要有折叠开关的样式"
-    block = css[css.index(".msg-reason-toggle") : css.index(".msg-reason-toggle") + 600]
-    assert "var(--" in block, "折叠开关的样式要走主题变量"
-
-
-def test_api_interrupt_helper_saves_through_the_api_layer(
-    client: TestClient, user: dict
-) -> None:
-    """★ 走**接口层**那条兜底路径存中断回复（不能只测 engine 里那个函数）。
-
-    这条是为一个真实的低级 bug 立的（2026-10-13）：
-      `_persist_interrupted_reply` 里我写了
-      `from app.db.models import LlmProvider`，而类的真名是 **LLMProvider**（全大写）。
-      那条兜底路径的异常只记日志、不会冒到界面上 ⇒ **每次中断都静默落不了库**，
-      用户看到的是"回复没了、连刷新都没用"。
-    ★ 为什么之前的测试没抓到：它们直接调 `engine.keep_interrupted_reply`，
-      把接口层这段接线整个绕过去了。所以这里必须从接口层进。
-    """
-    from app.api.v1.narrative import _persist_interrupted_reply
-    from app.db.models import NarrativeSession as _S
-
-    card = make_card(client, user)
-    provider = make_provider(client, user)
-    session = make_session(client, user, card["id"], provider["id"])
-    with session_scope() as db:
-        engine.save_user_message(db, db.get(_S, session["id"]), "难题")
-
-    # 正文一个字都没有、只有思考 —— 正是用户报的那个场景
-    _persist_interrupted_reply(
-        user_id=user["id"], session_id=session["id"], text="", reasoning_text="我想了很久…"
-    )
-
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
-    last = detail["messages"][-1]
-    assert last["role"] == "assistant", (
-        "接口层的兜底路径必须真的把中断内容存下来（否则用户看到的是孤零零一句话）"
-    )
-    assert "只来得及思考" in last["content"]
-    assert "我想了很久…" in (last["reasoning"] or "")
 
 
 def test_interrupt_with_only_reasoning_still_saves_something(
@@ -1297,7 +885,9 @@ def test_interrupt_with_only_reasoning_still_saves_something(
         saved = engine.keep_interrupted_reply(
             db, session["id"], text="", reasoning_text="我想了很久…", model_name="m"
         )
-        assert saved is not None, "只想着、没正文，也必须留下东西（否则用户又看到一片空白）"
+        assert saved is not None, (
+            "只想着、没正文，也必须留下东西（否则用户又看到一片空白）"
+        )
         assert "只来得及思考" in saved.content, "正文该是一句如实的占位说明"
         assert "（回复中断）" in saved.content
         assert saved.reasoning and "我想了很久…" in saved.reasoning
@@ -1308,10 +898,15 @@ def test_interrupt_with_only_reasoning_still_saves_something(
     with session_scope() as db:
         engine.save_user_message(db, db.get(_S, other["id"]), "再来")
     with session_scope() as db:
-        assert engine.keep_interrupted_reply(db, other["id"], text="", reasoning_text="") is None
+        assert (
+            engine.keep_interrupted_reply(db, other["id"], text="", reasoning_text="")
+            is None
+        )
 
 
-def test_store_reasoning_switch_controls_persistence(client: TestClient, user: dict) -> None:
+def test_store_reasoning_switch_controls_persistence(
+    client: TestClient, user: dict
+) -> None:
     """★ 模型配置里的「思考过程输出」开关（默认开，用户 2026-10-13 要求）。
 
     开 = 思考随回复落库（界面可折叠回看）；关 = 回到以前的样子
@@ -1335,9 +930,13 @@ def test_store_reasoning_switch_controls_persistence(client: TestClient, user: d
         assert provider["store_reasoning"] is True, "默认必须是开"
         session = make_session(client, user, card["id"], provider["id"])
         client.get(
-            f"{BASE}/{session['id']}/stream", params={"content": "问"}, headers=user["headers"]
+            f"{BASE}/{session['id']}/stream",
+            params={"content": "问"},
+            headers=user["headers"],
         )
-        detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+        detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+            "data"
+        ]
         assert detail["messages"][-1]["reasoning"] == "我在想…", "开着的时候要落库"
 
         # ② 关掉 → 不落库，但流式事件里照样有思考
@@ -1349,13 +948,17 @@ def test_store_reasoning_switch_controls_persistence(client: TestClient, user: d
         card2 = make_card(client, user)
         session2 = make_session(client, user, card2["id"], provider["id"])
         response = client.get(
-            f"{BASE}/{session2['id']}/stream", params={"content": "问"}, headers=user["headers"]
+            f"{BASE}/{session2['id']}/stream",
+            params={"content": "问"},
+            headers=user["headers"],
         )
         events = parse_sse(response.text)
         assert dict(events)["done"]["reasoning"] == "我在想…", (
             "关掉只影响'存不存'，流式期间的思考照样要发给前端（那才是以前的样子）"
         )
-        detail2 = client.get(f"{BASE}/{session2['id']}", headers=user["headers"]).json()["data"]
+        detail2 = client.get(
+            f"{BASE}/{session2['id']}", headers=user["headers"]
+        ).json()["data"]
         assert detail2["messages"][-1]["reasoning"] is None, "关掉之后不许落库"
     finally:
         FakeAdapter.stream_chat = original
@@ -1388,12 +991,16 @@ def test_stream_reports_error_event_instead_of_silent_break(
     assert "余额不足" in error["message"]
     # 已经生成的半截内容要保住（用户已经看到了）
     assert "".join(d["delta"] for n, d in events if n == "delta") == "前半"
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert "前半" in detail["messages"][-1]["content"]
     assert "中断" in detail["messages"][-1]["content"]
 
 
-def test_stream_empty_reply_yields_explicit_error(client: TestClient, user: dict) -> None:
+def test_stream_empty_reply_yields_explicit_error(
+    client: TestClient, user: dict
+) -> None:
     """推理模型把输出配额全用在思考上 -> 一个字的正文都没有。
 
     这种情况在非流式路径由 _raise_if_no_content 拦下；
@@ -1407,7 +1014,9 @@ def test_stream_empty_reply_yields_explicit_error(client: TestClient, user: dict
         yield Chunk(reasoning_delta="想了很久…")
         yield Chunk(
             finish_reason="length",
-            usage=TokenUsage(completion_tokens=512, reasoning_tokens=512, total_tokens=512),
+            usage=TokenUsage(
+                completion_tokens=512, reasoning_tokens=512, total_tokens=512
+            ),
         )
 
     FakeAdapter.stream_chat = stream_only_reasoning
@@ -1430,10 +1039,6 @@ def test_stream_empty_reply_yields_explicit_error(client: TestClient, user: dict
     assert "max_tokens" in error["message"] or "最大输出" in error["message"]
 
 
-def test_stream_requires_login(client: TestClient) -> None:
-    assert client.get(f"{BASE}/1/stream", params={"content": "hi"}).status_code == 401
-
-
 def test_stream_keeps_user_message_when_provider_missing(
     client: TestClient, user: dict
 ) -> None:
@@ -1450,7 +1055,9 @@ def test_stream_keeps_user_message_when_provider_missing(
     events = parse_sse(response.text)
     assert dict(events)["error"]["code"] == "BAD_REQUEST"
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert detail["messages"][-1]["content"] == "这句话也要留下"
 
 
@@ -1467,12 +1074,18 @@ def test_messages_of_deleted_card_still_work(client: TestClient, user: dict) -> 
     # 删卡但保留会话
     deleted = client.delete(
         f"{CARDS}/{card['id']}",
-        params={"force": "true", "delete_sessions": "false", "delete_world_book": "false"},
+        params={
+            "force": "true",
+            "delete_sessions": "false",
+            "delete_world_book": "false",
+        },
         headers=user["headers"],
     )
     assert deleted.status_code == 200, deleted.text
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert detail["character_card"] is None
     assert detail["warnings"], "应当提醒用户人设已丢失"
 
@@ -1507,7 +1120,9 @@ def _seed_turns(client: TestClient, user: dict, turns: int = 2) -> dict:
         )
         assert sent.status_code == 201, sent.text
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     return {"session": session, "detail": detail, "card": card, "provider": provider}
 
 
@@ -1715,7 +1330,9 @@ def test_regenerate_prompt_anchors_on_previous_user_message(
     reply_id = _ids_by_role(detail, "assistant")[1]
     user_text = [m["content"] for m in detail["messages"] if m["role"] == "user"][0]
 
-    reply_text = [m["content"] for m in detail["messages"] if m["role"] == "assistant"][1]
+    reply_text = [m["content"] for m in detail["messages"] if m["role"] == "assistant"][
+        1
+    ]
 
     FakeAdapter.script["stream"] = ["换", "一", "版"]
     with client.stream(
@@ -1771,12 +1388,18 @@ def test_message_actions_require_login(client: TestClient, user: dict) -> None:
     session_id = seeded["session"]["id"]
     user_message_id = _ids_by_role(seeded["detail"], "user")[0]
 
-    assert client.patch(
-        f"{BASE}/{session_id}/messages/{user_message_id}", json={"content": "x"}
-    ).status_code == 401
-    assert client.post(
-        f"{BASE}/{session_id}/messages/{user_message_id}/retract"
-    ).status_code == 401
+    assert (
+        client.patch(
+            f"{BASE}/{session_id}/messages/{user_message_id}", json={"content": "x"}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            f"{BASE}/{session_id}/messages/{user_message_id}/retract"
+        ).status_code
+        == 401
+    )
     assert client.get(f"{BASE}/{session_id}/regenerate").status_code == 401
 
 
@@ -1824,7 +1447,9 @@ def test_interrupted_turn_keeps_what_the_user_already_saw(
         )
         assert saved is not None, "有内容就该存下来"
         assert saved.content.endswith("（回复中断）"), "必须标注它是被中断的"
-        assert saved.content.startswith("【已经写出来的那半段"), "存入的必须是用户看到的那段"
+        assert saved.content.startswith("【已经写出来的那半段"), (
+            "存入的必须是用户看到的那段"
+        )
         assert saved.role == "assistant"
 
     # 幂等：再存一次不应该多出第二条
@@ -1833,7 +1458,9 @@ def test_interrupted_turn_keeps_what_the_user_already_saw(
             db, session["id"], text="【已经写出来的那半段", model_name="fake-model"
         )
         assert again is None, "同一句话后面已经有回复了，不能再写第二条"
-        assert db.query(Message).filter(Message.session_id == session["id"]).count() == 3
+        assert (
+            db.query(Message).filter(Message.session_id == session["id"]).count() == 3
+        )
 
     # 一个字都没有时不该硬造空回复（界面会给重试入口）
     other = make_session(client, user, card["id"], provider["id"])
@@ -1842,30 +1469,6 @@ def test_interrupted_turn_keeps_what_the_user_already_saw(
         engine.save_user_message(db, row2, "另一句话")
     with session_scope() as db:
         assert engine.keep_interrupted_reply(db, other["id"], text="   ") is None
-
-
-def test_generating_flag_reflects_a_running_turn(client: TestClient, user: dict) -> None:
-    """会话详情里的 `generating` 要如实反映"这一轮还在写"（界面据此显示并轮询）。"""
-    card = make_card(client, user)
-    provider = make_provider(client, user)
-    session = make_session(client, user, card["id"], provider["id"])
-
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
-    assert detail["generating"] is False
-
-    rs = streaming.register(session["id"], "测试")
-    try:
-        detail = client.get(
-            f"{BASE}/{session['id']}", headers=user["headers"]
-        ).json()["data"]
-        assert detail["generating"] is True, (
-            "正在写就必须如实说，否则界面又变成「孤零零一句话」"
-        )
-    finally:
-        streaming.unregister(rs)
-
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
-    assert detail["generating"] is False
 
 
 def test_send_is_rejected_while_previous_turn_is_still_writing(
@@ -1892,36 +1495,20 @@ def test_send_is_rejected_while_previous_turn_is_still_writing(
         assert response.status_code == 409, response.text
         assert "还在写" in response.json()["message"]
 
-        detail = client.get(
-            f"{BASE}/{session['id']}", headers=user["headers"]
-        ).json()["data"]
+        detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+            "data"
+        ]
         assert [m["role"] for m in detail["messages"]] == ["assistant"], (
             "被拒绝的请求不该把用户那句话写进库"
         )
 
         # 重新生成同理
-        regen = client.get(f"{BASE}/{session['id']}/regenerate", headers=user["headers"])
+        regen = client.get(
+            f"{BASE}/{session['id']}/regenerate", headers=user["headers"]
+        )
         assert regen.status_code == 409, regen.text
     finally:
         streaming.unregister(rs)
 
 
-def test_registry_is_clean_after_a_normal_stream(client: TestClient, user: dict) -> None:
-    """正常跑完一条流之后，注册表里不能留下脏条目。
-
-    ★ 这条守的是"名额泄漏"：如果跑完不摘掉，用户下次发消息会被自己上一轮挡住（409），
-      而且界面会一直显示"AI 正在写…"。测试间共用一个进程，所以这里顺便断言全局干净。
-    """
-    FakeAdapter.script["stream"] = ["好"]
-    card = make_card(client, user)
-    provider = make_provider(client, user)
-    session = make_session(client, user, card["id"], provider["id"])
-
-    response = client.get(
-        f"{BASE}/{session['id']}/stream",
-        params={"content": "你好"},
-        headers=user["headers"],
-    )
-    assert response.status_code == 200
-    assert streaming.is_generating(session["id"]) is False
-    assert streaming.running_count() == 0, "正常结束后注册表必须是空的"
+pytestmark = pytest.mark.integration

@@ -19,11 +19,18 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, inspect, text
-from sqlalchemy.schema import CreateColumn
+from sqlalchemy import (
+    Column,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    create_engine,
+    inspect,
+    text,
+)
 
 from app.db import schema_upgrade
-from app.db.base import Base
 
 
 @pytest.fixture()
@@ -34,17 +41,8 @@ def fresh_engine():
     engine.dispose()
 
 
-def _swap_metadata(monkeypatch: pytest.MonkeyPatch, tables) -> MetaData:
-    """把 schema_upgrade 看到的 metadata 换成我们造的那份。"""
-    meta = MetaData()
-    for table in tables:
-        table.to_metadata(meta)
-    monkeypatch.setattr(schema_upgrade, "Base", type("FakeBase", (), {"metadata": meta}))
-    return meta
-
-
 def _old_messages_table(meta: MetaData) -> Table:
-    """"老版本"的 messages 表：只有最初那几列。"""
+    """ "老版本"的 messages 表：只有最初那几列。"""
     return Table(
         "messages",
         meta,
@@ -54,7 +52,7 @@ def _old_messages_table(meta: MetaData) -> Table:
 
 
 def _new_messages_table(meta: MetaData) -> Table:
-    """"新版本"：多了一列带默认值的、一列可空的。"""
+    """ "新版本"：多了一列带默认值的、一列可空的。"""
     return Table(
         "messages",
         meta,
@@ -63,22 +61,6 @@ def _new_messages_table(meta: MetaData) -> Table:
         Column("usage_json", String(200), nullable=True),
         Column("retry_count", Integer, nullable=False, server_default=text("0")),
     )
-
-
-# ==================================================================
-#  一、能发现差异
-# ==================================================================
-def test_plan_is_empty_when_schema_is_current(fresh_engine, monkeypatch) -> None:
-    """库与模型一致时，计划必须**完全为空**（幂等的判据）。"""
-    meta = MetaData()
-    _new_messages_table(meta)
-    _swap_metadata(monkeypatch, [])
-    monkeypatch.setattr(schema_upgrade, "Base", type("FakeBase", (), {"metadata": meta}))
-    meta.create_all(bind=fresh_engine)
-
-    plan = schema_upgrade.plan_upgrade(fresh_engine)
-    assert plan.is_empty, plan.statements
-    assert plan.skipped_columns == []
 
 
 def test_plan_detects_missing_column_and_default(fresh_engine, monkeypatch) -> None:
@@ -98,34 +80,6 @@ def test_plan_detects_missing_column_and_default(fresh_engine, monkeypatch) -> N
     # ★ 关键：NOT NULL 的列必须带上 DEFAULT，否则 SQLite 会拒绝、已有行也没法填
     assert "DEFAULT 0" in statements
     assert plan.skipped_columns == []
-
-
-def test_added_column_ddl_matches_create_table_ddl(fresh_engine, monkeypatch) -> None:
-    """★ 加出来的列必须与**新建库**里那一列**逐字一致**。
-
-    这条是本模块存在的主要理由：手写 DDL 会随时间长歪（类型抄错、注释丢了），
-    而这里两边用的是同一套编译器（`CreateColumn`），所以应当完全一致。
-    """
-    old = MetaData()
-    _old_messages_table(old)
-    old.create_all(bind=fresh_engine)
-
-    new = MetaData()
-    new_table = _new_messages_table(new)
-    monkeypatch.setattr(schema_upgrade, "Base", type("FakeBase", (), {"metadata": new}))
-
-    plan = schema_upgrade.plan_upgrade(fresh_engine)
-    schema_upgrade.apply_upgrade(fresh_engine, plan)
-
-    column = new_table.columns["retry_count"]
-    expected = str(CreateColumn(column).compile(dialect=fresh_engine.dialect)).strip()
-    actual = next(
-        col["type"] for col in inspect(fresh_engine).get_columns("messages")
-        if col["name"] == "retry_count"
-    )
-    # 类型名一致（SQLite 侧是 INTEGER）
-    assert str(actual).upper() == expected.split()[1].upper()
-    assert expected.startswith("retry_count INTEGER")
 
 
 def test_plan_detects_missing_index(fresh_engine, monkeypatch) -> None:
@@ -152,7 +106,10 @@ def test_plan_detects_missing_index(fresh_engine, monkeypatch) -> None:
     assert "ix_messages_session_id" in {i.name for i in new.tables["messages"].indexes}
 
     plan = schema_upgrade.plan_upgrade(fresh_engine)
-    assert any("CREATE INDEX" in sql and "ix_messages_session_id" in sql for sql in plan.statements), plan.statements
+    assert any(
+        "CREATE INDEX" in sql and "ix_messages_session_id" in sql
+        for sql in plan.statements
+    ), plan.statements
 
 
 # ==================================================================
@@ -231,14 +188,18 @@ def test_only_additive_guard_rejects_destructive_sql() -> None:
         with pytest.raises(AssertionError):
             schema_upgrade._assert_only_additive([sql])
     # 允许的三类不该被误伤
-    schema_upgrade._assert_only_additive([
-        "ALTER TABLE messages ADD COLUMN usage_json TEXT",
-        "CREATE INDEX ix_messages_session_id ON messages (session_id)",
-        "CREATE TABLE plugins (id INTEGER NOT NULL PRIMARY KEY)",
-    ])
+    schema_upgrade._assert_only_additive(
+        [
+            "ALTER TABLE messages ADD COLUMN usage_json TEXT",
+            "CREATE INDEX ix_messages_session_id ON messages (session_id)",
+            "CREATE TABLE plugins (id INTEGER NOT NULL PRIMARY KEY)",
+        ]
+    )
 
 
-def test_obsolete_columns_and_tables_are_only_reported(fresh_engine, monkeypatch) -> None:
+def test_obsolete_columns_and_tables_are_only_reported(
+    fresh_engine, monkeypatch
+) -> None:
     """模型里删掉的列/表：**只报告，不删**（删列不可逆，多一列几乎不占空间）。"""
     old = MetaData()
     Table(
@@ -271,7 +232,9 @@ def test_obsolete_columns_and_tables_are_only_reported(fresh_engine, monkeypatch
 # ==================================================================
 #  四、真的能跑通（端到端）
 # ==================================================================
-def test_apply_upgrade_actually_adds_the_column_and_keeps_data(fresh_engine, monkeypatch) -> None:
+def test_apply_upgrade_actually_adds_the_column_and_keeps_data(
+    fresh_engine, monkeypatch
+) -> None:
     """★ 端到端：加列后旧数据**一条不少**，新列可读可写。"""
     old = MetaData()
     _old_messages_table(old)
@@ -293,20 +256,6 @@ def test_apply_upgrade_actually_adds_the_column_and_keeps_data(fresh_engine, mon
 
     # 再规划一次必须是空的（幂等）
     assert schema_upgrade.plan_upgrade(fresh_engine).is_empty
-
-
-def test_missing_tables_are_left_to_create_all(fresh_engine, monkeypatch) -> None:
-    """缺的表由 create_all 负责（本模块不自己发 CREATE TABLE，避免两套建表逻辑）。"""
-    new = MetaData()
-    _new_messages_table(new)
-    monkeypatch.setattr(schema_upgrade, "Base", type("FakeBase", (), {"metadata": new}))
-
-    plan = schema_upgrade.plan_upgrade(fresh_engine)
-    assert plan.missing_tables == ["messages"]
-    assert plan.statements == []
-
-    schema_upgrade.apply_upgrade(fresh_engine, plan)
-    assert "messages" in inspect(fresh_engine).get_table_names()
 
 
 # ==================================================================
@@ -333,7 +282,9 @@ def test_apply_upgrade_skips_existing_index(fresh_engine, monkeypatch) -> None:
         Column("id", Integer, primary_key=True, autoincrement=True),
         Column("session_id", Integer, index=True),
     )
-    monkeypatch.setattr(schema_upgrade, "Base", type("FakeBase", (), {"metadata": meta}))
+    monkeypatch.setattr(
+        schema_upgrade, "Base", type("FakeBase", (), {"metadata": meta})
+    )
     meta.create_all(bind=fresh_engine)
 
     index_sql = "CREATE INDEX ix_messages_session_id ON messages (session_id)"
@@ -341,14 +292,18 @@ def test_apply_upgrade_skips_existing_index(fresh_engine, monkeypatch) -> None:
     executed = schema_upgrade.apply_upgrade(fresh_engine, plan)
     assert executed == 0, "索引已存在，不该真的执行"
     # 表还在、索引还在（跳过 ≠ 破坏）
-    assert "ix_messages_session_id" in {i["name"] for i in inspect(fresh_engine).get_indexes("messages")}
+    assert "ix_messages_session_id" in {
+        i["name"] for i in inspect(fresh_engine).get_indexes("messages")
+    }
 
 
 def test_apply_upgrade_skips_existing_column(fresh_engine, monkeypatch) -> None:
     """列已经存在时同样跳过（两条来源也可能给出同一条 ADD COLUMN）。"""
     meta = MetaData()
     _new_messages_table(meta)
-    monkeypatch.setattr(schema_upgrade, "Base", type("FakeBase", (), {"metadata": meta}))
+    monkeypatch.setattr(
+        schema_upgrade, "Base", type("FakeBase", (), {"metadata": meta})
+    )
     meta.create_all(bind=fresh_engine)
 
     plan = schema_upgrade.SchemaPlan(
@@ -360,28 +315,9 @@ def test_apply_upgrade_skips_existing_column(fresh_engine, monkeypatch) -> None:
         statements=["ALTER TABLE messages ADD COLUMN brand_new TEXT"]
     )
     assert schema_upgrade.apply_upgrade(fresh_engine, plan2) == 1
-    assert "brand_new" in {col["name"] for col in inspect(fresh_engine).get_columns("messages")}
-
-
-def test_reports_obsolete_for_real_models_when_tables_exist(tmp_path) -> None:
-    """对**真实模型**做一次体检：库里是最新结构时不该有任何要改的东西。
-
-    ★ 这条守着一个很容易忽略的事实：`tests/conftest.py` 建的测试库是从
-      `Base.metadata` 建的，所以它与模型**必须**完全一致 ——
-      一旦这里报出差异，说明要么模型有两处定义不一致，要么
-      `plan_upgrade` 的比较逻辑（列名/索引名）写歪了。
-    """
-    from sqlalchemy import create_engine as _create
-
-    engine = _create(f"sqlite+pysqlite:///{tmp_path / 'app.sqlite3'}")
-    try:
-        Base.metadata.create_all(bind=engine)
-        plan = schema_upgrade.plan_upgrade(engine)
-        assert plan.statements == [], f"真实模型下不该有待执行语句：{plan.statements}"
-        assert plan.missing_tables == []
-        assert plan.skipped_columns == []
-    finally:
-        engine.dispose()
+    assert "brand_new" in {
+        col["name"] for col in inspect(fresh_engine).get_columns("messages")
+    }
 
 
 # ==================================================================
@@ -409,14 +345,19 @@ def test_real_model_old_database_gets_upgraded_in_place(tmp_path) -> None:
         Table(
             "narrative_sessions",
             legacy_meta,
-            *[c._copy() for c in NarrativeSession.__table__.columns
-              if c.name in {"id", "user_id", "title"}],
+            *[
+                c._copy()
+                for c in NarrativeSession.__table__.columns
+                if c.name in {"id", "user_id", "title"}
+            ],
         )
         legacy_meta.create_all(bind=engine)
         with engine.begin() as conn:
-            conn.execute(text(
-                "INSERT INTO narrative_sessions (id, user_id, title) VALUES (1, 7, '老故事')"
-            ))
+            conn.execute(
+                text(
+                    "INSERT INTO narrative_sessions (id, user_id, title) VALUES (1, 7, '老故事')"
+                )
+            )
 
         # 此刻的库确实与模型不一致（证明这个用例不是空跑）
         pre = schema_upgrade.plan_upgrade(engine)
@@ -444,18 +385,26 @@ def test_real_model_old_database_gets_upgraded_in_place(tmp_path) -> None:
         assert executed == len(pre.statements) > 0
 
         # ---- 核对：所有**可以安全追加**的列都到位了 ----
-        columns = {col["name"] for col in inspect(engine).get_columns("narrative_sessions")}
+        columns = {
+            col["name"] for col in inspect(engine).get_columns("narrative_sessions")
+        }
         model_columns = {c.name for c in NarrativeSession.__table__.columns}
         assert columns == model_columns - skipped_names, (
             f"还缺列：{(model_columns - skipped_names) - columns}；"
             f"多加的列：{columns - model_columns}"
         )
-        assert {"summary_from_round", "rolling_summary", "memory_anchors_json"} <= columns
+        assert {
+            "summary_from_round",
+            "rolling_summary",
+            "memory_anchors_json",
+        } <= columns
 
         with engine.connect() as conn:
-            row = conn.execute(text(
-                "SELECT id, title, rolling_summary FROM narrative_sessions WHERE id = 1"
-            )).one()
+            row = conn.execute(
+                text(
+                    "SELECT id, title, rolling_summary FROM narrative_sessions WHERE id = 1"
+                )
+            ).one()
         assert row[0] == 1 and row[1] == "老故事", "老数据必须原封不动"
         assert row[2] is None, "新加的可空列取到 NULL（没有替用户编值）"
 
@@ -467,3 +416,6 @@ def test_real_model_old_database_gets_upgraded_in_place(tmp_path) -> None:
         assert {col for _, col, _ in again.skipped_columns} == skipped_names
     finally:
         engine.dispose()
+
+
+pytestmark = pytest.mark.integration

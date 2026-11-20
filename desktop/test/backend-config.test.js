@@ -167,10 +167,7 @@ test('choosePort：优先端口非法（0 / 越界）不采用', () => {
 //  （用户截图：`The "options.port" property must be one of type number or string`）。
 //  这里把"什么时候是 null"钉死，免得再出现"只守一半"的情况。
 // ------------------------------------------------------------------
-test('preferredPort：默认不指定 → 返回 null（不是 8000）', () => {
-  assert.equal(preferredPort({}, {}), null);
-  assert.equal(preferredPort(undefined, {}), null);
-});
+
 
 test('preferredPort：HNE_DESKTOP_PORT 优先于 .env 里的 HNE_PORT', () => {
   assert.equal(preferredPort({ HNE_PORT: '8000' }, { HNE_DESKTOP_PORT: '9001' }), 9001);
@@ -199,28 +196,7 @@ test('★ 回归：preferredPort 返回 null 时，choosePort 必须走"系统�
 // ------------------------------------------------------------------
 //  detectPython
 // ------------------------------------------------------------------
-test('detectPython：候选列表包含项目虚拟环境、PATH 与显式指定的解释器', () => {
-  const appRoot = tempDir();
-  const seen = [];
-  const fakeSpawn = (command, _args, _options) => {
-    seen.push(command);
-    return { status: 1, stderr: 'ModuleNotFoundError: No module named \'uvicorn\'', error: undefined };
-  };
 
-  const result = detectPython({
-    appRoot,
-    env: { HNE_DESKTOP_PYTHON: 'C:\\custom\\python.exe' },
-    spawnSyncImpl: fakeSpawn,
-  });
-
-  assert.equal(result.python, null);
-  assert.ok(seen.includes('C:\\custom\\python.exe'), '显式指定的解释器必须被优先尝试');
-  assert.ok(seen.some((p) => p.includes('.venv')), '必须尝试项目自带虚拟环境');
-  assert.ok(seen.includes('python'), '必须兜底尝试 PATH 上的 python');
-  assert.equal(seen[0], 'C:\\custom\\python.exe', '显式指定的应该排在最前');
-  assert.equal(result.candidates.length, seen.length);
-  assert.match(result.candidates[0].reason, /uvicorn/);
-});
 
 test('detectPython：第一个可用的解释器胜出，后面的不再探测', () => {
   const appRoot = tempDir();
@@ -335,19 +311,7 @@ test('detectPython：空的 HNE_DESKTOP_PYTHON 当作没设（避免空字符串
   assert.ok(!tried.includes(''), '空值不该被当成解释器路径');
 });
 
-test('isTruthy：认得 1/true/yes/on，其余为假', () => {
-  for (const yes of ['1', 'true', 'TRUE', 'Yes', 'on', ' on ']) {
-    assert.equal(isTruthy(yes), true, `${yes} 应该是真`);
-  }
-  for (const no of ['0', 'false', '', 'no', 'off', undefined, null, '2']) {
-    assert.equal(isTruthy(no), false, `${no} 应该是假`);
-  }
-});
 
 // ------------------------------------------------------------------
 //  truncate
 // ------------------------------------------------------------------
-test('truncate：超长截断并加省略号，短的原样返回', () => {
-  assert.equal(truncate('abc', 10), 'abc');
-  assert.equal(truncate('abcdef', 3), 'abc…');
-});

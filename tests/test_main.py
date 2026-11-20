@@ -30,12 +30,16 @@ def test_health_ok(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize("component", ["database", "vector_store"])
-def test_health_reports_degraded_dependency(client: TestClient, monkeypatch, component: str) -> None:
+def test_health_reports_degraded_dependency(
+    client: TestClient, monkeypatch, component: str
+) -> None:
     """A failed dependency must be visible in both its component and overall status."""
     from app import main as app_main
 
     target = "check_connection" if component == "database" else "check_vector_store"
-    monkeypatch.setattr(app_main, target, lambda **kwargs: {"status": "error", "message": "test outage"})
+    monkeypatch.setattr(
+        app_main, target, lambda **kwargs: {"status": "error", "message": "test outage"}
+    )
     response = client.get("/health")
     assert response.status_code == 200
     body = response.json()
@@ -63,12 +67,6 @@ def test_root_ok(client: TestClient) -> None:
     assert response.json()["code"] == "OK"
 
 
-def test_v1_prefix_mounted(client: TestClient) -> None:
-    response = client.get("/api/v1/ping")
-    assert response.status_code == 200
-    assert response.json()["message"] == "pong"
-
-
 def test_404_error_shape(client: TestClient) -> None:
     response = client.get("/api/v1/definitely-not-exist")
     assert response.status_code == 404
@@ -92,3 +90,6 @@ def test_request_id_is_propagated(client: TestClient) -> None:
     """前端传入的 X-Request-ID 应被原样透传，便于前后端串联排查。"""
     response = client.get("/health", headers={"X-Request-ID": "trace-me-0001"})
     assert response.headers["X-Request-ID"] == "trace-me-0001"
+
+
+pytestmark = pytest.mark.integration

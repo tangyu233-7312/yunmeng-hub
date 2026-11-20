@@ -54,14 +54,30 @@ def user(client: TestClient) -> dict:
 
 #: 允许出现在响应里的键（白名单 —— 加字段必须同步改这里，逼作者想一次）
 ALLOWED_KEYS = {
-    "app", "version", "env", "backend", "database",
-    "data_dir", "log_dir", "chroma_dir", "python", "platform",
+    "app",
+    "version",
+    "env",
+    "backend",
+    "database",
+    "data_dir",
+    "log_dir",
+    "chroma_dir",
+    "python",
+    "platform",
 }
 
 #: 绝不允许出现的敏感词（键名与值里都不许有）
 FORBIDDEN_SUBSTRINGS = (
-    "password", "secret", "api_key", "apikey", "authorization", "bearer",
-    "jwt", "token", "fernet", "mysql_password",
+    "password",
+    "secret",
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer",
+    "jwt",
+    "token",
+    "fernet",
+    "mysql_password",
 )
 
 
@@ -87,7 +103,9 @@ def test_diagnostics_shape_and_no_secrets(client: TestClient, user: dict) -> Non
 
     blob = json.dumps(data, ensure_ascii=False).lower()
     hits = [w for w in FORBIDDEN_SUBSTRINGS if w in blob]
-    assert not hits, f"响应里出现了敏感词：{hits}\n{json.dumps(data, ensure_ascii=False, indent=2)}"
+    assert not hits, (
+        f"响应里出现了敏感词：{hits}\n{json.dumps(data, ensure_ascii=False, indent=2)}"
+    )
 
 
 def test_diagnostics_reports_actual_backend(client: TestClient, user: dict) -> None:
@@ -97,3 +115,6 @@ def test_diagnostics_reports_actual_backend(client: TestClient, user: dict) -> N
     data = client.get(DIAG, headers=user["headers"]).json()["data"]
     assert data["backend"] == get_settings().DB_BACKEND
     assert data["database"] == get_settings().database_label
+
+
+pytestmark = pytest.mark.integration

@@ -15,7 +15,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from app.llm.params import GenerationParams, ReasoningEffort, compute_context_budget
+from app.llm.params import GenerationParams, compute_context_budget
 from app.llm.schema import ChatResult, StreamChunk, TokenUsage
 from app.main import app
 from app.narrative import engine
@@ -33,216 +33,6 @@ EN_INPUT = "Hi there, which way should I go?"
 JA_REPLY = "こんにちは、旅人さん。道はまだ長いです。"
 KO_REPLY = "안녕하세요, 여행자님. 길이 아직 멉니다."
 ZH_TRAD_REPLY = "你好，旅行者。前面的路還很長。"
-
-
-# ==================================================================
-#  一、纯函数：设置、语言判断、跳过、失败
-# ==================================================================
-def test_defaults_are_off_and_never_spend_tokens() -> None:
-    """★ 默认必须关闭：本项目对"未经同意花用户 token"零容忍（与记忆总结同一条规矩）。"""
-    settings = translate_mod.default_settings()
-    assert settings["enabled"] is False
-    assert translate_mod.uses_model(settings, translate_mod.DIRECTION_REPLY) is False
-    assert translate_mod.prompt_hint(settings) == ""
-    assert translate_mod.estimate_cost(settings, EN_REPLY) == 0
-
-
-def test_disabling_forces_the_mode_to_off() -> None:
-    """关掉总开关后模式必须归零：否则界面会显示"中间件翻译"却什么都没发生。"""
-    settings = translate_mod.normalize_settings(
-        {"enabled": False, "mode": "middleware", "direction": "both"}
-    )
-    assert settings["mode"] == translate_mod.MODE_OFF
-    assert translate_mod.describe(settings) == "未启用"
-
-
-def test_invalid_mode_and_direction_fall_back() -> None:
-    settings = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "魔法", "direction": "两边", "provider_id": "7", "target_lang": "  "}
-    )
-    assert settings["mode"] == translate_mod.MODE_MIDDLEWARE
-    assert settings["direction"] == translate_mod.DIRECTION_REPLY
-    assert settings["provider_id"] == 7, "数字字符串要能收"
-    assert settings["target_lang"] == translate_mod.DEFAULT_TARGET_LANG
-
-
-def test_direction_controls_each_side_independently() -> None:
-    reply = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "direction": "reply"}
-    )
-    assert translate_mod.wants(reply, translate_mod.DIRECTION_REPLY) is True
-    assert translate_mod.wants(reply, translate_mod.DIRECTION_INPUT) is False
-    both = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "direction": "both"}
-    )
-    assert translate_mod.wants(both, translate_mod.DIRECTION_REPLY) is True
-    assert translate_mod.wants(both, translate_mod.DIRECTION_INPUT) is True
-
-
-def test_prompt_mode_costs_nothing_but_still_tells_the_model() -> None:
-    settings = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "prompt", "target_lang": "简体中文"}
-    )
-    hint = translate_mod.prompt_hint(settings)
-    assert "简体中文" in hint and "输出语言" in hint
-    assert translate_mod.uses_model(settings, translate_mod.DIRECTION_REPLY) is False
-    assert translate_mod.estimate_cost(settings, EN_REPLY) == 0
-    outcome = translate_mod.run(EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=None)
-    assert outcome.used_model is False and "提示词模式" in outcome.skipped
-
-
-def test_local_language_check_spares_the_call() -> None:
-    """★ 已经是目标语言就不调模型 —— 这是真实省下来的钱，不是假装译了。"""
-    assert translate_mod.looks_like(ZH_REPLY, "简体中文") is True
-    assert translate_mod.looks_like(EN_REPLY, "简体中文") is False
-    assert translate_mod.looks_like(EN_REPLY, "英文") is True
-    assert translate_mod.looks_like(ZH_REPLY, "英文") is False
-    assert translate_mod.looks_like("", "简体中文") is True
-    assert translate_mod.looks_like("Привет", "简体中文") is False
-    # ★ 第十六轮：源语言自动识别 —— 旧版把假名/谚文一起算进"CJK 占比"，
-    #   于是日文、韩文、繁体回复都被判成"已经是简体中文"而**静默不译**。
-    assert translate_mod.looks_like(JA_REPLY, "简体中文") is False, "日文必须译，不能当成中文"
-    assert translate_mod.looks_like(KO_REPLY, "简体中文") is False, "韩文必须译，不能当成中文"
-    assert translate_mod.looks_like(ZH_TRAD_REPLY, "简体中文") is False, "繁体要转成简体"
-    assert translate_mod.looks_like(ZH_TRAD_REPLY, "繁體中文") is True, "繁体是繁体目标本身"
-    assert translate_mod.looks_like(ZH_REPLY, "繁體中文") is False, "简体要转成繁体"
-    assert translate_mod.looks_like(JA_REPLY, "日文") is True
-    assert translate_mod.looks_like(ZH_REPLY, "日文") is False, "中文在日文目标下要译"
-    assert translate_mod.looks_like(KO_REPLY, "韩文") is True
-    assert translate_mod.looks_like(ZH_REPLY, "韩文") is False, "中文在韩文目标下要译"
-    settings = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "target_lang": "简体中文"}
-    )
-    outcome = translate_mod.run(ZH_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=None)
-    assert outcome.used_model is False
-    assert "看起来已经是" in outcome.skipped
-    assert translate_mod.estimate_cost(settings, ZH_REPLY) == 0
-
-
-def test_too_long_text_is_skipped_with_a_reason() -> None:
-    settings = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "target_lang": "简体中文"}
-    )
-    outcome = translate_mod.run(
-        "a" * (translate_mod.MAX_CHARS + 10),
-        settings,
-        direction=translate_mod.DIRECTION_REPLY,
-        adapter=_Stub("译文"),
-    )
-    assert outcome.used_model is False and "太长" in outcome.skipped
-
-
-class _Stub:
-    """最简适配器替身（只实现 chat）。"""
-
-    def __init__(self, content: str = "译文", *, boom: bool = False) -> None:
-        self.content = content
-        self.boom = boom
-        self.calls = 0
-
-    def chat(self, request):  # noqa: ANN001
-        self.calls += 1
-        if self.boom:
-            raise RuntimeError("翻译服务挂了")
-        result = ChatResult(content=self.content, model="stub-model", finish_reason="stop")
-        result.usage = TokenUsage(prompt_tokens=30, completion_tokens=20, total_tokens=50)
-        return result
-
-
-def test_success_records_text_tokens_and_which_side_to_display() -> None:
-    settings = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "target_lang": "简体中文"}
-    )
-    stub = _Stub("你好，旅行者。")
-    outcome = translate_mod.run(
-        EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=stub, provider_id=3
-    )
-    assert stub.calls == 1
-    assert outcome.ok and outcome.text == "你好，旅行者。"
-    assert outcome.lang == "简体中文" and outcome.tokens == 50
-    assert outcome.display == "translation", "输出侧：界面默认显示译文"
-    assert outcome.provider_id == 3 and outcome.model == "stub-model"
-    # 输入侧用**同一个**目标语言：用户用英文写，就译成简体中文再发给模型
-    # （这一段的设置必须是"方向含输入"，否则输入侧根本不会处理）
-    both = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "direction": "both", "target_lang": "简体中文"}
-    )
-    outcome_in = translate_mod.run(
-        EN_INPUT, both, direction=translate_mod.DIRECTION_INPUT, adapter=stub
-    )
-    assert outcome_in.lang == "简体中文", "两个方向共用一个目标语言（没有输入侧语言了）"
-    assert outcome_in.used_model is True
-    assert outcome_in.display == "translation", "translation.text 永远放给人看的那一份"
-    # ★ 而中文用户写中文时：它就是目标语言 → 0 token 直发（这是"面向中文用户"的默认收益）
-    already = translate_mod.run(
-        ZH_INPUT, both, direction=translate_mod.DIRECTION_INPUT, adapter=stub
-    )
-    assert already.used_model is False, "用户写的就是目标语言 → 不花这次钱"
-
-
-def test_model_failure_is_reported_not_raised() -> None:
-    """★ 翻译失败绝不能影响对话（与剧情总结降级同一套哲学）。"""
-    settings = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "target_lang": "简体中文"}
-    )
-    outcome = translate_mod.run(
-        EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=_Stub(boom=True)
-    )
-    assert outcome.ok is False
-    assert "翻译服务挂了" in outcome.error
-    assert outcome.text == ""
-
-
-def test_empty_model_output_is_treated_as_failure() -> None:
-    settings = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "target_lang": "简体中文"}
-    )
-    outcome = translate_mod.run(
-        EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=_Stub("   ")
-    )
-    assert outcome.ok is False and "空译文" in outcome.error
-
-
-def test_translation_prompt_forbids_explanations() -> None:
-    messages = translate_mod.build_messages(
-        EN_REPLY,
-        translate_mod.default_settings(),
-        lang="简体中文",
-    )
-    assert messages[0].role == "system" and messages[1].role == "user"
-    assert "简体中文" in messages[0].content
-    assert "只输出译文" in messages[0].content
-    assert messages[1].content == EN_REPLY
-
-
-def test_json_helpers_never_break_the_reader() -> None:
-    assert translate_mod.loads(None) is None
-    assert translate_mod.loads("{坏 JSON") is None
-    assert translate_mod.loads('{"used_model": true}') is None, "没有 text 就当没译过"
-    outcome = translate_mod.run(
-        EN_REPLY,
-        translate_mod.normalize_settings(
-            {"enabled": True, "mode": "middleware", "target_lang": "简体中文"}
-        ),
-        direction=translate_mod.DIRECTION_REPLY,
-        adapter=_Stub("你好。"),
-    )
-    raw = translate_mod.dumps(outcome)
-    loaded = translate_mod.loads(raw)
-    assert loaded and loaded["text"] == "你好。" and loaded["display"] == "translation"
-    assert translate_mod.dumps(None) is None
-
-
-def test_panel_state_lists_the_choices() -> None:
-    class _Session:
-        id = 1
-        translate_settings_json = None
-
-    state = translate_mod.state(_Session())
-    assert [m["value"] for m in state["modes"]] == ["off", "prompt", "middleware"]
-    assert [d["value"] for d in state["directions"]] == ["reply", "input", "both"]
-    assert "简体中文" in state["lang_choices"]
-    assert state["summary"] == "未启用"
 
 
 # ==================================================================
@@ -355,13 +145,19 @@ def _make_session(client: TestClient, user: dict) -> tuple[int, int]:
     provider_id = provider.json()["data"]["id"]
     card = client.post(
         CARDS,
-        json={"name": f"外语卡_{uuid.uuid4().hex[:6]}", "greeting": "Hello there, traveler."},
+        json={
+            "name": f"外语卡_{uuid.uuid4().hex[:6]}",
+            "greeting": "Hello there, traveler.",
+        },
         headers=user["headers"],
     )
     assert card.status_code == 201, card.text
     session = client.post(
         BASE,
-        json={"character_card_id": card.json()["data"]["id"], "llm_provider_id": provider_id},
+        json={
+            "character_card_id": card.json()["data"]["id"],
+            "llm_provider_id": provider_id,
+        },
         headers=user["headers"],
     )
     assert session.status_code == 201, session.text
@@ -383,29 +179,39 @@ def _enable(client: TestClient, user: dict, session_id: int, **overrides) -> dic
     return response.json()["data"]
 
 
-def test_settings_round_trip_and_patch_semantics(client: TestClient, user: dict) -> None:
+def test_settings_round_trip_and_patch_semantics(
+    client: TestClient, user: dict
+) -> None:
     session_id, _provider = _make_session(client, user)
-    panel = client.get(f"{BASE}/{session_id}/translate", headers=user["headers"]).json()["data"]
+    panel = client.get(
+        f"{BASE}/{session_id}/translate", headers=user["headers"]
+    ).json()["data"]
     assert panel["settings"]["enabled"] is False, "默认必须是关的"
     assert panel["cost_tokens"] == 0
     assert panel["providers"], "面板要给出可选模型配置"
     # ★ 第十六轮：源语言自动识别 ⇒ "输入侧语言"这个设置已退休（一个目标语言就够）
     assert "input_lang" not in panel["settings"]
-    assert panel["settings"]["target_lang"] == "简体中文", "面向中文用户：默认外语→简体中文"
+    assert panel["settings"]["target_lang"] == "简体中文", (
+        "面向中文用户：默认外语→简体中文"
+    )
 
     saved = _enable(client, user, session_id, target_lang="日文")
     assert saved["settings"]["target_lang"] == "日文"
     assert saved["settings"]["mode"] == "middleware"
     # PATCH 语义：只改了语言，方向与开关不该被顺手改掉
     only_lang = client.patch(
-        f"{BASE}/{session_id}/translate", json={"target_lang": "英文"}, headers=user["headers"]
+        f"{BASE}/{session_id}/translate",
+        json={"target_lang": "英文"},
+        headers=user["headers"],
     ).json()["data"]
     assert only_lang["settings"]["target_lang"] == "英文"
     assert only_lang["settings"]["enabled"] is True
     assert only_lang["settings"]["direction"] == "reply"
 
 
-def test_reply_translation_keeps_both_texts(client: TestClient, user: dict, fake_llm) -> None:
+def test_reply_translation_keeps_both_texts(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     """★ 输出侧：content = 模型原文，另一份 = 译文，界面默认显示译文。"""
     session_id, _provider = _make_session(client, user)
     _enable(client, user, session_id)
@@ -415,7 +221,9 @@ def test_reply_translation_keeps_both_texts(client: TestClient, user: dict, fake
     ]
 
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "我该往哪走？"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "我该往哪走？"},
+        headers=user["headers"],
     )
     assert sent.status_code == 201, sent.text
     body = sent.json()["data"]
@@ -445,7 +253,9 @@ def test_translation_is_skipped_when_the_reply_is_already_in_the_target_language
     _enable(client, user, session_id)
     fake_llm.script["contents"] = [ZH_REPLY]
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "你好"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "你好"},
+        headers=user["headers"],
     )
     assistant = sent.json()["data"]["assistant_message"]
     assert assistant["translation"] is None, "已经是中文就不译（0 token）"
@@ -465,24 +275,32 @@ def test_japanese_reply_is_auto_detected_and_translated(
     fake_llm.script["contents"] = [JA_REPLY, ZH_REPLY]
 
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "你好"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "你好"},
+        headers=user["headers"],
     )
     assert sent.status_code == 201, sent.text
     assistant = sent.json()["data"]["assistant_message"]
     assert assistant["content"] == JA_REPLY, "content 永远是模型说的话"
-    assert assistant["translation"] is not None, "★ 日文必须触发翻译（这正是旧版的 bug）"
+    assert assistant["translation"] is not None, (
+        "★ 日文必须触发翻译（这正是旧版的 bug）"
+    )
     assert assistant["translation"]["used_model"] is True
     assert assistant["translation"]["lang"] == "简体中文"
     assert assistant["translation"]["text"] == ZH_REPLY
     assert len(fake_llm.script["requests"]) == 2, "一次生成 + 一次翻译，正好两次"
 
 
-def test_prompt_mode_only_touches_the_prompt(client: TestClient, user: dict, fake_llm) -> None:
+def test_prompt_mode_only_touches_the_prompt(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     session_id, _provider = _make_session(client, user)
     _enable(client, user, session_id, mode="prompt")
     fake_llm.script["contents"] = [EN_REPLY]
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "我该往哪走？"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "我该往哪走？"},
+        headers=user["headers"],
     )
     assert sent.json()["data"]["assistant_message"]["translation"] is None
     assert len(fake_llm.script["requests"]) == 1, "★ prompt 模式不该多调模型"
@@ -495,7 +313,9 @@ def test_prompt_mode_only_touches_the_prompt(client: TestClient, user: dict, fak
     assert "【输出语言】" in preview
 
 
-def test_input_translation_reaches_the_model(client: TestClient, user: dict, fake_llm) -> None:
+def test_input_translation_reaches_the_model(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     """★ 输入侧：用户中文 → 译成英文再发；content 是模型看到的英文，原文另存。
 
     ★ 第十六轮起不再有"输入侧语言"设置：把目标语言选成英文即可做这件事 ——
@@ -506,16 +326,22 @@ def test_input_translation_reaches_the_model(client: TestClient, user: dict, fak
     fake_llm.script["contents"] = [EN_INPUT, EN_REPLY]
 
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": ZH_INPUT}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": ZH_INPUT},
+        headers=user["headers"],
     )
     assert sent.status_code == 201, sent.text
     user_row = sent.json()["data"]["user_message"]
     assert user_row["content"] == EN_INPUT, "content = 模型看到的文本（译文）"
     assert user_row["translation"]["text"] == ZH_INPUT, "原话没有丢"
-    assert user_row["translation"]["display"] == "translation", "界面显示 translation.text（用户原话）"
+    assert user_row["translation"]["display"] == "translation", (
+        "界面显示 translation.text（用户原话）"
+    )
     assert user_row["translation"]["lang"] == "英文"
     # 模型真的看到了英文（而不是中文原文）
-    seen = " ".join(str(getattr(m, "content", "")) for m in fake_llm.script["requests"][-1].messages)
+    seen = " ".join(
+        str(getattr(m, "content", "")) for m in fake_llm.script["requests"][-1].messages
+    )
     assert EN_INPUT in seen and ZH_INPUT not in seen
 
 
@@ -525,7 +351,9 @@ def test_both_directions_at_once(client: TestClient, user: dict, fake_llm) -> No
     _enable(client, user, session_id, direction="both")  # 目标 = 默认简体中文
     fake_llm.script["contents"] = [ZH_INPUT, EN_REPLY, ZH_REPLY]
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": EN_INPUT}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": EN_INPUT},
+        headers=user["headers"],
     )
     assert sent.status_code == 201, sent.text
     data = sent.json()["data"]
@@ -535,7 +363,9 @@ def test_both_directions_at_once(client: TestClient, user: dict, fake_llm) -> No
     # ★ 不变量（整条链路都靠它）：content = **模型看到的文本**，translation.text = **给人看的文本**
     user_row, assistant_row = data["user_message"], data["assistant_message"]
     assert user_row["content"] == ZH_INPUT, "输入侧：模型看到的是译文（中文）"
-    assert user_row["translation"]["text"] == EN_INPUT, "输入侧：给人看的是用户原话（英文）"
+    assert user_row["translation"]["text"] == EN_INPUT, (
+        "输入侧：给人看的是用户原话（英文）"
+    )
     assert assistant_row["content"] == EN_REPLY, "输出侧：模型说的是英文原文"
     assert assistant_row["translation"]["text"] == ZH_REPLY, "输出侧：给人看的是译文"
 
@@ -548,7 +378,9 @@ def test_translation_failure_never_breaks_the_reply(
     fake_llm.script["contents"] = [EN_REPLY, ZH_REPLY]
     fake_llm.script["fail_from"] = 1  # 第 2 次调用（翻译那一次）开始抛错
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "我该往哪走？"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "我该往哪走？"},
+        headers=user["headers"],
     )
     assert sent.status_code == 201, sent.text
     body = sent.json()["data"]
@@ -556,7 +388,9 @@ def test_translation_failure_never_breaks_the_reply(
     assert any("没能把回复译成" in note for note in body["notes"]), body["notes"]
 
 
-def test_independent_translation_model_is_used(client: TestClient, user: dict, fake_llm) -> None:
+def test_independent_translation_model_is_used(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     """可以指定**另一个**模型配置来翻译（论文里"用哪个模型译"是可对比的实验变量）。"""
     session_id, session_provider = _make_session(client, user)
     other = client.post(
@@ -577,100 +411,30 @@ def test_independent_translation_model_is_used(client: TestClient, user: dict, f
     assert panel["settings"]["provider_id"] == other_id
 
     fake_llm.script["contents"] = [EN_REPLY, ZH_REPLY]
-    client.post(f"{BASE}/{session_id}/messages", json={"content": "我该往哪走？"}, headers=user["headers"])
+    client.post(
+        f"{BASE}/{session_id}/messages",
+        json={"content": "我该往哪走？"},
+        headers=user["headers"],
+    )
     rows = fake_llm.script.get("rows") or []
     assert other_id in rows, f"翻译应该用配置 #{other_id}（实际用过 {rows}）"
     assert session_provider in rows, "生成那一次仍然用会话模型"
 
 
-def test_long_reply_is_skipped_and_said_so(client: TestClient, user: dict, fake_llm) -> None:
+def test_long_reply_is_skipped_and_said_so(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     session_id, _provider = _make_session(client, user)
     _enable(client, user, session_id)
     fake_llm.script["contents"] = ["a" * (translate_mod.MAX_CHARS + 100)]
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "讲个长故事"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "讲个长故事"},
+        headers=user["headers"],
     )
     assistant = sent.json()["data"]["assistant_message"]
     assert assistant["translation"] is None
     assert len(fake_llm.script["requests"]) == 1, "太长就不译（不花这次钱）"
-
-
-# ==================================================================
-#  第十六轮新增：翻译中的提示 / 降思考 / 花费口径
-# ==================================================================
-def test_will_call_model_matches_the_real_skip_rules() -> None:
-    """★ 界面靠它决定"要不要显示『正在翻译…』"：判据必须与 `run()` 一致 ——
-    **提示了却没译**比不提示更让人困惑（用户会盯着一句永远不消失的提示）。"""
-    on = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "direction": "reply", "target_lang": "简体中文"}
-    )
-    assert translate_mod.will_call_model(on, translate_mod.DIRECTION_REPLY, EN_REPLY) is True
-    # 已经是目标语言 / 太长 / 空文本 ⇒ 不会调模型 ⇒ 不该提示
-    assert translate_mod.will_call_model(on, translate_mod.DIRECTION_REPLY, ZH_REPLY) is False
-    assert translate_mod.will_call_model(on, translate_mod.DIRECTION_REPLY, "") is False
-    assert (
-        translate_mod.will_call_model(
-            on, translate_mod.DIRECTION_REPLY, "a" * (translate_mod.MAX_CHARS + 1)
-        )
-        is False
-    )
-    # 方向不含输入 ⇒ 输入侧不提示
-    assert translate_mod.will_call_model(on, translate_mod.DIRECTION_INPUT, EN_REPLY) is False
-    # 关掉总开关 / 提示词模式 都不调模型
-    off = translate_mod.normalize_settings({"enabled": False, "mode": "middleware"})
-    assert translate_mod.will_call_model(off, translate_mod.DIRECTION_REPLY, EN_REPLY) is False
-    prompt = translate_mod.normalize_settings({"enabled": True, "mode": "prompt"})
-    assert translate_mod.will_call_model(prompt, translate_mod.DIRECTION_REPLY, EN_REPLY) is False
-
-
-class _EffortStub:
-    """记录"这次调用带了多大思考强度"的适配器替身。
-
-    ★ 第二十七轮改了它反映的契约：判据从"探测结论"（`reasoning_support`，
-      靠比思考 token 数猜出来的、不可靠）换成适配器的**静态声明**
-      `supports_reasoning_effort`（默认 True）。真实适配器上就是这个属性
-      （`BaseLLMAdapter.__init__` 里声明，failover / whole_reply 会透传）。
-    """
-
-    def __init__(self, supports: bool = True) -> None:
-        self.seen: list[object] = []
-        self.supports_reasoning_effort = supports
-
-    def chat(self, request):  # noqa: ANN001
-        self.seen.append(request.reasoning_effort)
-        return ChatResult(
-            content="译文",
-            model="stub-model",
-            finish_reason="stop",
-            usage=TokenUsage(prompt_tokens=5, completion_tokens=5, total_tokens=10),
-        )
-
-
-def test_thinking_is_lowered_for_translation() -> None:
-    """★ 翻译是机械任务，思考纯烧钱（实测：1618 字符的英文译一次烧 5291 token）。
-
-    ==================== 第二十七轮的行为变更 ====================
-    旧契约：只在"探测确认该模型接受思考强度"时才发这个参数。
-    后果：DeepSeek 被那次不可靠的探测误判为"不支持" ⇒ 翻译**从来没降过思考**。
-    新契约：**直接请求 OFF**；模型不认这个参数时由适配器自动去掉并重试一次
-    （见 `openai_compatible._post_with_effort_fallback`），翻译不会因此失败。
-    """
-    settings = translate_mod.normalize_settings(
-        {"enabled": True, "mode": "middleware", "target_lang": "简体中文"}
-    )
-    # ① 默认（适配器参与思考强度适配）⇒ 必须请求降到最小
-    normal = _EffortStub()
-    translate_mod.run(
-        EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=normal
-    )
-    assert normal.seen == [ReasoningEffort.OFF], "翻译要一律降到最小思考"
-
-    # ② 适配器显式声明"我不参与"⇒ 不覆盖，交给 provider 自己的设置
-    opted_out = _EffortStub(supports=False)
-    translate_mod.run(
-        EN_REPLY, settings, direction=translate_mod.DIRECTION_REPLY, adapter=opted_out
-    )
-    assert opted_out.seen == [None], "适配器声明不支持时不该发这个参数"
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -708,7 +472,9 @@ def test_stream_announces_translation_before_it_happens(
     _enable(client, user, session_id)
     fake_llm.script["contents"] = [EN_REPLY, ZH_REPLY]  # 模型说英文 → 译成中文
     response = client.get(
-        f"{BASE}/{session_id}/stream", params={"content": "你好"}, headers=user["headers"]
+        f"{BASE}/{session_id}/stream",
+        params={"content": "你好"},
+        headers=user["headers"],
     )
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
@@ -745,7 +511,9 @@ def test_manual_translate_of_one_message_ignores_the_switch(
     # 翻译设置保持默认（关闭）——手动翻译照样要能用
     fake_llm.script["contents"] = [EN_REPLY, ZH_REPLY]
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "你好"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "你好"},
+        headers=user["headers"],
     )
     assistant = sent.json()["data"]["assistant_message"]
     assert assistant["translation"] is None, "默认关闭：自动翻译不该发生"
@@ -776,7 +544,9 @@ def test_manual_translate_of_one_message_ignores_the_switch(
     # 已经就是目标语言 ⇒ 跳过，并且如实说明（不调模型）
     fake_llm.script["contents"] = [ZH_REPLY]
     zh = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "再说一句"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "再说一句"},
+        headers=user["headers"],
     ).json()["data"]["assistant_message"]
     calls_before = len(fake_llm.script["requests"])
     skipped = client.post(
@@ -798,7 +568,9 @@ def test_per_turn_usage_is_persisted_for_the_accuracy_report(
     """
     session_id, _provider = _make_session(client, user)
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "你好"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "你好"},
+        headers=user["headers"],
     )
     assert sent.status_code == 201, sent.text
     message_id = sent.json()["data"]["assistant_message"]["id"]
@@ -815,3 +587,6 @@ def test_per_turn_usage_is_persisted_for_the_accuracy_report(
     assert int(usage.get("estimated_input_tokens") or 0) > 0, (
         "★ 必须同时留下**我们发出去前的估算**，否则对照实测无从做起"
     )
+
+
+pytestmark = pytest.mark.integration

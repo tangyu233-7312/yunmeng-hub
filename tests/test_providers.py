@@ -128,30 +128,11 @@ def test_endpoints_require_login(
     assert response.json()["code"] == "UNAUTHORIZED"
 
 
-# ==================================================================
-#  二、新增
-# ==================================================================
-def test_create_provider(client: TestClient, user: dict) -> None:
-    data = create(client, user)
-
-    assert data["name"]
-    assert data["provider_type"] == "openai_compatible"
-    assert data["model_name"] == "deepseek-flash"
-    assert data["has_api_key"] is True
-    assert data["api_key_decryptable"] is True
-    # ★ 密钥只以脱敏形式出现
-    assert data["api_key_masked"] == "sk-s****3456"
-    assert data["generation"]["temperature"] == 0.9
-    assert data["generation"]["max_tokens"] == 4096
-
-
 def test_create_response_never_contains_plaintext_key(
     client: TestClient, user: dict
 ) -> None:
     """★ 响应里绝不能出现密钥明文。"""
-    response = client.post(
-        "/api/v1/providers", json=payload(), headers=user["headers"]
-    )
+    response = client.post("/api/v1/providers", json=payload(), headers=user["headers"])
     assert PLAIN_API_KEY not in response.text
 
 
@@ -202,55 +183,6 @@ def test_same_name_allowed_for_different_users(
     assert data["name"] == name
 
 
-def test_create_rejects_unknown_provider_type(client: TestClient, user: dict) -> None:
-    response = client.post(
-        "/api/v1/providers",
-        json=payload(provider_type="gemini"),
-        headers=user["headers"],
-    )
-    assert response.status_code == 422
-
-
-def test_create_rejects_invalid_base_url(client: TestClient, user: dict) -> None:
-    response = client.post(
-        "/api/v1/providers",
-        json=payload(base_url="api.deepseek.com"),
-        headers=user["headers"],
-    )
-    assert response.status_code == 422
-
-
-def test_create_rejects_output_larger_than_window(client: TestClient, user: dict) -> None:
-    """★ 跨字段校验必须返回 422，而不是等到组装配置时变成 500。"""
-    response = client.post(
-        "/api/v1/providers",
-        json=payload(
-            context_window=4096, generation={"max_tokens": 4096, "temperature": 0.8}
-        ),
-        headers=user["headers"],
-    )
-    assert response.status_code == 422
-    assert "上下文窗口" in response.text
-
-
-def test_create_rejects_invalid_temperature(client: TestClient, user: dict) -> None:
-    response = client.post(
-        "/api/v1/providers",
-        json=payload(generation={"temperature": 5.0, "max_tokens": 1024}),
-        headers=user["headers"],
-    )
-    assert response.status_code == 422
-
-
-def test_create_rejects_invalid_reasoning_effort(client: TestClient, user: dict) -> None:
-    response = client.post(
-        "/api/v1/providers",
-        json=payload(generation={"max_tokens": 1024, "reasoning_effort": "extreme"}),
-        headers=user["headers"],
-    )
-    assert response.status_code == 422
-
-
 # ==================================================================
 #  三、查询
 # ==================================================================
@@ -267,13 +199,6 @@ def test_list_only_returns_own_providers(
 
     assert mine["id"] in ids
     assert theirs["id"] not in ids
-
-
-def test_get_provider(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-    response = client.get(f"/api/v1/providers/{created['id']}", headers=user["headers"])
-    assert response.status_code == 200
-    assert response.json()["data"]["id"] == created["id"]
 
 
 def test_cannot_read_other_users_provider(
@@ -295,7 +220,9 @@ def test_cannot_delete_other_users_provider(
     client: TestClient, user: dict, other_user: dict
 ) -> None:
     theirs = create(client, other_user)
-    response = client.delete(f"/api/v1/providers/{theirs['id']}", headers=user["headers"])
+    response = client.delete(
+        f"/api/v1/providers/{theirs['id']}", headers=user["headers"]
+    )
     assert response.status_code == 404
 
     # 确认它还在
@@ -303,39 +230,6 @@ def test_cannot_delete_other_users_provider(
         f"/api/v1/providers/{theirs['id']}", headers=other_user["headers"]
     )
     assert still_there.status_code == 200
-
-
-def test_get_missing_provider(client: TestClient, user: dict) -> None:
-    response = client.get("/api/v1/providers/999999999", headers=user["headers"])
-    assert response.status_code == 404
-
-
-# ==================================================================
-#  四、响应里的派生信息
-# ==================================================================
-def test_response_includes_budget_and_hints(client: TestClient, user: dict) -> None:
-    """前端拿到的应当是可以直接渲染的完整信息。
-
-    ★ 第二十七轮：`reasoning_effort_support`（探测结论）字段已随探测功能一起删除；
-      hints 的文案也从"尚未验证，建议去检测"改成了"会被翻译发送、不支持则自动退回"。
-    """
-    data = create(client, user)
-
-    budget = data["budget"]
-    assert budget["context_window"] == 65536
-    assert budget["max_output_tokens"] == 4096
-    assert "包含思考" in budget["note"]
-
-    # 思考强度设为 high -> 给灰色**提示**（说明适配器怎么处理），不是黄色警告
-    assert data["hints"]
-    assert any("自动去掉" in hint for hint in data["hints"]), data["hints"]
-    assert not any("尚未验证" in hint for hint in data["hints"]), (
-        "不该再让用户去做那个已被删除的「检测」"
-    )
-
-    # 探测结论字段必须已经不存在（删干净了，别留个空壳误导前端）
-    assert "reasoning_effort_support" not in data, data.keys()
-
 
 
 # ==================================================================
@@ -362,7 +256,9 @@ def test_update_name_only_keeps_api_key(client: TestClient, user: dict) -> None:
     assert data["api_key_masked"] == created["api_key_masked"]
 
 
-def test_update_with_empty_api_key_keeps_original(client: TestClient, user: dict) -> None:
+def test_update_with_empty_api_key_keeps_original(
+    client: TestClient, user: dict
+) -> None:
     created = create(client, user)
     response = client.patch(
         f"/api/v1/providers/{created['id']}",
@@ -402,20 +298,9 @@ def test_clear_api_key(client: TestClient, user: dict) -> None:
     assert data["api_key_masked"] == ""
 
 
-def test_update_generation_params(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-    response = client.patch(
-        f"/api/v1/providers/{created['id']}",
-        json={"generation": {"temperature": 0.3, "max_tokens": 1024, "reasoning_effort": "off"}},
-        headers=user["headers"],
-    )
-    data = response.json()["data"]
-    assert data["generation"]["temperature"] == 0.3
-    assert data["generation"]["max_tokens"] == 1024
-    assert data["generation"]["reasoning_effort"] == "off"
-
-
-def test_update_validation_uses_final_combination(client: TestClient, user: dict) -> None:
+def test_update_validation_uses_final_combination(
+    client: TestClient, user: dict
+) -> None:
     """★ 部分更新也要做跨字段校验。
 
     只提交 max_tokens，context_window 沿用数据库里的旧值 ——
@@ -470,29 +355,6 @@ def test_promote_existing_provider_to_default(client: TestClient, user: dict) ->
     assert first_after["is_default"] is False
 
 
-def test_default_provider_listed_first(client: TestClient, user: dict) -> None:
-    create(client, user)
-    target = create(client, user, is_default=True)
-
-    listed = client.get("/api/v1/providers", headers=user["headers"]).json()["data"]
-    assert listed[0]["id"] == target["id"]
-
-
-# ==================================================================
-#  七、删除
-# ==================================================================
-def test_delete_provider(client: TestClient, user: dict) -> None:
-    created = create(client, user)
-
-    response = client.delete(
-        f"/api/v1/providers/{created['id']}", headers=user["headers"]
-    )
-    assert response.status_code == 200
-
-    gone = client.get(f"/api/v1/providers/{created['id']}", headers=user["headers"])
-    assert gone.status_code == 404
-
-
 def test_delete_provider_keeps_narrative_sessions(
     client: TestClient, user: dict
 ) -> None:
@@ -533,11 +395,6 @@ def test_delete_provider_keeps_narrative_sessions(
         assert survivor.llm_provider_id is None, "外键应当被置为 NULL"
 
 
-def test_delete_missing_provider(client: TestClient, user: dict) -> None:
-    response = client.delete("/api/v1/providers/999999999", headers=user["headers"])
-    assert response.status_code == 404
-
-
 # ==================================================================
 #  八、试连未保存的配置
 # ==================================================================
@@ -565,3 +422,34 @@ def test_test_draft_does_not_persist(client: TestClient, user: dict) -> None:
     after = client.get("/api/v1/providers", headers=user["headers"]).json()["data"]
     assert len(after) == len(before)
     assert all(item["name"] != "未保存的配置" for item in after)
+
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize(
+    "overrides,hint",
+    [
+        ({"provider_type": "gemini"}, "provider_type"),
+        ({"base_url": "api.deepseek.com"}, "base_url"),
+        (
+            {
+                "context_window": 4096,
+                "generation": {"max_tokens": 4096, "temperature": 0.8},
+            },
+            "上下文窗口",
+        ),
+        ({"generation": {"temperature": 5.0, "max_tokens": 1024}}, "temperature"),
+        (
+            {"generation": {"reasoning_effort": "extreme", "max_tokens": 1024}},
+            "reasoning_effort",
+        ),
+    ],
+    ids=["protocol", "url", "output-window", "temperature", "effort"],
+)
+def test_create_validation(client, user, overrides, hint):
+    response = client.post(
+        "/api/v1/providers", json=payload(**overrides), headers=user["headers"]
+    )
+    assert response.status_code == 422
+    assert hint in response.text

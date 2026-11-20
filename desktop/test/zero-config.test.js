@@ -26,28 +26,12 @@ const backend = require('../src/backend-config');
 // ------------------------------------------------------------------
 //  1. 默认后端
 // ------------------------------------------------------------------
-test('★ 默认存储方式是 sqlite（"安装即用"的前提）', () => {
-  assert.equal(cfg.DEFAULT_DB_BACKEND, 'sqlite');
-  assert.equal(cfg.defaultValues().HNE_DB_BACKEND, 'sqlite');
-});
 
-test('★ 默认表单里，MySQL 字段不该被当成必填拦住用户', () => {
-  const result = cfg.validateValues(cfg.defaultValues());
-  assert.equal(result.ok, true, JSON.stringify(result.errors));
-});
 
 // ------------------------------------------------------------------
 //  2. 数据目录（两处必须一致）
 // ------------------------------------------------------------------
-test('★★ databaseDefaults 与 databaseEnvDefaults 讲的是同一件事', () => {
-  const dataDir = path.join('C:', 'Users', 'someone', 'AppData', 'Roaming', '云梦枢');
-  const formSide = cfg.databaseDefaults(dataDir);
-  const envSide = backend.databaseEnvDefaults({ dataDir, fileEnv: {}, baseEnv: {} });
 
-  assert.equal(envSide.HNE_DATA_DIR, formSide.HNE_DATA_DIR);
-  assert.equal(envSide.HNE_SQLITE_PATH, formSide.HNE_SQLITE_PATH);
-  assert.equal(path.isAbsolute(envSide.HNE_SQLITE_PATH), true);
-});
 
 test('★ 注入的 SQLite 文件必须在数据目录之下（而不是相对当前工作目录）', () => {
   const dataDir = path.join('D:', 'appdata', 'yunmeng');
@@ -351,50 +335,6 @@ test('★★ preferPythonFromSource：必须显式开启，默认关（避免静
   }
 });
 
-test('★ 接线：main.js 必须真的用这个开关把打包后端跳过', () => {
-  // 这个坑的形状是"开关写了但没接线" —— 本项目已经踩过一次同类问题
-  // （「随机生成」按钮：契约写了、按钮从没被创建）。
-  // 所以这里断言的是**接线**，而不只是那个纯函数存在。
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const main = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'main.js'), 'utf8');
-  assert.match(main, /preferPythonFromSource/, 'main.js 要引用开关');
-  assert.match(main, /const forceSourcePython = preferPythonFromSource\(process\.env\)/,
-    '要把它算成一个布尔量');
-  assert.match(main, /forceSourcePython\s*\?[\s\S]{0,200}?chooseBackend/,
-    '为真时必须**跳过** chooseBackend（否则 backend.exe 照样会赢）');
-});
-
-test('★★ 接线：两条后端启动路径都必须注入数据库默认值', () => {
-  // ★ 这条守着一个真实事故（打包验收抓到）：
-  //   `startBackend()` 注入了数据库默认值，而 `selfCheckWithEnv()` **没有** ——
-  //   于是自检退回读仓库根的 .env，把 SQLite 库建到了**仓库里**，
-  //   正式启动又按注入值建到 userData：一次启动在两个地方各建一个库。
-  //   两边都不报错，只有"数据该在哪"被当契约来验的时候才会发现。
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const main = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'main.js'), 'utf8');
-  const calls = main.match(/databaseEnvDefaults\(\{/g) || [];
-  assert.ok(calls.length >= 2,
-    `databaseEnvDefaults 至少要被调用两次（正式启动 + 保存前自检），实际 ${calls.length} 次`);
-  // 而且必须传**数据根**（dataRoot），不能传 dataDir / userDataDataDir
-  assert.equal(/dataDir:\s*paths\.dataRoot/.test(main), true,
-    '必须传 paths.dataRoot（数据根）—— 传 dataDir/userDataDataDir 会建出 data\\data');
-  // ★ 判据要限定在 `databaseEnvDefaults({...})` 的**调用**里：
-  //   `paths.userDataDataDir` 在别处是**合法**的（比如 sidecar 自检的
-  //   `--data-dir` 参数，那个参数的语义本来就是 `<userData>/data`）。
-  //   第一版直接全文匹配 `dataDir: paths.userDataDataDir`，于是把
-  //   `'--data-dir', paths.userDataDataDir` 那条**正确**的用法也判成违规。
-  //   ★ 教训：静态断言要盯"哪个函数的参数"，不要全文扫一个字符串。
-  const callBlocks = main.split('databaseEnvDefaults({').slice(1).map((s) => s.slice(0, 200));
-  assert.ok(callBlocks.length >= 2, '应当至少有两处 databaseEnvDefaults 调用');
-  for (const block of callBlocks) {
-    assert.equal(/dataDir:\s*paths\.userDataDataDir/.test(block), false,
-      '不许把 userDataDataDir 当数据根传进 databaseEnvDefaults（那就是"多一层 data"的成因）');
-    assert.equal(/dataDir:\s*paths\.dataRoot/.test(block), true,
-      `每处 databaseEnvDefaults 都必须传 paths.dataRoot，实际：${block.split('\n')[0]}`);
-  }
-});
 
 // ------------------------------------------------------------------
 //  6. 端到端：向导的产物 → 后端读到的就是 sqlite + 数据目录

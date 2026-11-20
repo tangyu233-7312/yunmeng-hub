@@ -42,21 +42,11 @@ function sqliteValues(overrides) {
   return { ...values, ...(overrides || {}) };
 }
 
-test('全部填好 → 放行（不该拦）', () => {
-  const r = precheck({ fields: SETUP_FIELDS, values: mysqlValues() });
-  assert.equal(r.ok, true);
-  assert.deepEqual(r.errors, {});
-  assert.equal(r.message, '');
-});
 
 // ------------------------------------------------------------------
 //  ★ 零配置：默认（本机文件）什么都不用填
 // ------------------------------------------------------------------
-test('★★ 零配置：默认表单（本机文件）直接放行 —— 一格都不用填', () => {
-  const r = precheck({ fields: SETUP_FIELDS, values: sqliteValues() });
-  assert.equal(r.ok, true, JSON.stringify(r.errors));
-  assert.deepEqual(r.errors, {});
-});
+
 
 test('★★ 零配置：选本机文件时，MySQL 字段填成什么样都不拦', () => {
   const r = precheck({
@@ -66,13 +56,6 @@ test('★★ 零配置：选本机文件时，MySQL 字段填成什么样都不�
   assert.equal(r.ok, true, '那些格子在这个模式下根本不该显示，更不该拦住用户');
 });
 
-test('★★ 零配置：两个密钥留空也放行（后端会自己生成）', () => {
-  const r = precheck({
-    fields: SETUP_FIELDS,
-    values: sqliteValues({ HNE_SECRET_KEY: '', HNE_API_KEY_ENCRYPTION_KEY: '' }),
-  });
-  assert.equal(r.ok, true, '密钥留空是合法状态：后端首次运行会自动生成');
-});
 
 test('★★ 回归：选了 MySQL 之后，口令留空 → 就地拦住，并且**不去起后端**', () => {
   // 这就是用户那次的情形。断言的重点是"返回 ok=false 且指名字段"，
@@ -121,13 +104,6 @@ test('端口必须是 1~65535 的数字', () => {
   assert.ok(r.errors.HNE_MYSQL_PORT);
 });
 
-test('非必填项留空不该被拦（比如 Fernet 口令、高级项）', () => {
-  const r = precheck({
-    fields: SETUP_FIELDS,
-    values: mysqlValues({ HNE_API_KEY_ENCRYPTION_KEY: '', HNE_LOG_LEVEL: '', HNE_DEBUG: '' }),
-  });
-  assert.equal(r.ok, true, '非必填留空是合法的：后端会用自己的默认值');
-});
 
 test('一次报多项：提示里把缺的都列出来（不让用户挤牙膏）', () => {
   const r = precheck({

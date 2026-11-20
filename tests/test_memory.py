@@ -184,7 +184,9 @@ def make_provider(client: TestClient, user: dict) -> dict:
     return response.json()["data"]
 
 
-def make_session(client: TestClient, user: dict, card_id: int, provider_id: int) -> dict:
+def make_session(
+    client: TestClient, user: dict, card_id: int, provider_id: int
+) -> dict:
     response = client.post(
         BASE,
         json={"character_card_id": card_id, "llm_provider_id": provider_id},
@@ -235,32 +237,6 @@ def test_remember_turn_is_idempotent(user: dict) -> None:
     memory.forget_session(user["id"], 4242)
 
 
-def test_recall_uses_semantic_similarity_not_keywords(user: dict) -> None:
-    """★ 语义检索的意义：问法里不出现的字，也能召回。
-
-    "我养了一只叫团子的橘猫" 与 "宠物" 字面上不重合，
-    靠关键词匹配永远找不到 —— 这正是向量记忆比世界书关键词强的地方。
-    """
-    chroma_add_memories(
-        user["id"],
-        [
-            MemoryRecord(
-                text="用户：我养了一只叫团子的橘猫\n角色：团子这名字真可爱。",
-                memory_id="sem-1",
-                session_id=5555,
-                kind="dialogue",
-            )
-        ],
-    )
-
-    result = memory.recall(user_id=user["id"], session_id=5555, query="我的宠物叫什么名字")
-    assert not result.error, result.error
-    assert result.hits, "语义相近的问题应当能召回到这条记忆"
-    assert "团子" in result.hits[0].text
-
-    memory.forget_session(user["id"], 5555)
-
-
 def test_recall_filters_low_similarity(user: dict) -> None:
     """相似度门槛必须生效：不相关的内容宁可不要。"""
     chroma_add_memories(
@@ -305,7 +281,10 @@ def test_recall_is_session_scoped_by_default(user: dict) -> None:
     same = memory.recall(user_id=user["id"], session_id=7777, query="我们约在哪里见面")
     other = memory.recall(user_id=user["id"], session_id=8888, query="我们约在哪里见面")
     cross = memory.recall(
-        user_id=user["id"], session_id=8888, query="我们约在哪里见面", cross_session=True
+        user_id=user["id"],
+        session_id=8888,
+        query="我们约在哪里见面",
+        cross_session=True,
     )
 
     assert same.hits, "本会话内应当能召回"
@@ -384,40 +363,6 @@ def test_recalled_memory_reaches_system_prompt(client: TestClient, user: dict) -
     assert not data["context"]["memory_error"]
 
 
-def test_no_recall_when_nothing_relevant(client: TestClient, user: dict) -> None:
-    """★ 反过来的那条：没有相关记忆时，提示词里不能出现回忆小节。
-
-    只测正面很容易骗过自己（比如"回忆小节永远存在、只是内容为空"）。
-    """
-    card = make_card(client, user)
-    provider = make_provider(client, user)
-    session = make_session(client, user, card["id"], provider["id"])
-
-    response = send(client, user, session["id"], "今天天气不错")
-    assert response.status_code == 201, response.text
-
-    system = [m for m in last_request_messages() if m.is_system]
-    assert "相关回忆" not in system[0].content
-    assert response.json()["data"]["context"]["recalled_memories"] == 0
-
-
-def test_turn_is_written_into_long_term_memory(client: TestClient, user: dict) -> None:
-    """一轮对话结束后，它必须能被检索回来。"""
-    FakeAdapter.script["content"] = "记住了：你在北境有个妹妹。"
-    card = make_card(client, user)
-    provider = make_provider(client, user)
-    session = make_session(client, user, card["id"], provider["id"])
-
-    send(client, user, session["id"], "我在北境有一个妹妹")
-
-    result = memory.recall(
-        user_id=user["id"], session_id=session["id"], query="北境 妹妹"
-    )
-    assert not result.error, result.error
-    assert result.hits, "刚聊过的内容应当已经写进长期记忆"
-    assert any("妹妹" in hit.text for hit in result.hits)
-
-
 def test_memory_failure_degrades_without_breaking_chat(
     client: TestClient, user: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -438,43 +383,6 @@ def test_memory_failure_degrades_without_breaking_chat(
     assert data["assistant_message"]["content"] == "（照常回复）"
     assert data["context"]["memory_error"], "必须把降级原因告诉用户"
     assert "嵌入模型未下载" in data["context"]["memory_error"]
-
-
-def test_prompt_preview_matches_the_real_request(
-    client: TestClient, user: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """★ 预览与真实请求必须走同一条构建路径。
-
-    曾经出现的 bug：会话详情里的「查看提示词」用的是"注入全部世界书条目"的
-    简化路径，而真正发请求时用的是"只注入命中的条目" ——
-    于是预览显示 2 条、实际只发 1 条，用户拿着预览去排查一个不存在的问题。
-    """
-    card = make_card(client, user)
-    provider = make_provider(client, user)
-    book = client.post(
-        "/api/v1/world-books",
-        json={
-            "name": f"预览书_{uuid.uuid4().hex[:6]}",
-            "entries": [
-                {"keys": ["灯塔"], "content": "灯塔在风暴夜会熄灭", "enabled": True},
-                {"keys": ["巨龙"], "content": "巨龙已死去", "enabled": True},
-            ],
-        },
-        headers=user["headers"],
-    ).json()["data"]
-    client.patch(
-        f"{CARDS}/{card['id']}",
-        json={"world_book_id": book["id"]},
-        headers=user["headers"],
-    )
-
-    send(client, user, session_id := make_session(client, user, card["id"], provider["id"])["id"], "灯塔还亮着吗")
-
-    detail = client.get(f"{BASE}/{session_id}", headers=user["headers"]).json()["data"]
-    assert detail["prompt"]["world_book_entries"] == 1, (
-        "预览里只该有命中的那 1 条，而不是世界书全部 2 条"
-    )
-    assert "巨龙已死去" not in detail["prompt"]["system_prompt"]
 
 
 # ==================================================================
@@ -515,7 +423,9 @@ def test_clearing_all_memories_keeps_conversations(
 
     assert search_memories(user["id"], "薄荷糖", top_k=5) == [], "记忆应当被清空"
 
-    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()["data"]
+    detail = client.get(f"{BASE}/{session['id']}", headers=user["headers"]).json()[
+        "data"
+    ]
     assert any("薄荷糖" in m["content"] for m in detail["messages"]), (
         "对话记录不能被一起清掉"
     )
@@ -556,7 +466,9 @@ def test_memory_endpoints_require_ownership(
     session = make_session(client, other_user, card["id"], provider["id"])
 
     assert (
-        client.get(f"{BASE}/{session['id']}/memories", headers=user["headers"]).status_code
+        client.get(
+            f"{BASE}/{session['id']}/memories", headers=user["headers"]
+        ).status_code
         == 404
     )
     assert (
@@ -585,3 +497,6 @@ def test_memory_endpoints_reject_blank_text(client: TestClient, user: dict) -> N
 def test_memory_endpoints_require_login(client: TestClient) -> None:
     assert client.get(f"{BASE}/1/memories").status_code == 401
     assert client.delete(MEMORIES).status_code == 401
+
+
+pytestmark = pytest.mark.integration

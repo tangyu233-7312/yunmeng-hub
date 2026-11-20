@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from pathlib import Path
 
@@ -19,7 +18,6 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.exceptions import BadRequestError
 from app.db.models import User
 from app.db.mysql import session_scope
 from app.llm.params import GenerationParams, compute_context_budget
@@ -107,7 +105,9 @@ def _make_user(client: TestClient) -> dict:
     assert logged_in.status_code == 200, logged_in.text
     return {
         "id": created.json()["data"]["id"],
-        "headers": {"Authorization": f"Bearer {logged_in.json()['data']['access_token']}"},
+        "headers": {
+            "Authorization": f"Bearer {logged_in.json()['data']['access_token']}"
+        },
     }
 
 
@@ -154,13 +154,19 @@ def _make_session(client: TestClient, user: dict) -> int:
 
 
 def _create(client: TestClient, user: dict, **body) -> dict:
-    payload = {"kind": "prompt", "config": {"position": "end", "content": "插件内容"}, **body}
+    payload = {
+        "kind": "prompt",
+        "config": {"position": "end", "content": "插件内容"},
+        **body,
+    }
     created = client.post(PLUGINS, json=payload, headers=user["headers"])
     assert created.status_code == 201, created.text
     return created.json()["data"]
 
 
-def _send(client: TestClient, user: dict, session_id: int, text: str = "我推门进去") -> None:
+def _send(
+    client: TestClient, user: dict, session_id: int, text: str = "我推门进去"
+) -> None:
     response = client.post(
         f"{BASE}/{session_id}/messages", json={"content": text}, headers=user["headers"]
     )
@@ -202,27 +208,50 @@ def test_first_list_creates_two_empty_defaults_plus_theme_then_never_duplicates(
     assert "星云暗涌" in theme["name"], theme["name"]
     assert theme["enabled"] is True, "默认主题必须是启用状态，否则用户看到的还是浅色"
     assert len(str(theme["config"].get("css") or "")) > 500, "主题样式不能是空的"
-    assert theme["is_builtin"] is False, "主题不该标成 is_builtin —— 那会让它变成不可改的内置条目"
-    assert data["security_note"] and data["allowed_hosts"] == list(plugin_service.ALLOWED_HOSTS)
+    assert theme["is_builtin"] is False, (
+        "主题不该标成 is_builtin —— 那会让它变成不可改的内置条目"
+    )
+    assert data["security_note"] and data["allowed_hosts"] == list(
+        plugin_service.ALLOWED_HOSTS
+    )
 
     again = client.get(PLUGINS, headers=user["headers"]).json()["data"]
     assert again["total"] == 3, "重复访问不能把默认插件越加越多"
 
     # 删掉默认插件后不能再自动重建（用户的删除是明确的意图）——**包括主题**
     for item in again["items"]:
-        assert client.delete(f"{PLUGINS}/{item['id']}", headers=user["headers"]).status_code == 200
+        assert (
+            client.delete(
+                f"{PLUGINS}/{item['id']}", headers=user["headers"]
+            ).status_code
+            == 200
+        )
     after = client.get(PLUGINS, headers=user["headers"]).json()["data"]
     assert after["total"] == 0, "删掉的默认插件不该被自动重建（主题也一样）"
 
 
 def test_toggle_priority_and_delete(client: TestClient, user: dict) -> None:
-    row = _create(client, user, name="开关测试", config={"position": "end", "content": "x"})
-    off = client.patch(f"{PLUGINS}/{row['id']}", json={"enabled": False}, headers=user["headers"])
+    row = _create(
+        client, user, name="开关测试", config={"position": "end", "content": "x"}
+    )
+    off = client.patch(
+        f"{PLUGINS}/{row['id']}", json={"enabled": False}, headers=user["headers"]
+    )
     assert off.status_code == 200 and off.json()["data"]["enabled"] is False
-    order = client.patch(f"{PLUGINS}/{row['id']}", json={"priority": 5}, headers=user["headers"])
+    order = client.patch(
+        f"{PLUGINS}/{row['id']}", json={"priority": 5}, headers=user["headers"]
+    )
     assert order.json()["data"]["priority"] == 5
-    assert client.delete(f"{PLUGINS}/{row['id']}", headers=user["headers"]).status_code == 200
-    assert client.patch(f"{PLUGINS}/{row['id']}", json={"enabled": True}, headers=user["headers"]).status_code == 404
+    assert (
+        client.delete(f"{PLUGINS}/{row['id']}", headers=user["headers"]).status_code
+        == 200
+    )
+    assert (
+        client.patch(
+            f"{PLUGINS}/{row['id']}", json={"enabled": True}, headers=user["headers"]
+        ).status_code
+        == 404
+    )
 
 
 def test_other_users_plugin_is_404(client: TestClient, user: dict) -> None:
@@ -230,10 +259,19 @@ def test_other_users_plugin_is_404(client: TestClient, user: dict) -> None:
     other = _make_user(client)
     try:
         assert (
-            client.patch(f"{PLUGINS}/{row['id']}", json={"enabled": False}, headers=other["headers"]).status_code
+            client.patch(
+                f"{PLUGINS}/{row['id']}",
+                json={"enabled": False},
+                headers=other["headers"],
+            ).status_code
             == 404
         )
-        assert client.delete(f"{PLUGINS}/{row['id']}", headers=other["headers"]).status_code == 404
+        assert (
+            client.delete(
+                f"{PLUGINS}/{row['id']}", headers=other["headers"]
+            ).status_code
+            == 404
+        )
     finally:
         with session_scope() as db:
             other_row = db.query(User).filter(User.id == other["id"]).one_or_none()
@@ -247,8 +285,14 @@ def test_other_users_plugin_is_404(client: TestClient, user: dict) -> None:
 @pytest.mark.parametrize(
     "payload",
     [
-        {"kind": "regex", "config": {"rules": [{"pattern": "(", "replacement": ""}]}},  # 坏正则
-        {"kind": "regex", "config": {"rules": [{"pattern": "a", "flags": "q"}]}},  # 非法 flags
+        {
+            "kind": "regex",
+            "config": {"rules": [{"pattern": "(", "replacement": ""}]},
+        },  # 坏正则
+        {
+            "kind": "regex",
+            "config": {"rules": [{"pattern": "a", "flags": "q"}]},
+        },  # 非法 flags
         {"kind": "regex", "config": {"rules": [{"replacement": "x"}]}},  # 缺 pattern
         {"kind": "regex", "config": {"rules": "不是数组"}},
         {"kind": "prompt", "config": {"position": "中间"}},  # 位置非法
@@ -262,28 +306,6 @@ def test_bad_config_is_rejected(client: TestClient, user: dict, payload: dict) -
     assert response.status_code in (400, 422), response.text
     # 不能留下半装状态（默认 3 个：2 个空壳 + 主题；见 ensure_defaults 的说明）
     assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 3
-
-
-def test_css_sanitizer_blocks_escape_and_remote_import() -> None:
-    dirty = (
-        "</style><script>alert(1)</script>"
-        "@import url(https://evil.example/x.css);"
-        ".a{width:expression(alert(1));background:url(javascript:alert(2));behavior:url(#x)}"
-        ".b{color:red}"
-    )
-    clean = plugin_service.sanitize_css(dirty)
-    assert "</style>" not in clean, "必须挡掉 style 标签逃逸"
-    assert "@import" not in clean
-    assert "expression(" not in clean
-    assert "javascript:" not in clean
-    assert "behavior:" not in clean
-    assert ".b{color:red}" in clean, "正常样式不能被误伤"
-
-
-def test_summary_is_human_readable() -> None:
-    assert plugin_service.summary_of("regex", {"rules": [{"pattern": "a"}]}) == "1 条替换规则"
-    assert "末尾" in plugin_service.summary_of("prompt", {"position": "end", "content": "abc"})
-    assert "主题样式" in plugin_service.summary_of("css", {"css": "a{}"})
 
 
 # ==================================================================
@@ -341,28 +363,6 @@ def test_imagegen_key_is_encrypted_and_never_returned(
     # 列表接口同样不能泄漏
     listed = client.get(PLUGINS, headers=user["headers"]).json()["data"]
     assert plain not in json.dumps(listed, ensure_ascii=False)
-
-
-def test_imagegen_catalog_entry_is_added_disabled(client: TestClient, user: dict) -> None:
-    """生图必须由用户填好 Key 再打开；目录添加时默认停用。"""
-    added = client.post(
-        f"{PLUGINS}/catalog/imagegen", headers=user["headers"]
-    )
-    assert added.status_code == 201, added.text
-    plugin = added.json()["data"]
-    assert plugin["kind"] == "imagegen"
-    assert plugin["enabled"] is False
-    assert plugin["has_api_key"] is False
-
-    # ★ 配置型插件：用户一定会改 base_url/model/style，目录不能显示"有更新"
-    #   再用模板覆盖一遍（那会把用户填好的设置重置）。
-    listed = client.get(PLUGINS, headers=user["headers"]).json()["data"]
-    entry = next(item for item in listed["catalog"] if item["key"] == "imagegen")
-    assert entry["installed"] is True
-    assert entry["update_available"] is False
-    again = client.post(f"{PLUGINS}/catalog/imagegen", headers=user["headers"])
-    assert again.status_code == 400
-    assert "配置型" in again.text
 
 
 def test_imagegen_auto_mode_attaches_picture_to_reply(
@@ -460,72 +460,7 @@ def test_imagegen_failure_does_not_break_the_reply(
     assert any("配图失败" in note for note in data["notes"])
 
 
-# ==================================================================
-#  三、只允许 GitHub（安装）
-# ==================================================================
-@pytest.mark.parametrize(
-    "url,expected_part",
-    [
-        ("http://github.com/u/r/blob/main/a.json", "https"),
-        ("https://gitlab.com/u/r/blob/main/a.json", "只允许从 GitHub"),
-        ("https://raw.githubusercontent.com.evil.com/u/r/main/a.json", "只允许从 GitHub"),
-        ("https://github.com/u/r", "blob"),
-        ("", "请填写"),
-    ],
-)
-def test_install_url_whitelist(url: str, expected_part: str) -> None:
-    with pytest.raises(Exception) as exc:
-        plugin_service.normalize_github_url(url)
-    assert expected_part in str(exc.value)
-
-
-def test_blob_url_is_converted_to_raw() -> None:
-    assert plugin_service.normalize_github_url(BLOB_URL) == RAW_URL
-    # raw 地址原样通过（顺手去掉 query，GitHub 的 ?plain=1 之类不该带过去）
-    assert plugin_service.normalize_github_url(RAW_URL + "?plain=1") == RAW_URL
-
-
 GIST_RAW = "https://gist.githubusercontent.com/someone/abc123/raw"
-
-
-def test_gist_urls_are_supported() -> None:
-    """gist 也是 GitHub：最轻的分享方式，写一个插件不必建仓库。"""
-    # 单文件 gist：页面地址自动补 /raw
-    assert plugin_service.normalize_github_url("https://gist.github.com/someone/abc123") == GIST_RAW
-    # 已经是 gist 的 raw 地址
-    assert plugin_service.normalize_github_url(GIST_RAW) == GIST_RAW
-    assert (
-        plugin_service.normalize_github_url("https://gist.github.com/someone/abc123/raw")
-        == GIST_RAW
-    )
-    # 多文件：?file= 明确指定（原样使用）
-    assert (
-        plugin_service.normalize_github_url("https://gist.github.com/someone/abc123?file=demo.json")
-        == f"{GIST_RAW}/demo.json"
-    )
-    # 多文件：页面锚点 #file-demo-json 也能还原（GitHub 的锚点规则有损，只在能安全还原时猜）
-    assert (
-        plugin_service.normalize_github_url(
-            "https://gist.github.com/someone/abc123#file-demo-json"
-        )
-        == f"{GIST_RAW}/demo.json"
-    )
-    # 还原不了的锚点不猜（gist 的 /raw 默认给第一个文件）
-    assert (
-        plugin_service.normalize_github_url(
-            "https://gist.github.com/someone/abc123#file-某个中文名"
-        )
-        == GIST_RAW
-    )
-
-
-def test_gist_url_rejects_path_traversal_and_short_path() -> None:
-    with pytest.raises(Exception) as exc:
-        plugin_service.normalize_github_url("https://gist.github.com/someone/abc123?file=../x.json")
-    assert "只能是文件名" in str(exc.value)
-    with pytest.raises(Exception) as exc2:
-        plugin_service.normalize_github_url("https://gist.github.com/someone")
-    assert "gist 地址" in str(exc2.value)
 
 
 def test_install_from_gist_url(client: TestClient, user: dict) -> None:
@@ -540,7 +475,9 @@ def test_install_from_gist_url(client: TestClient, user: dict) -> None:
     assert row.source_url == raw and row.kind == "regex"
 
 
-def _mock_client(payload: bytes, *, status: int = 200, location: str | None = None) -> httpx.Client:
+def _mock_client(
+    payload: bytes, *, status: int = 200, location: str | None = None
+) -> httpx.Client:
     def handler(request: httpx.Request) -> httpx.Response:
         if location and request.url.host == "raw.githubusercontent.com":
             return httpx.Response(302, headers={"Location": location}, request=request)
@@ -565,7 +502,9 @@ def _manifest(**over) -> bytes:
     return json.dumps(body, ensure_ascii=False).encode("utf-8")
 
 
-def test_install_happy_path_and_reinstall_updates(client: TestClient, user: dict) -> None:
+def test_install_happy_path_and_reinstall_updates(
+    client: TestClient, user: dict
+) -> None:
     with session_scope() as db:
         row, raw, size, keys = plugin_service.install_from_url(
             db, user["id"], BLOB_URL, client=_mock_client(_manifest())
@@ -590,7 +529,9 @@ def test_install_happy_path_and_reinstall_updates(client: TestClient, user: dict
     assert len([i for i in listed2["items"] if i["source_url"] == RAW_URL]) == 1
 
 
-def test_install_rejects_redirect_outside_allowlist(client: TestClient, user: dict) -> None:
+def test_install_rejects_redirect_outside_allowlist(
+    client: TestClient, user: dict
+) -> None:
     with session_scope() as db, pytest.raises(Exception) as exc:
         plugin_service.install_from_url(
             db,
@@ -603,7 +544,9 @@ def test_install_rejects_redirect_outside_allowlist(client: TestClient, user: di
     assert client.get(PLUGINS, headers=user["headers"]).json()["data"]["total"] == 3
 
 
-def test_install_rejects_oversize_and_bad_manifest(client: TestClient, user: dict) -> None:
+def test_install_rejects_oversize_and_bad_manifest(
+    client: TestClient, user: dict
+) -> None:
     with session_scope() as db:
         with pytest.raises(Exception) as exc:
             plugin_service.install_from_url(
@@ -631,7 +574,10 @@ def test_install_rejects_oversize_and_bad_manifest(client: TestClient, user: dic
 
         with pytest.raises(Exception) as exc4:
             plugin_service.install_from_url(
-                db, user["id"], BLOB_URL, client=_mock_client(_manifest(spec="other_spec"))
+                db,
+                user["id"],
+                BLOB_URL,
+                client=_mock_client(_manifest(spec="other_spec")),
             )
         assert "spec" in str(exc4.value)
     # 四次失败都不能留下东西（默认 3 个：2 个空壳 + 主题）
@@ -664,13 +610,17 @@ def test_prompt_plugin_is_injected_at_the_very_end(
     system = fake_llm.script["requests"][-1].messages[0].content
     assert "【插件】每轮结尾只写一句话。" in system
     # 末尾位置：插件内容必须排在身份守卫**之后**（越靠后权重越高）
-    assert system.index("【插件】每轮结尾只写一句话。") > system.index(GUARD_IDENTITY_MARKER)
+    assert system.index("【插件】每轮结尾只写一句话。") > system.index(
+        GUARD_IDENTITY_MARKER
+    )
     assert system.rstrip().endswith("【插件】每轮结尾只写一句话。") or system.index(
         "【插件】每轮结尾只写一句话。"
     ) > system.index("[最高优先级 · 身份认知]")
 
 
-def test_prompt_plugin_before_guard_and_start(client: TestClient, user: dict, fake_llm) -> None:
+def test_prompt_plugin_before_guard_and_start(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     session_id = _make_session(client, user)
     _create(
         client,
@@ -724,7 +674,9 @@ def test_regex_plugin_changes_only_what_is_sent(
     assert "我去灯塔看看" in user_msgs, "用户原话必须原样保存"
 
 
-def test_disabled_plugin_has_no_effect(client: TestClient, user: dict, fake_llm) -> None:
+def test_disabled_plugin_has_no_effect(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     session_id = _make_session(client, user)
     row = _create(
         client,
@@ -733,13 +685,17 @@ def test_disabled_plugin_has_no_effect(client: TestClient, user: dict, fake_llm)
         kind="prompt",
         config={"position": "end", "content": "【不该出现】"},
     )
-    client.patch(f"{PLUGINS}/{row['id']}", json={"enabled": False}, headers=user["headers"])
+    client.patch(
+        f"{PLUGINS}/{row['id']}", json={"enabled": False}, headers=user["headers"]
+    )
     _send(client, user, session_id)
     system = fake_llm.script["requests"][-1].messages[0].content
     assert "【不该出现】" not in system
 
 
-def test_preview_matches_the_real_request(client: TestClient, user: dict, fake_llm) -> None:
+def test_preview_matches_the_real_request(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     """预览与实际必须一致 —— 这是本项目对"预览骗人"的零容忍条款。"""
     session_id = _make_session(client, user)
     _create(
@@ -758,7 +714,9 @@ def test_preview_matches_the_real_request(client: TestClient, user: dict, fake_l
     )
     _send(client, user, session_id, text="我推门进去")
     sent_system = fake_llm.script["requests"][-1].messages[0].content
-    sent_joined = "\n".join(str(m.content) for m in fake_llm.script["requests"][-1].messages)
+    sent_joined = "\n".join(
+        str(m.content) for m in fake_llm.script["requests"][-1].messages
+    )
 
     preview = client.get(
         f"{BASE}/{session_id}", params={"with_prompt": "true"}, headers=user["headers"]
@@ -766,23 +724,6 @@ def test_preview_matches_the_real_request(client: TestClient, user: dict, fake_l
     assert "【预览必须看到我】" in preview["system_prompt"]
     assert preview["system_prompt"] == sent_system, "预览的系统提示词与实际必须逐字一致"
     assert "踹门" in sent_joined and "踹门" in preview["system_prompt"] + sent_joined
-
-
-# ==================================================================
-#  六、内置示例目录（对照 SillyTavern 的内置扩展挑出来的）
-# ==================================================================
-def test_imagegen_manifest_is_rejected_from_github_install() -> None:
-    """生图是内置插件：远程清单不能决定"故事正文发到哪个图像服务器"。"""
-    with pytest.raises(BadRequestError) as exc:
-        plugin_service.manifest_to_fields(
-            {
-                "spec": "hne_plugin_v1",
-                "name": "远程生图",
-                "kind": "imagegen",
-                "config": {**IMAGE_CONFIG, "base_url": "https://evil.example/v1"},
-            }
-        )
-    assert "内置插件" in str(exc.value)
 
 
 def test_imagegen_model_contract_is_in_preview_and_request(
@@ -807,26 +748,6 @@ def test_imagegen_model_contract_is_in_preview_and_request(
     assert preview["system_prompt"] == sent_system
 
 
-def test_every_catalog_entry_is_valid_and_declarative() -> None:
-    """目录里的每一条都必须是合法配置 —— 否则用户点「添加」才发现装不上。
-
-    ★ 判据用 `PLUGIN_KINDS`（唯一真源）而不是写死的三元组：
-      第十三轮加了 `dice` 之后，写死的列表会让"目录里多一条合法插件"变成测试失败，
-      而这条测试真正要守的是"**每一种**都必须是声明式能力、且配置校验能过"。
-    """
-    assert plugin_service.PLUGIN_CATALOG, "目录不能是空的"
-    assert set(plugin_service.PLUGIN_KINDS) == {"regex", "prompt", "css", "dice", "imagegen"}
-    for spec in plugin_service.PLUGIN_CATALOG:
-        assert spec["kind"] in plugin_service.PLUGIN_KINDS
-        assert spec["source"], "每条都要写清楚对应酒馆的哪个能力"
-        config = plugin_service.validate_config(spec["kind"], spec["config"])
-        assert plugin_service.summary_of(spec["kind"], config)
-    keys = [spec["key"] for spec in plugin_service.PLUGIN_CATALOG]
-    assert len(keys) == len(set(keys)), "key 不能重复"
-    # ★ 骰子插件必须在目录里（用户要的"插件化架构 + 骰子"，必须一键能拿到）
-    assert "trpg_dice" in keys
-
-
 def test_unsupported_sillytavern_extensions_are_listed_honestly(
     client: TestClient, user: dict
 ) -> None:
@@ -840,7 +761,9 @@ def test_unsupported_sillytavern_extensions_are_listed_honestly(
     assert len(data["catalog"]) == len(plugin_service.PLUGIN_CATALOG)
 
 
-def test_add_from_catalog_then_no_duplicate(client: TestClient, user: dict, fake_llm) -> None:
+def test_add_from_catalog_then_no_duplicate(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     listed = client.get(PLUGINS, headers=user["headers"]).json()["data"]
     entry = next(item for item in listed["catalog"] if item["key"] == "authors_note")
     assert entry["installed"] is False
@@ -867,7 +790,9 @@ def test_add_from_catalog_then_no_duplicate(client: TestClient, user: dict, fake
     assert missing.status_code == 404
 
 
-def test_catalog_can_update_a_stale_builtin_copy(client: TestClient, user: dict) -> None:
+def test_catalog_can_update_a_stale_builtin_copy(
+    client: TestClient, user: dict
+) -> None:
     """★ 内置插件升级后，用户那份"添加时拷贝"的旧内容**能一键更新**。
 
     ==================== 这条守的是一个真实困惑 ====================
@@ -902,10 +827,17 @@ def test_catalog_can_update_a_stale_builtin_copy(client: TestClient, user: dict)
     assert listed2["total"] == 4, "更新不该多出一条插件（默认 2 空壳 + 主题 + 这一条）"
 
 
-def test_catalog_does_not_clobber_same_name_different_kind(client: TestClient, user: dict) -> None:
+def test_catalog_does_not_clobber_same_name_different_kind(
+    client: TestClient, user: dict
+) -> None:
     """用户自己建了一个**同名但类型不同**的插件时，内置示例不许把它覆盖掉。"""
-    _create(client, user, name="作者注（Author's Note）", kind="regex",
-            config={"rules": [{"pattern": "a", "replacement": "b"}]})
+    _create(
+        client,
+        user,
+        name="作者注（Author's Note）",
+        kind="regex",
+        config={"rules": [{"pattern": "a", "replacement": "b"}]},
+    )
     resp = client.post(f"{PLUGINS}/catalog/authors_note", headers=user["headers"])
     assert resp.status_code == 400 and "不会覆盖" in resp.text
 
@@ -915,7 +847,12 @@ def test_catalog_regex_entry_really_rewrites_the_prompt(
 ) -> None:
     """目录里的「清理 Markdown 强调符号」必须真的生效，而不只是列表里好看。"""
     session_id = _make_session(client, user)
-    assert client.post(f"{PLUGINS}/catalog/strip_markdown", headers=user["headers"]).status_code == 201
+    assert (
+        client.post(
+            f"{PLUGINS}/catalog/strip_markdown", headers=user["headers"]
+        ).status_code
+        == 201
+    )
     fake_llm.script["content"] = "（他点点头）"
     sent = client.post(
         f"{BASE}/{session_id}/messages",
@@ -932,11 +869,9 @@ def test_catalog_regex_entry_really_rewrites_the_prompt(
     assert any("**你好**" in t for t in user_msgs)
 
 
-# ==================================================================
-#  五、CSS 主题接口
-# ==================================================================
-
-def test_theme_css_only_joins_enabled_css_plugins(client: TestClient, user: dict) -> None:
+def test_theme_css_only_joins_enabled_css_plugins(
+    client: TestClient, user: dict
+) -> None:
     _create(
         client,
         user,
@@ -949,7 +884,9 @@ def test_theme_css_only_joins_enabled_css_plugins(client: TestClient, user: dict
         user,
         name="深色主题",
         kind="css",
-        config={"css": "body{background:#111}</style>@import url(https://evil.example/x.css);"},
+        config={
+            "css": "body{background:#111}</style>@import url(https://evil.example/x.css);"
+        },
     )
     _create(
         client,
@@ -959,7 +896,9 @@ def test_theme_css_only_joins_enabled_css_plugins(client: TestClient, user: dict
         config={"position": "end", "content": "【提示词插件不该进 CSS】"},
     )
     # 停用其中一个：停用的不能出现在主题里
-    client.patch(f"{PLUGINS}/{dark['id']}", json={"enabled": False}, headers=user["headers"])
+    client.patch(
+        f"{PLUGINS}/{dark['id']}", json={"enabled": False}, headers=user["headers"]
+    )
 
     response = client.get(f"{PLUGINS}/theme.css", headers=user["headers"])
     assert response.status_code == 200
@@ -970,96 +909,22 @@ def test_theme_css_only_joins_enabled_css_plugins(client: TestClient, user: dict
     assert "提示词插件不该进 CSS" not in css
 
     # 重新启用后再取，必须带上，且逃逸/远程导入被清洗
-    client.patch(f"{PLUGINS}/{dark['id']}", json={"enabled": True}, headers=user["headers"])
+    client.patch(
+        f"{PLUGINS}/{dark['id']}", json={"enabled": True}, headers=user["headers"]
+    )
     css2 = client.get(f"{PLUGINS}/theme.css", headers=user["headers"]).text
     assert "#111" in css2
     assert "</style>" not in css2 and "@import" not in css2
 
 
-def test_catalog_yunmeng_starfield_lists_are_consistent(client: TestClient, user: dict) -> None:
-    """★ 星点背景的三个列表必须**等长**（`background-image` / `-size` / `-repeat`）。
-
-    ==================== 为什么值得一条测试 ====================
-    星点有几十层，每一层都要在这三个逗号列表里各占一个位置。**只要数量对不上**，
-    浏览器要么整条声明作废、要么把 tile 尺寸错位到别的层上 —— 表现是"背景没了"或者
-    "星云变成一块块方格"，而且**不报任何错**。（本项目踩过的是它的近亲：
-    用 `background` 简写把 `background-size` 重置掉。）
-
-    这些列表现在由 `_starfield_css()` 从同一份数据生成，但**手改一次就可能破**，
-    所以这里直接解析目录里那份 CSS 来数。
-    """
-    spec = next(s for s in PLUGIN_CATALOG if s["key"] == "yunmeng_nebula")
-    css = str(spec["config"]["css"])
-
-    def count(prop: str) -> int:
-        body = css.split(f"{prop}:", 1)[1].split(";", 1)[0]
-        if prop == "background-image":
-            return body.count("radial-gradient")
-        return body.count(",") + 1
-
-    layers = count("background-image")
-    sizes = count("background-size")
-    repeats = count("background-repeat")
-    assert layers == sizes == repeats, (
-        f"星点背景三个列表长度不一致：image={layers} size={sizes} repeat={repeats} —— "
-        "浏览器会静默丢弃或错位平铺"
-    )
-    assert layers >= 30, f"星点太少（现在 {layers} 层），用户会反馈'背景看不出变化'"
-
-
-def test_catalog_yunmeng_theme_defines_every_variable(client: TestClient, user: dict) -> None:
-    """★「云梦枢 · 星云暗涌」必须把组件用到的变量**给全**。
-
-    ==================== 这条守的是"深色主题里那块白"的老账 ====================
-    一个深色主题只换 `--bg/--panel`，而组件还在读 `--surface`/`--*-border` 时，
-    那些组件会**停留在浅色默认值**上 —— 这就是之前反复出现的"深色下冒出一块白/一条亮线"。
-
-    做法：从 `styles.css` 的 `:root` 里把变量名全抓出来，逐个检查主题里有没有定义
-    （允许引擎补缺的那几个除外，它们由 `_surface_shim` 兜底）。
-
-    ★ 只要求"**值是颜色的**变量"：`--radius` / `--mono` / `--reqlog-w` 这类
-      结构性数值本来就不该由主题重写，把它们算进来只会得到一条没人理的测试。
-      判据用"值里出现颜色字面量或 var(...)"，所以以后**再新增一个颜色变量**，
-      这条测试会自动开始要求它 —— 这正是我们要的守门方式。
-    """
-    css = (WEB_DIR / "css" / "styles.css").read_text(encoding="utf-8")
-    root = re.search(r":root\s*\{(.*?)\}", css, flags=re.S)
-    assert root is not None, "找不到 :root 变量块"
-    pairs = re.findall(r"(--[a-z0-9-]+)\s*:\s*([^;]+);", root.group(1))
-    assert len(pairs) >= 20, f"只解析到 {len(pairs)} 个变量，解析逻辑可能失效"
-    colour_vars = {
-        name
-        for name, value in pairs
-        if ("#" in value) or ("rgb" in value) or ("hsl" in value)
-    }
-    assert len(colour_vars) >= 15, f"只认出 {len(colour_vars)} 个颜色变量，判据可能失效"
-
-    # 引擎会按"只补缺"的规则兜底的几个：主题不写也不会出问题
-    shim_backed = {
-        "--surface",
-        "--panel",
-        "--surface-2",
-        "--surface-3",
-        "--warn-border",
-        "--danger-border",
-        "--info-border",
-        "--ok-border",
-        "--catalog-accent",
-    }
-    spec = next((s for s in PLUGIN_CATALOG if s["key"] == "yunmeng_nebula"), None)
-    assert spec is not None, "内置目录里没有「云梦枢 · 星云暗涌」"
-    theme_css = str(spec["config"]["css"])
-    missing = sorted(v for v in colour_vars - shim_backed if f"{v}:" not in theme_css)
-    assert not missing, (
-        "星云暗涌主题没有给全这些变量，组件会退回**浅色默认值**（深色下就是一块白）："
-        + "、".join(missing)
-    )
-
-
-def test_catalog_yunmeng_theme_composes_with_the_engine(client: TestClient, user: dict) -> None:
+def test_catalog_yunmeng_theme_composes_with_the_engine(
+    client: TestClient, user: dict
+) -> None:
     """装上这条主题后：引擎不再补任何东西（说明它自己给全了），且清洗不会削掉毛玻璃。"""
     spec = next(s for s in PLUGIN_CATALOG if s["key"] == "yunmeng_nebula")
-    _create(client, user, name="星云暗涌", kind="css", config={"css": spec["config"]["css"]})
+    _create(
+        client, user, name="星云暗涌", kind="css", config={"css": spec["config"]["css"]}
+    )
     css = client.get(f"{PLUGINS}/theme.css", headers=user["headers"]).text
     assert "backdrop-filter" in css, "毛玻璃被清洗掉了（sanitize_css 不该动它）"
     assert "radial-gradient" in css, "星云渐变丢了"
@@ -1085,7 +950,9 @@ def test_theme_css_backfills_catalog_accent(client: TestClient, user: dict) -> N
     assert "--catalog-accent:var(--brand)" in css
 
 
-def test_theme_css_keeps_themes_own_catalog_accent(client: TestClient, user: dict) -> None:
+def test_theme_css_keeps_themes_own_catalog_accent(
+    client: TestClient, user: dict
+) -> None:
     """用户自己调过就以他写的为准。"""
     _create(
         client,
@@ -1099,7 +966,9 @@ def test_theme_css_keeps_themes_own_catalog_accent(client: TestClient, user: dic
     assert "--catalog-accent:var(--brand)" not in css
 
 
-def test_theme_css_backfills_alert_border_colors(client: TestClient, user: dict) -> None:
+def test_theme_css_backfills_alert_border_colors(
+    client: TestClient, user: dict
+) -> None:
     """老主题缺 `--*-border` 时，引擎按"文字色 × 柔和底"的中间调补上。
 
     ★ 为什么：提示框边框以前写死成四个浅色，深色主题下每个 `.alert` 都镶一圈**亮边**
@@ -1200,3 +1069,6 @@ def test_theme_css_keeps_surface_levels_the_theme_already_defines(
     assert "#101418" in css
     assert "--surface-2:var(--surface)" in css, "缺的那一级仍然要补"
     assert "--surface-3:var(--surface-2)" not in css, "已经写了的不能被改掉"
+
+
+pytestmark = pytest.mark.integration

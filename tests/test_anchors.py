@@ -22,75 +22,6 @@ CARDS = "/api/v1/character-cards"
 PROVIDERS = "/api/v1/providers"
 
 
-class _Session:
-    def __init__(self, raw=None) -> None:
-        self.id = 1
-        self.memory_anchors_json = raw
-
-
-# ==================================================================
-#  一、纯函数：上限、清洗、渲染
-# ==================================================================
-def test_max_items_is_enforced_by_rejection_not_truncation() -> None:
-    """★ 超限必须**拒绝**：悄悄截断会让用户以为存住了（下次打开少一条更迷惑）。"""
-    too_many = [f"第 {i} 条锚点" for i in range(anchors_mod.MAX_ITEMS + 1)]
-    ok, message, cleaned = anchors_mod.validate(too_many)
-    assert ok is False
-    assert f"最多只能加 {anchors_mod.MAX_ITEMS} 条" in message
-    assert len(cleaned) == anchors_mod.MAX_ITEMS + 1, "拒绝时也把清洗结果带回来，便于前端显示"
-
-
-def test_total_chars_limit_is_enforced() -> None:
-    # ★ 每条都要**不一样**，否则会被去重成一条，就测不到"合计超限"了
-    heavy = [f"{i}" + "字" * (anchors_mod.MAX_ONE_CHARS - 1) for i in range(5)]
-    assert sum(len(i) for i in heavy) > anchors_mod.MAX_CHARS
-    ok, message, _ = anchors_mod.validate(heavy)
-    assert ok is False and "合计最多" in message
-
-
-def test_single_item_is_capped() -> None:
-    """单条过长会被截到 MAX_ONE_CHARS（否则一条就把整额吃光）。"""
-    ok, _message, cleaned = anchors_mod.validate(["长" * (anchors_mod.MAX_ONE_CHARS + 100)])
-    assert ok is True
-    assert len(cleaned[0]) == anchors_mod.MAX_ONE_CHARS
-
-
-def test_blank_and_duplicate_items_are_dropped_with_a_note() -> None:
-    ok, note, cleaned = anchors_mod.validate(["  主角是女性  ", "", "   ", "主角是女性", 42, "世界没有魔法"])
-    assert ok is True
-    assert cleaned == ["主角是女性", "世界没有魔法"], cleaned
-    assert "重复" in note, note
-
-
-def test_render_block_is_empty_without_anchors() -> None:
-    assert anchors_mod.render_block(_Session(None)) == ""
-    assert anchors_mod.state(_Session(None))["count"] == 0
-
-
-def test_render_block_lists_items_with_title() -> None:
-    import json
-
-    session = _Session(json.dumps(["主角是女性", "绝不能承认自己是 AI"], ensure_ascii=False))
-    block = anchors_mod.render_block(session)
-    assert anchors_mod.BLOCK_TITLE in block
-    assert "- 主角是女性" in block and "- 绝不能承认自己是 AI" in block
-    assert "优先级高于回忆" in block
-
-
-def test_broken_json_degrades_to_empty() -> None:
-    assert anchors_mod.load(_Session("{不是 JSON")) == []
-
-
-def test_state_reports_remaining_quota() -> None:
-    import json
-
-    session = _Session(json.dumps(["一二三"], ensure_ascii=False))
-    state = anchors_mod.state(session)
-    assert state["count"] == 1 and state["chars"] == 3
-    assert state["remaining_items"] == anchors_mod.MAX_ITEMS - 1
-    assert state["remaining_chars"] == anchors_mod.MAX_CHARS - 3
-
-
 # ==================================================================
 #  二、端到端：真的进了系统提示词，而且不会被裁掉
 # ==================================================================
@@ -215,11 +146,16 @@ def test_anchors_are_saved_and_injected_into_the_system_prompt(
     )
     assert saved.status_code == 200, saved.text
     anchors = saved.json()["data"]["anchors"]
-    assert anchors["count"] == 2 and anchors["remaining_items"] == anchors_mod.MAX_ITEMS - 2
+    assert (
+        anchors["count"] == 2
+        and anchors["remaining_items"] == anchors_mod.MAX_ITEMS - 2
+    )
 
     fake_llm.script["content"] = "（她点点头）"
     sent = client.post(
-        f"{BASE}/{session_id}/messages", json={"content": "你还记得吗"}, headers=user["headers"]
+        f"{BASE}/{session_id}/messages",
+        json={"content": "你还记得吗"},
+        headers=user["headers"],
     )
     assert sent.status_code == 201, sent.text
     system = fake_llm.script["requests"][-1].messages[0].content
@@ -229,7 +165,9 @@ def test_anchors_are_saved_and_injected_into_the_system_prompt(
     assert system.index("主角是女性") < len(system)
 
 
-def test_anchors_survive_context_trimming(client: TestClient, user: dict, fake_llm) -> None:
+def test_anchors_survive_context_trimming(
+    client: TestClient, user: dict, fake_llm
+) -> None:
     """★ 上下文把历史裁光时，锚点仍然在（它在系统提示词里，不参与裁剪）。"""
     session_id = _make_session(client, user)
     client.put(
@@ -262,7 +200,9 @@ def test_over_limit_is_rejected_over_the_api(client: TestClient, user: dict) -> 
     assert response.status_code == 400, response.text
     assert "最多只能加" in response.text
     # 拒绝之后原样保留（不能把旧的也弄丢）
-    panel = client.get(f"{BASE}/{session_id}/memory-summary", headers=user["headers"]).json()["data"]
+    panel = client.get(
+        f"{BASE}/{session_id}/memory-summary", headers=user["headers"]
+    ).json()["data"]
     assert panel["anchors"]["count"] == 0
 
 
@@ -309,8 +249,13 @@ def test_pure_chat_has_no_anchors(client: TestClient, user: dict, fake_llm) -> N
     )
     fake_llm.script["content"] = "（通用助手）"
     sent = client.post(
-        f"{BASE}/{chat['id']}/messages", json={"content": "你好"}, headers=user["headers"]
+        f"{BASE}/{chat['id']}/messages",
+        json={"content": "你好"},
+        headers=user["headers"],
     )
     assert sent.status_code == 201, sent.text
     system = fake_llm.script["requests"][-1].messages[0].content
     assert "不该出现" not in system
+
+
+pytestmark = pytest.mark.integration

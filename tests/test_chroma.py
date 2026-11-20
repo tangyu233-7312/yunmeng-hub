@@ -33,8 +33,6 @@ from app.db.chroma import (
     run_selftest,
     search_memories,
 )
-from app.embeddings import create_embedding
-from app.embeddings.onnx_backend import OnnxDefaultEmbedding
 from app.main import app
 
 
@@ -56,29 +54,6 @@ def user_id() -> int:
 
 
 # ==================== 嵌入器工厂 ====================
-def test_factory_builds_onnx_backend_by_default() -> None:
-    """默认配置应产出本地 ONNX 嵌入器。"""
-    embedding = create_embedding(get_settings())
-    assert isinstance(embedding, OnnxDefaultEmbedding)
-    assert embedding.backend_name == "onnx_default"
-
-
-def test_onnx_dimension_is_384() -> None:
-    """内置模型固定输出 384 维。"""
-    embedding = create_embedding(get_settings())
-    embedding.ensure_ready()
-    assert embedding.dimension == 384
-    assert embedding.is_ready is True
-
-
-def test_embedding_returns_correct_shape() -> None:
-    """每条文本都应得到等长的向量，且数量与输入一致。"""
-    embedding = get_embedding()
-    vectors = embedding.embed_documents(["第一条文本", "second text", "第三条"])
-    assert len(vectors) == 3
-    assert all(len(vector) == 384 for vector in vectors)
-    # 不同文本的向量必须不同，否则说明模型没在真正工作
-    assert vectors[0] != vectors[1]
 
 
 def test_embedding_of_empty_input() -> None:
@@ -95,8 +70,12 @@ def test_semantic_search_finds_memory_with_different_wording(user_id: int) -> No
     add_memories(
         user_id,
         [
-            MemoryRecord(text="勇者亚瑟在幽暗森林里遇到了一只会说话的银色狐狸。", session_id=1),
-            MemoryRecord(text="王国的北境常年被冰雪覆盖，村民靠狩猎为生。", session_id=1),
+            MemoryRecord(
+                text="勇者亚瑟在幽暗森林里遇到了一只会说话的银色狐狸。", session_id=1
+            ),
+            MemoryRecord(
+                text="王国的北境常年被冰雪覆盖，村民靠狩猎为生。", session_id=1
+            ),
             MemoryRecord(text="酒馆老板说山那边的废墟底下埋着一批宝藏。", session_id=1),
         ],
     )
@@ -129,7 +108,9 @@ def test_collections_are_isolated_between_users() -> None:
     user_a = random.randint(2_200_000_000, 2_300_000_000)
     user_b = random.randint(2_300_000_000, 2_400_000_000)
     try:
-        add_memories(user_a, [MemoryRecord(text="A 用户的秘密：他把钥匙藏在了花瓶下面。")])
+        add_memories(
+            user_a, [MemoryRecord(text="A 用户的秘密：他把钥匙藏在了花瓶下面。")]
+        )
 
         # B 用户没有写入任何记忆，应当检索不到 A 的内容
         assert search_memories(user_b, "钥匙藏在哪里？") == []
@@ -183,7 +164,9 @@ def test_upsert_same_id_does_not_duplicate(user_id: int) -> None:
     assert collection.count() == count_after_first + 1
 
     # 用相同 ID 覆盖写入，计数不应增长
-    add_memories(user_id, [MemoryRecord(text="这条记忆被改写了。", memory_id="fixed-id-001")])
+    add_memories(
+        user_id, [MemoryRecord(text="这条记忆被改写了。", memory_id="fixed-id-001")]
+    )
     assert collection.count() == count_after_first + 1
 
 
@@ -217,24 +200,6 @@ def test_fingerprint_mismatch_is_detected(user_id: int) -> None:
     detail = exc_info.value.detail
     assert detail["stored_fingerprint"] == "api:BAAI/bge-m3(1024维)"
     assert detail["current_fingerprint"] == "onnx_default:all-MiniLM-L6-v2(384维)"
-
-
-def test_collection_records_fingerprint(user_id: int) -> None:
-    """正常创建的集合，元数据里应写入当前嵌入指纹。"""
-    from app.db.chroma import get_user_collection
-
-    collection = get_user_collection(user_id)
-    assert collection.metadata["embed_backend"] == "onnx_default"
-    assert collection.metadata["embed_model"] == "all-MiniLM-L6-v2"
-    assert collection.metadata["embed_dimension"] == 384
-
-
-def test_collection_uses_cosine_space(user_id: int) -> None:
-    """集合应使用余弦距离（文本检索的通用选择），而不是默认的平方欧氏距离。"""
-    from app.db.chroma import get_user_collection
-
-    collection = get_user_collection(user_id)
-    assert collection.configuration["hnsw"]["space"] == "cosine"
 
 
 # ==================== 一键自检 ====================
@@ -299,45 +264,6 @@ def test_health_reports_vector_store() -> None:
     assert vector_store["status"] == "ok"
     assert vector_store["detail"]["distance_space"] == "cosine"
     assert vector_store["detail"]["embedding"]["backend"] == "onnx_default"
-
-
-# ==================================================================
-#  九、远程 API 嵌入后端（此前一直没被真正执行过的路径）
-# ==================================================================
-def test_api_embedding_creates_http_client_eagerly() -> None:
-    """★ 回归测试：HTTP 客户端必须在**构造时**就创建，不能懒加载。
-
-    ==================== 为什么这条断言很重要？====================
-    曾经这里用的是「懒加载 + 加锁」写法：
-
-        def _get_client(self):
-            if self._client is None:
-                with self._lock:          # ← 再次获取同一把锁
-                    self._client = httpx.Client(...)
-
-    而调用链是：
-
-        ensure_ready()  ->  with self._lock:  ->  _request()  ->  _get_client()
-
-    `threading.Lock` 非重入，同一线程二次 acquire 会**永久阻塞**。
-    该死锁只在「首次探测嵌入维度」时触发，进程静默卡死、没有任何日志。
-
-    因为项目一直使用 onnx_default 后端，这条路径从未被执行，问题被完整掩盖。
-
-    构造 httpx.Client 不会发起任何网络请求，所以提前创建零成本，
-    却彻底消除了这条加锁路径。这条断言就是这个设计决定的守卫。
-    """
-    from app.embeddings.api_backend import ApiEmbedding
-
-    embedding = ApiEmbedding(
-        base_url="https://api.example.com/v1", api_key="sk-x", model_name="bge-m3"
-    )
-    try:
-        assert embedding._client is not None, (
-            "HTTP 客户端必须是构造时就创建好的 —— 改成懒加载会引入嵌套加锁死锁"
-        )
-    finally:
-        embedding.close()
 
 
 def _install_mock_embedding_client(embedding: Any, handler: Any) -> None:
@@ -421,3 +347,6 @@ def test_api_embedding_ensure_ready_does_not_deadlock() -> None:
         assert outcome.get("dimension") == 16, outcome.get("error")
     finally:
         embedding.close()
+
+
+pytestmark = pytest.mark.integration

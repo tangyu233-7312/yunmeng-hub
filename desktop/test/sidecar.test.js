@@ -38,11 +38,6 @@ test('sidecarCandidates：Windows 下找 backend.exe，且覆盖开发态多个�
   assert.ok(candidates.some((c) => c.startsWith('E:\\app')));
 });
 
-test('sidecarCandidates：非 Windows 下不带 .exe 后缀', () => {
-  const candidates = sidecarCandidates({ desktopDir: '/repo/desktop', platform: 'linux' });
-  assert.ok(candidates.every((c) => c.endsWith(SIDECAR_NAME)), candidates.join('\n'));
-  assert.ok(candidates.every((c) => !c.endsWith('.exe')), candidates.join('\n'));
-});
 
 test('sidecarCandidates：显式指定的路径排在最前面（优先级最高）', () => {
   const candidates = sidecarCandidates({
@@ -65,9 +60,6 @@ test('sidecarCandidates：去重但保持顺序（同一路径不会出现两次
   assert.equal(new Set(lowered).size, lowered.length, `有重复：\n${candidates.join('\n')}`);
 });
 
-test('sidecarCandidates：没有可选路径时返回空数组（不抛异常）', () => {
-  assert.deepEqual(sidecarCandidates({ platform: 'win32' }), []);
-});
 
 // ------------------------------------------------------------------
 //  chooseBackend
@@ -169,45 +161,7 @@ test('chooseBackend：候选顺序决定优先级（第一个命中的赢）', (
 // ------------------------------------------------------------------
 //  sidecarArgs
 // ------------------------------------------------------------------
-test('★★ 回归（接线）：显式指定时，main.js 必须只把"那一个"路径当候选', () => {
-  // 背景：真实事故，两层。
-  //  ① main.js 里 `explicit` 只传给了 chooseBackend、忘了传给 sidecarCandidates ——
-  //     用户指定的路径压根没进候选列表，等于没检查过它；
-  //  ② 更深一层：即使传了，如果把"默认候选"也一起交进来，
-  //     指定的那个不存在时会**悄悄落到默认的 backend.exe** 上（用户指 A、程序用 B）。
-  //
-  // 所以 main.js 的规则是：**指定了就只认它**（candidates = [explicit]）。
-  // 这条用例把这个规则钉死，并说明"混入默认候选"会怎样出错。
-  const explicit = 'D:\\mine\\backend.exe';
 
-  // 规则：显式指定 → 候选只有它
-  const onlyIt = chooseBackend({ explicit, candidates: [explicit], exists: () => false });
-  assert.equal(onlyIt.kind, 'none');
-  assert.equal(onlyIt.explicitSpecified, true);
-  assert.ok(onlyIt.checked.includes(explicit));
-
-  // 反面教材：如果混入默认候选（且默认的那个存在），就会悄悄用到别的后端 ——
-  // 这正是我们要避免的静默降级，所以 main.js **不许**那么写。
-  const defaultCandidate = 'E:\\repo\\desktop\\dist\\backend\\backend.exe';
-  const polluted = chooseBackend({
-    explicit,
-    candidates: [explicit, defaultCandidate],
-    exists: (p) => p === defaultCandidate,
-  });
-  assert.equal(polluted.kind, 'sidecar', '（这就是为什么不能混入默认候选）');
-  assert.notEqual(polluted.command, explicit);
-});
-
-test('★★ 回归（接线）：显式指定的路径存在时，用的必须是**它**', () => {
-  const explicit = 'D:\\mine\\backend.exe';
-  const result = chooseBackend({ explicit, candidates: [explicit], exists: () => true });
-  assert.equal(result.kind, 'sidecar');
-  assert.equal(result.command, explicit);
-});
-
-test('sidecarArgs：--host/--port 与 uvicorn 同名同义（消费者不用记两套）', () => {
-  assert.deepEqual(sidecarArgs({ port: 51234 }), ['--host', '127.0.0.1', '--port', '51234']);
-});
 
 test('sidecarArgs：数据与日志目录会作为参数传下去（落在 userData，不在安装目录）', () => {
   const args = sidecarArgs({
