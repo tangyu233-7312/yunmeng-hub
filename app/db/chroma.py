@@ -131,8 +131,14 @@ def _collection_names() -> set[str]:
 
 
 def has_user_collection(user_id: int) -> bool:
-    """判断某用户是否已经有记忆集合（用于检索前判断，避免无谓的建集合）。"""
-    return collection_name_for_user(user_id) in _collection_names()
+    """直接检查用户集合是否存在，避免为了检查而枚举全部用户的集合。"""
+    try:
+        get_chroma_client().get_collection(
+            name=collection_name_for_user(user_id), embedding_function=None
+        )
+    except chromadb.errors.NotFoundError:
+        return False
+    return True
 
 
 def _verify_fingerprint(collection: Any, expected: EmbeddingFingerprint) -> None:
@@ -183,14 +189,18 @@ def get_user_collection(user_id: int, create: bool = True) -> Any:
     fingerprint = embedding.fingerprint
 
     name = collection_name_for_user(user_id)
-    existing = _collection_names()
-
-    if name in existing:
+    try:
         # 注意：打开已存在的集合时也传 embedding_function=None，
         # 避免 ChromaDB 给它绑定默认嵌入函数（见模块顶部的坑）
         collection = client.get_collection(name=name, embedding_function=None)
-    elif create:
-        collection = client.create_collection(
+    except chromadb.errors.NotFoundError as exc:
+        if not create:
+            raise VectorStoreError(
+                "用户记忆集合不存在", detail={"user_id": user_id, "collection": name}
+            ) from exc
+
+        # 首次创建用原子 get-or-create，避免多个请求同时初始化同一用户。
+        collection = client.get_or_create_collection(
             name=name,
             embedding_function=None,
             metadata={
@@ -200,12 +210,7 @@ def get_user_collection(user_id: int, create: bool = True) -> Any:
             # 指定余弦距离，而不是默认的平方欧氏距离
             configuration={"hnsw": {"space": _HNSW_SPACE}},
         )
-        logger.info("已创建用户记忆集合 {} | 指纹 {}", name, fingerprint.describe())
-    else:
-        raise VectorStoreError(
-            "用户记忆集合不存在", detail={"user_id": user_id, "collection": name}
-        )
-
+        logger.info("已确保用户记忆集合 {} 就绪 | 指纹 {}", name, fingerprint.describe())
     # 无论新建还是打开，都校验一次指纹
     _verify_fingerprint(collection, fingerprint)
     return collection
@@ -214,9 +219,10 @@ def get_user_collection(user_id: int, create: bool = True) -> Any:
 def delete_user_collection(user_id: int) -> bool:
     """删除某用户的记忆集合。返回是否真的删除了。"""
     name = collection_name_for_user(user_id)
-    if name not in _collection_names():
+    try:
+        get_chroma_client().delete_collection(name=name)
+    except chromadb.errors.NotFoundError:
         return False
-    get_chroma_client().delete_collection(name=name)
     logger.info("已删除用户记忆集合 {}", name)
     return True
 

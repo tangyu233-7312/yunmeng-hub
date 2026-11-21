@@ -182,6 +182,24 @@ def card_reference(db: Session, card_id: int | None) -> dict | None:
     }
 
 
+def _card_reference_map(
+    db: Session, card_ids: set[int]
+) -> dict[int, dict[str, Any]]:
+    """一次读取列表页引用的角色卡，避免每个会话额外查询一次。"""
+    if not card_ids:
+        return {}
+
+    rows = db.execute(
+        select(CharacterCard.id, CharacterCard.name, CharacterCard.avatar_url).where(
+            CharacterCard.id.in_(card_ids)
+        )
+    ).all()
+    return {
+        card_id: {"id": card_id, "name": name, "avatar_url": avatar_url}
+        for card_id, name, avatar_url in rows
+    }
+
+
 def _session_warnings(session: NarrativeSession) -> list[str]:
     """会话自身的问题（列表上就要能看出来，别等用户点进去才发现）。"""
     warnings: list[str] = []
@@ -248,6 +266,10 @@ def list_sessions(
     )
 
     lasts = _last_message_map(db, [row.id for row in rows])
+    cards = _card_reference_map(
+        db,
+        {row.character_card_id for row in rows if row.character_card_id is not None},
+    )
     provider_names = _provider_name_map(db, [row.llm_provider_id for row in rows])
     # ★ 轮次：界面上显示"N 轮"而不是"N 条消息"（用户 2026-10-13 的要求）。
     #   一次查询算完这一页，避免逐行去数。
@@ -255,14 +277,18 @@ def list_sessions(
     # ★ 世界线组里有几条线（1 = 普通会话）。列表上只显示**条数**，不显示
     #   "主线/平行线" —— 用户 2026-10-13 的原话："别让用户还要注意是主线还是平行"。
     #   一次查询算完这一页，避免逐行去数（列表页最容易踩 N+1）。
-    line_counts = _branch_line_counts(db, user_id)
+    line_counts = _branch_line_counts(
+        db,
+        user_id,
+        {row.branch_group_id for row in rows if row.branch_group_id is not None},
+    )
 
     items = [
         SessionBrief(
             id=row.id,
             title=row.title,
             status=row.status,
-            character_card=card_reference(db, row.character_card_id),
+            character_card=cards.get(row.character_card_id or 0),
             provider_name=provider_names.get(row.llm_provider_id or 0),
             model_name=provider_names.get(("model", row.llm_provider_id or 0)),
             message_count=row.message_count,
@@ -290,11 +316,16 @@ def list_sessions(
     return items, total
 
 
-def _branch_line_counts(db: Session, user_id: int) -> dict[int, int]:
+def _branch_line_counts(
+    db: Session, user_id: int, group_ids: set[int]
+) -> dict[int, int]:
     """每个世界线组里有几条线：`{group_id: 条数}`（只有一条的组不在结果里）。
 
-    ★ 用一条 group by 查询算完这一页要用到的计数，避免逐行去数（列表页的 N+1）。
+    只查询当前页实际展示的分组；没有分支的页面无需访问分组统计。
     """
+    if not group_ids:
+        return {}
+
     rows = db.execute(
         select(
             NarrativeSession.branch_group_id,
@@ -302,7 +333,7 @@ def _branch_line_counts(db: Session, user_id: int) -> dict[int, int]:
         )
         .where(
             NarrativeSession.user_id == user_id,
-            NarrativeSession.branch_group_id.is_not(None),
+            NarrativeSession.branch_group_id.in_(group_ids),
         )
         .group_by(NarrativeSession.branch_group_id)
     ).all()
@@ -310,18 +341,22 @@ def _branch_line_counts(db: Session, user_id: int) -> dict[int, int]:
 
 
 def _provider_name_map(db: Session, provider_ids: list[int | None]) -> dict:
-    """批量取模型配置的别名与模型名。
+    """批量只取列表展示所需的模型配置字段。
 
-    键用 (0, id) 取别名、(model, id) 取模型名，避免再多查一遍数据库 ——
-    会话列表每行都要显示这两样，一次查完最省事。
+    键分别用于别名与模型名；不加载连接地址和 API 密钥等无关字段。
     """
     ids = {pid for pid in provider_ids if pid}
     if not ids:
         return {}
     out: dict = {}
-    for row in db.scalars(select(LLMProvider).where(LLMProvider.id.in_(ids))).all():
-        out[row.id] = row.name
-        out[("model", row.id)] = row.model_name
+    rows = db.execute(
+        select(LLMProvider.id, LLMProvider.name, LLMProvider.model_name).where(
+            LLMProvider.id.in_(ids)
+        )
+    ).all()
+    for provider_id, name, model_name in rows:
+        out[provider_id] = name
+        out[("model", provider_id)] = model_name
     return out
 
 

@@ -18,6 +18,7 @@
    ============================================================ */
 
 import { api, session as authSession } from 'hne/api';
+import { StreamTextBuffer } from 'hne/stream-buffer';
 import {
   $,
   $$,
@@ -40,6 +41,7 @@ import {
 } from 'hne/ui';
 
 const API_PREFIX = '/api/v1';
+const streamBuffers = new WeakMap();
 
 const state = {
   status: 'active',
@@ -2692,10 +2694,7 @@ function streamHandlers(root, bubble) {
     },
     onNotes: (data) => showNotes(root, data.notes || []),
     onReason: (delta) => appendReasoning(bubble, delta),
-    onDelta: (delta) => {
-      appendDelta(bubble, delta);
-      scrollBottom(root, false);
-    },
+    onDelta: (delta) => appendDelta(root, bubble, delta),
     // ★ 正文已经流完了，但译文还要等**一次完整的模型调用**（实测好几秒）。
     //   不提示的话用户看完外语原文就干等，以为界面卡住了（真实反馈）。
     onTranslating: (data) => showTranslating(bubble, data.lang, data.direction),
@@ -2712,6 +2711,7 @@ function streamHandlers(root, bubble) {
       scrollBottom(root, false);
     },
     onDone: (data) => {
+      flushDelta(bubble);
       clearTranslating(bubble);
       clearImageGenerating(bubble);
       finishBubble(bubble, data);
@@ -2720,6 +2720,7 @@ function streamHandlers(root, bubble) {
       updateTokenStats(root, state.usage);
     },
     onError: (data) => {
+      flushDelta(bubble);
       clearTranslating(bubble);
       failBubble(bubble, data);
       // ★ 必须**再弹一次 toast**：失败气泡会在下面的 silentReload 里被服务端数据
@@ -3234,7 +3235,11 @@ async function regenerateMessage(root, signal, msg, bubbleOverride) {
         status: response.status,
       });
     }
-    await consumeStream(response, streamHandlers(root, bubble));
+    try {
+      await consumeStream(response, streamHandlers(root, bubble));
+    } finally {
+      flushDelta(bubble);
+    }
   } catch (err) {
     if (err.name === 'AbortError') {
       bubble.classList.remove('pending');
@@ -3314,7 +3319,11 @@ async function sendMessage(root, signal) {
       });
     }
 
-    await consumeStream(response, streamHandlers(root, bubble));
+    try {
+      await consumeStream(response, streamHandlers(root, bubble));
+    } finally {
+      flushDelta(bubble);
+    }
   } catch (err) {
     if (err.name === 'AbortError') {
       bubble.classList.remove('pending');
@@ -3409,17 +3418,35 @@ function appendReasoning(bubble, delta) {
   box.textContent += delta;
 }
 
-function appendDelta(bubble, delta) {
+function appendDelta(root, bubble, delta) {
   if (!bubble) return;
   const body = bubble.querySelector('.msg-body');
-  body.textContent += delta;
-  // ★ 状态块是"给系统看的"，不该在聊天里滚出来（流式时会看到一串原始 JSON）。
-  //   协议规定它在回复末尾，所以一出现 `<state>` 就把可见部分截到它之前；
-  //   最终正文以服务端落库的为准（save_assistant_reply 已经把它剥掉了）。
-  // ★ 生图标签也在这里截掉：model 模式约定它放在末尾；
-  //   不截的话流式期间用户会先看到一串 <hne-image>…</hne-image> 原始协议。
-  const cut = body.textContent.search(/<state>|<hne-image\b/i);
-  if (cut >= 0) body.textContent = body.textContent.slice(0, cut).trimEnd();
+  let buffer = streamBuffers.get(bubble);
+  if (!buffer) {
+    let textNode = null;
+    buffer = new StreamTextBuffer((update) => {
+      if (update.reset) {
+        body.textContent = update.delta;
+        textNode = null;
+      } else if (update.delta) {
+        if (!textNode) {
+          textNode = document.createTextNode('');
+          body.appendChild(textNode);
+        }
+        textNode.appendData(update.delta);
+      }
+      scrollBottom(root, false);
+    });
+    streamBuffers.set(bubble, buffer);
+  }
+  return buffer.append(delta);
+}
+
+function flushDelta(bubble) {
+  const buffer = bubble && streamBuffers.get(bubble);
+  if (!buffer) return;
+  buffer.flush();
+  streamBuffers.delete(bubble);
 }
 
 function setMeta(root, data) {

@@ -96,6 +96,28 @@ def test_search_on_user_without_memories_returns_empty() -> None:
     assert has_user_collection(uid) is False
 
 
+def test_collection_lookups_avoid_listing_every_users_collection(
+    user_id: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """查找、打开和删除集合只访问该用户，不能枚举全库集合名。"""
+    client = get_chroma_client()
+    monkeypatch.setattr(
+        client, "list_collections", lambda: pytest.fail("不应枚举全部集合")
+    )
+    add_memories(user_id, [MemoryRecord(text="用于集合查询回归的记忆。")])
+
+    assert has_user_collection(user_id) is True
+    assert get_user_collection(user_id, create=False).count() == 1
+    assert delete_user_collection(user_id) is True
+    assert has_user_collection(user_id) is False
+
+    missing_user_id = user_id + 10_000_000
+    assert has_user_collection(missing_user_id) is False
+    with pytest.raises(VectorStoreError, match="用户记忆集合不存在"):
+        get_user_collection(missing_user_id, create=False)
+    assert delete_user_collection(missing_user_id) is False
+
+
 def test_empty_query_returns_empty(user_id: int) -> None:
     """空查询不应触发向量计算。"""
     add_memories(user_id, [MemoryRecord(text="这是一条测试记忆")])

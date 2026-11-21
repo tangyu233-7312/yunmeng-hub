@@ -37,10 +37,10 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.db.models import Message, NarrativeSession, User
-from app.db.mysql import session_scope
+from app.db.mysql import get_engine, session_scope
 from app.llm.params import GenerationParams, compute_context_budget
 from app.llm.schema import ChatResult, StreamChunk, TokenUsage
 from app.main import app
@@ -369,6 +369,103 @@ def test_list_sessions_is_paginated_and_sorted_by_activity(
     # 列表是精简结构：不带 messages 字段
     assert "messages" not in page["items"][0]
     assert page["items"][ids.index(first["id"])]["last_message_preview"]
+
+
+def test_list_sessions_loads_card_references_with_one_query(
+    client: TestClient, user: dict
+) -> None:
+    provider = make_provider(client, user)
+    sessions = []
+    for _ in range(3):
+        card = make_card(client, user)
+        sessions.append(make_session(client, user, card["id"], provider["id"]))
+
+    card_queries: list[str] = []
+    provider_queries: list[str] = []
+    branch_count_queries: list[str] = []
+
+    def record_card_query(_connection, _cursor, statement, _parameters, _context, _many):
+        normalized = statement.casefold()
+        if "character_cards" in normalized:
+            card_queries.append(statement)
+        if "llm_providers" in normalized:
+            provider_queries.append(statement)
+        if "group by" in normalized and "branch_group_id" in normalized:
+            branch_count_queries.append(statement)
+
+    engine_db = get_engine()
+    event.listen(engine_db, "before_cursor_execute", record_card_query)
+    try:
+        response = client.get(BASE, params={"limit": 12}, headers=user["headers"])
+    finally:
+        event.remove(engine_db, "before_cursor_execute", record_card_query)
+
+    assert response.status_code == 200, response.text
+    items_by_id = {item["id"]: item for item in response.json()["data"]["items"]}
+    assert len(card_queries) == 1
+    assert len(provider_queries) == 1
+    assert "api_key_encrypted" not in provider_queries[0].casefold()
+    assert branch_count_queries == []
+    for session in sessions:
+        item = items_by_id[session["id"]]
+        assert item["character_card"] == session["character_card"]
+        assert item["provider_name"] == session["provider"]["name"]
+        assert item["model_name"] == session["provider"]["model_name"]
+
+
+def test_list_sessions_counts_only_branch_groups_on_the_current_page(
+    client: TestClient, user: dict
+) -> None:
+    card = make_card(client, user)
+    provider = make_provider(client, user)
+    old_main = make_session(client, user, card["id"], provider["id"], title="旧主线")
+    old_twin = make_session(
+        client, user, card["id"], provider["id"], title="旧平行线"
+    )
+    main = make_session(client, user, card["id"], provider["id"], title="主线")
+    twin = make_session(client, user, card["id"], provider["id"], title="平行线")
+
+    with session_scope() as db:
+        for main_session, twin_session in ((old_main, old_twin), (main, twin)):
+            main_row = db.get(NarrativeSession, main_session["id"])
+            twin_row = db.get(NarrativeSession, twin_session["id"])
+            assert main_row is not None and twin_row is not None
+            main_row.branch_group_id = main_row.id
+            twin_row.branch_group_id = main_row.id
+            main_row.branch_index = 0
+            twin_row.branch_index = 1
+
+    branch_count_queries: list[tuple[str, object]] = []
+
+    def record_branch_count_query(
+        _connection, _cursor, statement, parameters, _context, _many
+    ):
+        normalized = statement.casefold()
+        if "group by" in normalized and "branch_group_id" in normalized:
+            branch_count_queries.append((statement, parameters))
+
+    engine_db = get_engine()
+    event.listen(engine_db, "before_cursor_execute", record_branch_count_query)
+    try:
+        response = client.get(
+            BASE, params={"limit": 1}, headers=user["headers"]
+        )
+    finally:
+        event.remove(engine_db, "before_cursor_execute", record_branch_count_query)
+
+    assert response.status_code == 200, response.text
+    items = response.json()["data"]["items"]
+    assert len(items) == 1
+    main_item = items[0]
+    assert main_item["id"] == main["id"]
+    assert main_item["branch_line_count"] == 2
+    assert main_item["branch_line"] == "主线"
+    assert twin["id"] not in {item["id"] for item in items}
+    assert len(branch_count_queries) == 1
+    statement, parameters = branch_count_queries[0]
+    assert "IN" in statement
+    assert int(old_main["id"]) not in parameters
+    assert int(main["id"]) in parameters
 
 
 def test_list_sessions_can_filter_archived(client: TestClient, user: dict) -> None:
